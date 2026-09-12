@@ -13,9 +13,11 @@
 //  price movement, not waste (§24: price effect is a comparison
 //  factor, never root-cause proof).
 //
-//  Self-contained fetch (pattern: RestoRecommendationCard):
-//    - queryKey ['price-effect', month, week, compareMonth, compareWeek, filters]
-//    - staleTime 5 min + gcTime 10 min + keepPreviousData
+//  Fetch: shared usePriceEffect hook (same pattern as useRecommendations)
+//    - ONE queryKey ['price-effect', month, week, compare, filters] shared
+//      with GrowthComparison's "Harga (AVG)" metric → one request, one
+//      TanStack cache entry per scope (staleTime 5 min + gcTime 10 min
+//      + keepPreviousData)
 //    - /api/price-effect (cached server-side 5 min, SWR envelope)
 //
 //  Interactions (§63 traceability): clicking a row opens ItemDeepDive
@@ -23,9 +25,6 @@
 // ============================================================
 
 import { memo, useMemo, useState } from 'react';
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
-import { useDashboard } from '@/hooks/useDashboard';
-import { useShallow } from 'zustand/shallow';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -36,56 +35,8 @@ import { ChevronDown, ChevronRight, Tags } from 'lucide-react';
 import { fmtIDR, fmtPct } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
-import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
-
-// ------------------------------------------------------------
-//  Response types (mirror src/lib/queries/price-effect.ts + envelope)
-// ------------------------------------------------------------
-interface PriceEffectItem {
-  item: string;
-  qtyCurr: number;
-  qtyPrev: number;
-  nomCurr: number;
-  nomPrev: number;
-  priceCurr: number | null;
-  pricePrev: number | null;
-  qtyGrowth: number | null;
-  priceGrowth: number | null;
-  nomGrowth: number | null;
-  qtyEffect: number;
-  priceEffect: number;
-  netDelta: number;
-  priceSharePct: number | null;
-  driver: 'PRICE' | 'QTY' | 'MIXED' | 'FLAT';
-}
-
-interface PriceEffectSummary {
-  hasCompare: boolean;
-  matchedItems: number;
-  newItems: number;
-  goneItems: number;
-  newNominal: number;
-  goneNominal: number;
-  nomCurr: number;
-  nomPrev: number;
-  netDelta: number;
-  qtyEffect: number;
-  priceEffect: number;
-  priceSharePct: number | null;
-  avgPriceChangePct: number | null;
-  medianPriceChangePct: number | null;
-  itemsPriceUp: number;
-  itemsPriceDown: number;
-}
-
-interface PriceEffectResponse {
-  success: boolean;
-  summary: PriceEffectSummary;
-  items: PriceEffectItem[];
-  durationMs: number;
-  cached?: boolean;
-  stale?: boolean;
-}
+import { useDashboard } from '@/hooks/useDashboard';
+import { usePriceEffect, type PriceEffectItem } from '@/hooks/usePriceEffect';
 
 // ------------------------------------------------------------
 //  Sort modes — which effect dominates the ranking
@@ -168,17 +119,7 @@ function SummaryTile({ label, value, sub, valueCls, bar }: {
 //  Main component
 // ------------------------------------------------------------
 export const PriceEffectCard = memo(function PriceEffectCard() {
-  const { monthLabel, currentWeek, comparisonMonth, comparisonWeek, area, kelompok, outletCode, pic, setDeepDiveItem } = useDashboard(useShallow((s) => ({
-    monthLabel: s.monthLabel,
-    currentWeek: s.currentWeek,
-    comparisonMonth: s.comparisonMonth,
-    comparisonWeek: s.comparisonWeek,
-    area: s.area,
-    kelompok: s.kelompok,
-    outletCode: s.outletCode,
-    pic: s.pic,
-    setDeepDiveItem: s.setDeepDiveItem,
-  })));
+  const setDeepDiveItem = useDashboard((s) => s.setDeepDiveItem);
 
   const [sortMode, setSortMode] = useState<SortMode>('nominal');
   // VH-3 (spec §4 L5): the Bennet items table is COLLAPSIBLE — default view
@@ -186,32 +127,9 @@ export const PriceEffectCard = memo(function PriceEffectCard() {
   // sort chips) expand on demand (progressive disclosure).
   const [tableOpen, setTableOpen] = useState(false);
 
-  const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['price-effect', monthLabel, currentWeek, comparisonMonth, comparisonWeek, area, kelompok, outletCode, pic],
-    queryFn: async () => {
-      const month = monthLabel ?? '';
-      const week = currentWeek ?? '';
-      if (!month || !week) throw new Error('Bulan dan minggu belum dipilih');
-      const p = new URLSearchParams();
-      p.set('month', month);
-      p.set('week', week);
-      if (comparisonWeek && comparisonMonth) {
-        p.set('compareWeek', comparisonWeek);
-        p.set('compareMonth', comparisonMonth);
-      }
-      if (area && area !== 'all') p.set('area', area);
-      if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
-      if (outletCode && outletCode !== 'all') p.set('outlet', outletCode);
-      if (pic && pic !== 'all') p.set('pic', pic);
-      const res = await fetch(`/api/price-effect?${p.toString()}`);
-      if (!res.ok) throw new Error('Gagal memuat data efek harga');
-      return res.json() as Promise<PriceEffectResponse>;
-    },
-    enabled: Boolean(monthLabel && currentWeek),
-    staleTime: 5 * 60_000,
-    gcTime: 10 * 60_000,
-    placeholderData: keepPreviousData,
-  });
+  // UX-PRICE-1: fetch moved to the shared hook — GrowthComparison's "Harga
+  // (AVG)" metric rides the SAME queryKey, so both cards share ONE request.
+  const { data, isLoading, error, refetch } = usePriceEffect();
 
   const summary = data?.summary;
   // P3-HYG-7a pattern: pin `items` identity — `data?.items ?? []` creates a
@@ -239,13 +157,13 @@ export const PriceEffectCard = memo(function PriceEffectCard() {
             <Tags className="h-3.5 w-3.5" />
           </span>
           AVG Price Effect
+          {/* UX-TOOLTIP-1 (user request 2025-12): ONE tooltip (was FormulaInfo +
+              InfoTooltip side by side) — simple "ini buat apa" language. */}
           <FormulaInfo
-            formula="Δ|Nominal Deviasi| = Efek Kuantitas + Efek Harga (dekomposisi Bennet — eksak, tanpa residual)"
-            description="Per item: harga implisit P = Σ|nominalDeviasi| / Σ|qtyDeviasi| (harga nasional dirata-ratakan, teramati melalui baris deviation). Efek Kuantitas = (Qc−Qp) × rata-rata(Pc,Pp). Efek Harga = (Pc−Pp) × rata-rata(Qc,Qp). Jumlah keduanya = Δ Nominal secara eksak. Sesuai Master Context §22/§55: kenaikan nominal deviation tidak boleh langsung dianggap kenaikan deviation operasional sebelum efek harga dipisahkan — item HARGA-dominated mengindikasikan tekanan harga; item KUANTITAS-dominated lebih relevan untuk investigasi operasional. Ini indikasi, bukan bukti root cause."
-            example="QTY Deviasi 100→120 pcs, harga implisit Rp10rb→Rp12rb: efek kuantitas 20×Rp11rb = Rp220rb; efek harga Rp2rb×110 = Rp220rb; ΔNominal Rp440rb terbagi persis 50/50."
+            formula="Harga implisit P = |Nominal Deviasi| / |QTY Deviasi| · Efek Harga = (Pc − Pp) × rata-rata(Qc, Qp)"
+            description={'UNTUK APA: memisahkan perubahan Nominal Deviasi menjadi efek HARGA dan efek KUANTITAS — supaya kenaikan nominal karena harga naik tidak langsung dianggap pemborosan operasional.\nCARA BACA: item KUANTITAS = perubahan volume (target investigasi operasional). Item HARGA = tekanan harga (cek pergerakan harga supplier). Harga implisit dihitung dari data deviation saja — item tanpa deviation di suatu periode tidak punya harga teramati dan masuk kategori item baru/hilang. Ini indikasi, bukan bukti root cause.\nCONTOH: QTY Deviasi 100→120 pcs, harga implisit Rp10rb→Rp12rb: efek kuantitas Rp220rb; efek harga Rp220rb; ΔNominal Rp440rb terbagi persis 50/50.'}
             side="bottom"
           />
-          <InfoTooltip content="Harga implisit dihitung dari data deviation saja — item tanpa deviation di suatu periode tidak punya harga teramati dan masuk kategori item baru/hilang." />
         </CardTitle>
         <p className="text-xs text-muted-foreground ml-9">
           {/* SPEC-1 (§21): question-first subtitle (anti-pattern #12). */}

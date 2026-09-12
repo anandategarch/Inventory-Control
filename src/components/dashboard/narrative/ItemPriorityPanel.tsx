@@ -16,7 +16,9 @@
 //      colored by data, proportional mini-bar, click →
 //      setDrilldown (the SAME interaction the full cards use —
 //      opens DrillDownDrawer / ItemDeepDive)
-//    - footer "lihat semua →" jumps to the Item tab
+//    - footer: coverage caption only (UX-NAVLINK-1: the "lihat semua →"
+//      jump-to-tab button was removed — the full lists stay reachable
+//      via the tab bar / tab Item)
 //
 //  Data: the SAME payload lists the full cards render
 //  (data.topItemsByNominal / data.topItemsByDevBom) — the full
@@ -30,7 +32,6 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { BarChart3, ChevronDown, ChevronRight } from 'lucide-react';
 import { fmtIDR, fmtPctAbs } from '@/lib/format';
 import { useDashboard } from '@/hooks/useDashboard';
-import { useShallow } from 'zustand/shallow';
 import { clickableRowProps } from '@/lib/a11y';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import type { AnalysisData } from '@/hooks/useAnalysis';
@@ -56,10 +57,7 @@ interface CompactRow {
 }
 
 export const ItemPriorityPanel = memo(function ItemPriorityPanel({ data }: { data: AnalysisData }) {
-  const { setDrilldown, setActiveTab } = useDashboard(useShallow((s) => ({
-    setDrilldown: s.setDrilldown,
-    setActiveTab: s.setActiveTab,
-  })));
+  const setDrilldown = useDashboard((s) => s.setDrilldown);
 
   // D5-b: 2-state toggle — default Nominal (financial impact).
   const [variant, setVariant] = useState<Variant>('nominal');
@@ -195,19 +193,14 @@ export const ItemPriorityPanel = memo(function ItemPriorityPanel({ data }: { dat
           </button>
         )}
 
-        {/* Footer — jump to the Item tab (full TopItems + trend + patterns) */}
-        <div className="flex items-center justify-between border-t pt-2.5">
+        {/* Footer — coverage caption (UX-NAVLINK-1: the "lihat semua" jump
+            button was removed per user request — it navigated via setActiveTab
+            but the visible effect was unclear; the Item tab stays reachable
+            from the tab bar). */}
+        <div className="flex items-center border-t pt-2.5">
           <p className="text-xs text-muted-foreground tabular-nums">
             Top {shown.length} item — {variant === 'nominal' ? 'dampak finansial' : 'abnormalitas ternormalisasi'}
           </p>
-          <button
-            type="button"
-            onClick={() => setActiveTab('item')}
-            className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400 hover:underline"
-          >
-            lihat semua
-            <span aria-hidden>→</span>
-          </button>
         </div>
       </CardContent>
     </Card>

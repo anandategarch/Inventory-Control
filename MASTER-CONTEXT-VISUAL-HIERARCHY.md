@@ -523,3 +523,15 @@ ThoughtSpot, ClearPoint, IEEE, IBCS/zebrabi/inforiver, NN/g, CFPB, Cedar, Eleken
   periodSelects/orgSelects = satu sumber dua layout). (f) Judul chart pertanyaan §21 di
   5 modul diagnosis. Tetap NOL perubahan perhitungan/API/query-key. Detail: AUDIT-REPORT.md
   seksi SPEC-1.
+- **v1.4 (UXFIX-1 — 4 permintaan UX user)**: (1) tombol "lihat semua" Resto Prioritas + Item Prioritas
+  dihapus (footer caption coverage saja) → diganti **Filter Resto di Tab Resto**: SearchableComboBox
+  (useStatus cache + filter konsistensi area/pic/kelompok ala FilterBar) di bar atas tab + empty-state;
+  pilihan → `setFocusOutlet` (scope tab, bukan refilter dashboard global). (2) Drill-down "Breakdown
+  15 Sinyal Priority Score" dihapus — list statis skor/kontribusi/badge (penjelasan jadi hover `title`);
+  `signal-chart.tsx` + `chart-data-builders.ts` dihapus. (3) **Tooltip = SATU per kartu** — FormulaInfo
+  restyle "ini buat apa" bahasa mudah (UNTUK APA/CARA BACA/CONTOH bold-label, rumus footnote mono);
+  ikon ganda di GrowthComparison/TopGrowthCard/PriceEffectCard digabung. (4) **Growth Comparison
+  + Harga (AVG)**: hook `usePriceEffect` baru (queryKey shared dengan PriceEffectCard → satu request);
+  metric ke-5 bar chart (naik=amber) + drill-down **item yang harganya naik** (klik → ItemDeepDive).
+  Harga implisit dikonfirmasi = Σ|nominalDeviasi| / Σ|qtyDeviasi| per item (§22). NOL perubahan
+  perhitungan/API/query-key. Detail: AUDIT-REPORT.md seksi UXFIX-1.

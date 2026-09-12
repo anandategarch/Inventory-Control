@@ -11,9 +11,10 @@
 //      inverted), name + area meta, priority score on the
 //      right (red >=55 / amber >=30 / emerald), proportional
 //      mini-bar, min-h-11, click → setFocusOutlet (existing)
-//    - footer: "Top N dari X outlet — Y% dari deviasi · lihat
-//      semua →" jumping to the Resto tab without focusing an
-//      outlet (D7 pattern: setActiveTab('resto'))
+//    - footer: coverage caption only (UX-NAVLINK-1: the "Top N dari X
+//      outlet · lihat semua →" jump-to-tab button was removed per user
+//      request; the Resto tab + its new Filter Resto picker is the
+//      full-list entry point)
 //
 //  Data sources are UNCHANGED: the recommendations themselves
 //  stay self-fetched via useRecommendations (same hook, same
@@ -59,10 +60,9 @@ export interface RestoRecommendationCardProps {
 }
 
 export function RestoRecommendationCard({ data }: RestoRecommendationCardProps) {
-  const { outletCode, setFocusOutlet, setActiveTab } = useDashboard(useShallow((s) => ({
+  const { outletCode, setFocusOutlet } = useDashboard(useShallow((s) => ({
     outletCode: s.outletCode,
     setFocusOutlet: s.setFocusOutlet,
-    setActiveTab: s.setActiveTab,
   })));
 
   // H-11 (#4b): shared fetch — same queryKey + limit as the Resto tab's
@@ -273,21 +273,14 @@ export function RestoRecommendationCard({ data }: RestoRecommendationCardProps) 
           </button>
         )}
 
-        {/* Footer — D6/D7: coverage summary + jump to the full Resto tab
-            WITHOUT focusing a specific outlet. */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-2.5">
+        {/* Footer — D6 coverage summary (UX-NAVLINK-1: the "lihat semua →"
+            jump button was removed per user request — the Resto tab is
+            reachable from the tab bar and now has its own Filter Resto). */}
+        <div className="flex flex-wrap items-center border-t pt-2.5">
           <p className="text-xs text-muted-foreground tabular-nums">
             Top {shownCount} dari {totalOutlets} outlet
             {shareLabel && <> — <span className="font-medium text-foreground">{shareLabel}</span> dari deviasi</>}
           </p>
-          <button
-            type="button"
-            onClick={() => setActiveTab('resto')}
-            className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400 hover:underline"
-          >
-            lihat semua
-            <span aria-hidden>→</span>
-          </button>
         </div>
       </CardContent>
     </Card>

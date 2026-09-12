@@ -14,14 +14,25 @@ interface FormulaInfoProps {
 }
 
 /**
- * Info icon with tooltip showing calculation formula.
- * Use in chart card headers to explain how the metric is computed.
+ * THE single info tooltip for card/chart headers.
  *
- * Readability on dark background (bg-primary):
- * - Formula box: bg-white/10 (translucent overlay) for separation
- * - Structured labels: colored badges (UNTUK APA=emerald, CARA BACA=sky, CONTOH=amber, ACTION=rose)
- * - Description text: text-primary-foreground/90 (slightly dimmed white)
- * - leading-relaxed for comfortable line height
+ * UX-TOOLTIP-1 (user request 2025-12): cards used to show TWO info
+ * icons (InfoTooltip + FormulaInfo side by side). They are now ONE
+ * icon, and the tooltip leads with the "ini buat apa" explanation
+ * in plain Indonesian — the formula survives only as a small
+ * monospace footnote for readers who want it.
+ *
+ * Content convention (description, newline-separated):
+ *   UNTUK APA: ...  — what this card is for (always first)
+ *   CARA BACA: ...  — how to read the numbers (optional)
+ *   CONTOH: ...     — a numeric example (optional)
+ *   ACTION: ...     — what to do next (optional)
+ * Lines not starting with a known label render as plain paragraphs.
+ *
+ * Readability on the dark tooltip bg (bg-primary):
+ * - label prefixes render bold (foreground), body at /85 opacity
+ * - formula footnote: font-mono, /75 opacity, separated by a hairline
+ * - example footnote: italic, /75 opacity
  */
 export const FormulaInfo = memo(function FormulaInfo({ formula, description, example, side = 'top' }: FormulaInfoProps) {
   return (
@@ -31,42 +42,34 @@ export const FormulaInfo = memo(function FormulaInfo({ formula, description, exa
           <button
             type="button"
             className="inline-flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
-            aria-label="Lihat rumus perhitungan"
+            aria-label="Informasi — ini buat apa"
+            tabIndex={0}
           >
             <Info className="h-3.5 w-3.5" />
           </button>
         </TooltipTrigger>
-        <TooltipContent side={side} className="max-w-md p-0">
-          <div className="space-y-2 p-3">
-            <p className="text-xs font-semibold">Rumus Perhitungan</p>
-            <p className="text-[11px] font-mono bg-white/10 px-3 py-2 rounded border border-white/10">{formula}</p>
-            {description && (
-              <div className="text-[11px] leading-relaxed space-y-1">
-                {description.split('\n').map((line, i) => {
-                  if (line.trim() === '') return <div key={i} className="h-1" />;
-                  // Color-code structured labels for readability on dark bg
-                  const isUntukApa = line.startsWith('UNTUK APA:');
-                  const isCaraBaca = line.startsWith('CARA BACA:');
-                  const isContoh = line.startsWith('CONTOH:');
-                  const isAction = line.startsWith('ACTION:');
-                  const labelColor = isUntukApa ? 'text-emerald-300'
-                    : isCaraBaca ? 'text-sky-300'
-                    : isContoh ? 'text-amber-300'
-                    : isAction ? 'text-rose-300'
-                    : '';
-                  if (labelColor) {
-                    return (
-                      <p key={i}>
-                        <span className={`font-semibold ${labelColor}`}>{line}</span>
-                      </p>
-                    );
-                  }
-                  return <p key={i} className="text-primary-foreground/85">{line}</p>;
-                })}
-              </div>
+        <TooltipContent side={side} className="max-w-[320px] p-3">
+          <div className="space-y-1.5 text-xs leading-relaxed">
+            {description && description.split('\n').map((line, i) => {
+              if (line.trim() === '') return <div key={i} className="h-1" />;
+              const m = line.match(/^(UNTUK APA|CARA BACA|CONTOH|ACTION|DRILL-DOWN):\s*(.*)$/);
+              if (m) {
+                return (
+                  <p key={i}>
+                    <span className="font-semibold text-primary-foreground">{m[1]}:</span>{' '}
+                    <span className="text-primary-foreground/85">{m[2]}</span>
+                  </p>
+                );
+              }
+              return <p key={i} className="text-primary-foreground/85">{line}</p>;
+            })}
+            {formula && (
+              <p className="pt-1.5 mt-0.5 border-t border-white/15 font-mono text-[11px] leading-snug text-primary-foreground/75 break-words">
+                Rumus: {formula}
+              </p>
             )}
             {example && (
-              <p className="text-[11px] text-amber-300 italic">Contoh: {example}</p>
+              <p className="text-[11px] italic text-primary-foreground/75">Contoh: {example}</p>
             )}
           </div>
         </TooltipContent>

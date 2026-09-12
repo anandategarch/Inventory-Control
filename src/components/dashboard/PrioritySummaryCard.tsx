@@ -3,7 +3,13 @@
 // ============================================================
 //  PrioritySummaryCard — shows WHY this outlet is priority
 //  Displays: Priority Score + Level + 8 signal badges + analysis
-//  bullets + 15-signal interactive breakdown with charts
+//  bullets + 15-signal breakdown (scores & contributions)
+//
+//  UX-DRILLDOWN-1 (user request 2025-12): the per-signal drill-down
+//  (accordion expand → illustrative SignalChart) was REMOVED — the
+//  breakdown is now a static, scannable list. Signal explanations
+//  survive as the row `title` (native hover tooltip). The signal
+//  computation in ./priority-summary/* is untouched.
 //
 //  Phase 3 split: implementation lives in ./priority-summary/*
 //  This file is a thin wrapper that re-exports types for backward
@@ -14,7 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
   Target, AlertTriangle, TrendingUp, ChevronDown, ChevronRight,
-  BarChart3, Activity, Trophy,
+  Activity, Trophy,
 } from 'lucide-react';
 import { useState, useMemo, memo } from 'react';
 import { fmtIDR, fmtPctAbs } from '@/lib/format';
@@ -22,7 +28,6 @@ import {
   SIGNAL_GROUPS, SIGNAL_ICONS, SIGNAL_EXPLANATIONS,
 } from './priority-summary/constants';
 import { priorityBadge } from './priority-summary/helpers';
-import { SignalChart } from './priority-summary/signal-chart';
 import type { SignalScore, Recommendation, OutletItem } from './priority-summary/types';
 
 // Backward-compat re-exports — RestoAnalysis.tsx imports these from here.
@@ -30,7 +35,6 @@ export type { Recommendation, OutletItem };
 
 export const PrioritySummaryCard = memo(function PrioritySummaryCard({
   recommendation,
-  outletItems = [],
 }: {
   recommendation: Recommendation | null | undefined;
   outletItems?: OutletItem[];
@@ -39,42 +43,7 @@ export const PrioritySummaryCard = memo(function PrioritySummaryCard({
 
   // Pull the parts of recommendation we depend on so React Compiler can
   // track granular dependencies (optional chaining in deps arrays confuses it).
-  const outletCode = recommendation?.outletCode;
   const signalScores = recommendation?.signalScores;
-
-  // Default-expand set: signals with score > 50.
-  const defaultExpanded = useMemo<Set<string>>(() => {
-    const s = new Set<string>();
-    if (signalScores) {
-      for (const sig of signalScores) {
-        if (sig.score > 50) s.add(sig.name);
-      }
-    }
-    return s;
-  }, [signalScores]);
-
-  // FIX REACT-1: reset expanded state when outlet OR period changes (was: only outletCode).
-  // Use composite key: outletCode + monthLabel + currentWeek so switching period
-  // on same outlet resets to defaults.
-  // FIX PSC-2: include signalScores content hash in resetKey so period change triggers reset
-  const signalScoresHash = signalScores ? signalScores.map(s => `${s.name}:${s.score}`).join(',') : 'none';
-  const resetKey = `${outletCode}|${signalScoresHash}`;
-
-  const [expanded, setExpanded] = useState<Set<string>>(defaultExpanded);
-  const [expandedResetKey, setExpandedResetKey] = useState<string | undefined>(resetKey);
-  if (resetKey !== expandedResetKey) {
-    setExpandedResetKey(resetKey);
-    setExpanded(defaultExpanded);
-  }
-
-  const toggleExpand = (name: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
-  };
 
   // Top 3 contributors by score × weight (memoized before early return)
   const topContributors = useMemo(() => {
@@ -231,7 +200,8 @@ export const PrioritySummaryCard = memo(function PrioritySummaryCard({
         </div>
 
         {/* ============================================================ */}
-        {/*  BREAKDOWN 15 SINYAL — interactive accordion with charts      */}
+        {/*  BREAKDOWN 15 SINYAL — static list of scores & contributions  */}
+        {/*  (UX-DRILLDOWN-1: drill-down charts removed per user request) */}
         {/* ============================================================ */}
         {r.signalScores && r.signalScores.length > 0 && (
           <div className="border-t pt-3 space-y-3">
@@ -243,16 +213,11 @@ export const PrioritySummaryCard = memo(function PrioritySummaryCard({
             >
               {showBreakdown ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
               Breakdown 15 Sinyal Priority Score
-              <span className="ml-auto text-xs text-muted-foreground/70">{r.signalScores.filter(s => s.score > 0).length} aktif · {expanded.size} terbuka</span>
+              <span className="ml-auto text-xs text-muted-foreground/70">{r.signalScores.filter(s => s.score > 0).length} aktif</span>
             </button>
 
             {showBreakdown && (
               <div className="space-y-3">
-                {/* FIX CHART-7: disclaimer that charts use illustrative data */}
-                <p className="text-xs text-muted-foreground/70 italic">
-                  ℹ️ Chart di bawah adalah ilustrasi berdasarkan nilai sinyal. Klik sinyal untuk melihat visualisasi.
-                </p>
-
                 {/* ---- Kontributor Teratas Highlight ---- */}
                 {topContributors.length > 0 && (
                   <div className="rounded-lg border border-amber-200/60 dark:border-amber-900/40 bg-gradient-to-br from-amber-50/60 to-transparent dark:from-amber-950/20 p-3">
@@ -276,7 +241,7 @@ export const PrioritySummaryCard = memo(function PrioritySummaryCard({
                   </div>
                 )}
 
-                {/* ---- Accordion grouped by category ---- */}
+                {/* ---- Breakdown grouped by category (static rows) ---- */}
                 {SIGNAL_GROUPS.map((group) => {
                   const groupSignals = group.signals
                     .map((name) => signalByName.get(name))
@@ -284,7 +249,6 @@ export const PrioritySummaryCard = memo(function PrioritySummaryCard({
                   if (groupSignals.length === 0) return null;
                   const GroupIcon = group.icon;
                   const groupContribution = groupSignals.reduce((sum, s) => sum + Math.round(s.score * s.weight), 0);
-                  const groupExpandedCount = groupSignals.filter((s) => expanded.has(s.name)).length;
 
                   return (
                     <div key={group.name} className="rounded-lg border border-border/60 overflow-hidden">
@@ -296,65 +260,34 @@ export const PrioritySummaryCard = memo(function PrioritySummaryCard({
                         <span className="text-xs text-muted-foreground tabular-nums">
                           {groupSignals.length} sinyal · +{groupContribution}
                         </span>
-                        {groupExpandedCount > 0 && (
-                          <span className="text-[11px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 tabular-nums">
-                            {groupExpandedCount} buka
-                          </span>
-                        )}
                       </div>
 
-                      {/* Signal rows */}
+                      {/* Signal rows — static (hover title = explanation) */}
                       <div className="divide-y divide-border/40">
                         {groupSignals.map((s) => {
                           const contribution = Math.round(s.score * s.weight);
                           const badge = priorityBadge(s.score);
                           const Icon = SIGNAL_ICONS[s.name] || Activity;
-                          const isExpanded = expanded.has(s.name);
-
                           return (
-                            <div key={s.name} className="bg-background hover:bg-muted/20 transition-colors">
-                              {/* Collapsed row */}
-                              <button
-                                onClick={() => toggleExpand(s.name)}
-                                aria-expanded={isExpanded}
-                                className="w-full flex items-center gap-2 px-3 py-2 text-left"
-                              >
-                                {/* Expand chevron */}
-                                {isExpanded
-                                  ? <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
-                                  : <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />}
-                                {/* Status dot */}
-                                <span className={`h-1.5 w-1.5 rounded-full ${badge.dot} shrink-0`} />
-                                {/* Icon */}
-                                <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                                {/* Name */}
-                                <span className="text-[11px] font-medium flex-1 truncate" title={s.name}>{s.name}</span>
-                                {/* Score */}
-                                <span className="text-[11px] tabular-nums font-semibold w-7 text-right">{s.score}</span>
-                                {/* Contribution */}
-                                <span className="text-[11px] tabular-nums w-8 text-right text-muted-foreground">+{contribution}</span>
-                                {/* Value */}
-                                <span className="text-xs tabular-nums text-muted-foreground/80 w-16 text-right truncate hidden sm:block" title={s.value}>{s.value}</span>
-                                {/* Badge */}
-                                <Badge variant="outline" className={`text-[11px] h-4 px-1.5 ${badge.cls}`}>{badge.label}</Badge>
-                              </button>
-
-                              {/* Expanded chart + explanation */}
-                              {isExpanded && (
-                                <div className="px-3 pb-3 pt-1">
-                                  <div className="bg-muted/20 dark:bg-muted/10 rounded-lg p-3">
-                                    <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider flex items-center gap-1">
-                                      <BarChart3 className="h-3 w-3" />
-                                      {s.name}
-                                    </p>
-                                    <SignalChart name={s.name} r={r} items={outletItems} />
-                                  </div>
-                                  <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
-                                    <span className="font-semibold text-foreground/80">Apa ini: </span>
-                                    {SIGNAL_EXPLANATIONS[s.name] || 'Sinyal priority score dari Priority Engine.'}
-                                  </p>
-                                </div>
-                              )}
+                            <div
+                              key={s.name}
+                              className="w-full flex items-center gap-2 px-3 py-2 bg-background hover:bg-muted/20 transition-colors"
+                              title={`${s.name} — ${SIGNAL_EXPLANATIONS[s.name] || 'Sinyal priority score dari Priority Engine.'}\nNilai: ${s.value} · Skor: ${s.score} · Bobot: ${Math.round(s.weight * 100)}%`}
+                            >
+                              {/* Status dot */}
+                              <span className={`h-1.5 w-1.5 rounded-full ${badge.dot} shrink-0`} />
+                              {/* Icon */}
+                              <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                              {/* Name */}
+                              <span className="text-[11px] font-medium flex-1 truncate" title={s.name}>{s.name}</span>
+                              {/* Score */}
+                              <span className="text-[11px] tabular-nums font-semibold w-7 text-right">{s.score}</span>
+                              {/* Contribution */}
+                              <span className="text-[11px] tabular-nums w-8 text-right text-muted-foreground">+{contribution}</span>
+                              {/* Value */}
+                              <span className="text-xs tabular-nums text-muted-foreground/80 w-16 text-right truncate hidden sm:block" title={s.value}>{s.value}</span>
+                              {/* Badge */}
+                              <Badge variant="outline" className={`text-[11px] h-4 px-1.5 ${badge.cls}`}>{badge.label}</Badge>
                             </div>
                           );
                         })}

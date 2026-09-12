@@ -15,15 +15,17 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, TrendingUp, TrendingDown, Minus, AlertTriangle, Target, Activity, Calendar, Gauge, ShieldAlert } from 'lucide-react';
+import { Loader2, TrendingUp, TrendingDown, Minus, AlertTriangle, Target, Activity, Calendar, Gauge, ShieldAlert, Store } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { clickableRowProps } from '@/lib/a11y';
 import { fmtIDR, fmtNum, fmtPct, fmtDecimal } from '@/lib/format';
 import { PrioritySummaryCard } from '@/components/dashboard/PrioritySummaryCard';
 import { SectionHeader } from '@/components/dashboard/shared';
-import { useState } from 'react';
+import { SearchableComboBox } from '@/components/filters/SearchableComboBox';
+import { useMemo, useState } from 'react';
 import type { AnalysisData } from '@/hooks/useAnalysis';
+import { useStatus } from '@/hooks/useAnalysis';
 import { useRecommendations, useSharedRecommendationForOutlet } from '@/hooks/useRecommendations';
 
 import type {
@@ -51,18 +53,59 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
   // H-11 (#4b): area/kelompok/pic no longer destructured here — the
   // recommendations fetch moved to the shared hook (which reads them from
   // useDashboard itself); the outlet-items query doesn't use them.
-  const { focusOutlet, outletCode, monthLabel, currentWeek, comparisonWeek, comparisonMonth } = useDashboard(useShallow((s) => ({
+  // UX-RESTOFILTER-1 (user request 2025-12): area/kelompok/pic ARE back for
+  // the in-tab Filter Resto outlet list consistency filter, plus
+  // setFocusOutlet for the picker itself.
+  const { focusOutlet, outletCode, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, pic, setFocusOutlet } = useDashboard(useShallow((s) => ({
     focusOutlet: s.focusOutlet,
     outletCode: s.outletCode,
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
     comparisonWeek: s.comparisonWeek,
     comparisonMonth: s.comparisonMonth,
+    area: s.area,
+    kelompok: s.kelompok,
+    pic: s.pic,
+    setFocusOutlet: s.setFocusOutlet,
   })));
   // Use focusOutlet (from table click) OR outletCode (from FilterBar dropdown)
   const activeOutlet = focusOutlet || outletCode;
   const [rankingTab, setRankingTab] = useState('financial');
   const [selectedItem, setSelectedItem] = useState<{ outletCode: string; itemName: string } | null>(null);
+
+  // UX-RESTOFILTER-1: outlet list for the in-tab picker. Mirrors the global
+  // FilterBar exactly — useStatus cache (no extra request) + the same
+  // area/pic/kelompok consistency filter (BUG-FE-2), so the dropdown never
+  // offers an outlet the active filters would hide.
+  const { data: status } = useStatus();
+  const outletOptions = useMemo(() => (status?.outlets || []).filter((o) => {
+    if (area && o.area !== area) return false;
+    if (pic && o.pic !== pic) return false;
+    if (kelompok) {
+      // Same extraction as backend + FilterBar: last dot-segment, first 3 chars
+      const segs = o.code.split('.');
+      const oKelompok = (segs[segs.length - 1] || '').substring(0, 3).toUpperCase();
+      if (oKelompok !== kelompok.toUpperCase()) return false;
+    }
+    return true;
+  }), [status?.outlets, area, pic, kelompok]);
+
+  /** UX-RESTOFILTER-1: the in-tab Resto picker — picks the outlet this tab
+   *  analyzes (setFocusOutlet scopes ONLY this tab; it does not refilter
+   *  the whole dashboard the way the global FilterBar outlet does). */
+  const restoPicker = (className: string) => (
+    <SearchableComboBox
+      options={outletOptions.map((o) => ({ value: o.code, label: `${o.code} · ${o.name}`, description: o.area }))}
+      value={activeOutlet}
+      onValueChange={(code) => setFocusOutlet(code)}
+      placeholder="Pilih resto..."
+      searchPlaceholder="Cari resto (kode/nama)..."
+      emptyText="Resto tidak ditemukan."
+      allOptionLabel={`Semua / Reset pilihan (${outletOptions.length})`}
+      buttonClassName={className}
+      ariaLabel="Filter resto"
+    />
+  );
 
   const { data, isLoading, isFetching, error } = useQuery<OutletItemsResponse>({
     queryKey: ['outlet-items', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth],
@@ -125,7 +168,10 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
               </div>
             </div>
             <p className="text-sm font-medium text-muted-foreground">Pilih outlet untuk melihat Resto Analysis</p>
-            <p className="text-xs text-muted-foreground/60 mt-1">Klik baris di Resto Prioritas atau tabel peer untuk deep dive</p>
+            <p className="text-xs text-muted-foreground/60 mt-1">Gunakan filter di bawah, atau klik baris di Resto Prioritas / tabel peer</p>
+            {/* UX-RESTOFILTER-1: pick a resto directly in the tab (was only
+                reachable via Dashboard row clicks or the global FilterBar). */}
+            <div className="mt-4 w-full max-w-sm">{restoPicker('w-full')}</div>
           </div>
         </CardContent>
       </Card>
@@ -194,6 +240,24 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
 
   return (
     <div className="space-y-4">
+      {/* UX-RESTOFILTER-1 (user request 2025-12): Filter Resto — in-tab outlet
+          picker. Switching outlets here scopes ONLY this tab (focusOutlet),
+          unlike the global FilterBar outlet which refilters the dashboard. */}
+      <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
+        <CardContent className="py-2.5">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
+              <Store className="h-3.5 w-3.5" />
+            </span>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium">Filter Resto</p>
+              <p className="text-[11px] text-muted-foreground">Pilih outlet untuk dianalisis — periode mengikuti Bulan/Minggu aktif.</p>
+            </div>
+            <div className="w-full sm:w-80">{restoPicker('w-full')}</div>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Header */}
       <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
         <CardHeader className="pb-3">
@@ -235,8 +299,10 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
       </Card>
 
       {/* FIX DRILLDOWN: Priority Summary card — shows WHY this outlet is priority
-          (score, level, signals, analysis bullets, 15-signal breakdown) */}
-      <PrioritySummaryCard recommendation={recommendation} outletItems={data?.allItems || []} />
+          (score, level, signals, analysis bullets, 15-signal breakdown).
+          UX-DRILLDOWN-1: outletItems prop dropped — the per-signal drill-down
+          charts were removed from the card. */}
+      <PrioritySummaryCard recommendation={recommendation} />
 
       {/* Resto Profile — 6 Sections */}
       {/* VH-7: section header — the tab interior tells a story per section

@@ -59,7 +59,6 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ChevronDown, ChevronRight, RefreshCw, TrendingUp } from 'lucide-react';
 import { fmtNum, fmtPct, growthColor } from '@/lib/format';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
-import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import type { TopGrowthContributor, TopGrowthRow } from '@/lib/queries/growth-drivers';
 
@@ -325,13 +324,14 @@ export const TopGrowthCard = memo(function TopGrowthCard({
   // TASK H-7: formula + reading copy. Both tabs rank the signed net
   // NOMINAL deviation; the drill-down decomposes it into kuantiti
   // (volume) + nominal (value) per sub-grain.
+  // UX-TOOLTIP-1 (user request 2025-12): ONE tooltip (was FormulaInfo +
+  // InfoTooltip side by side) in simple "ini buat apa" language.
   const formulaText = 'ΔNominal Deviasi = Σ nominal deviasi (periode ini) − Σ nominal deviasi (pembanding)';
   const descriptionText =
-    'UNTUK APA: melihat resto / barang dengan pergerakan NOMINAL DEVIASI (Rp, nilai bersih bertanda) terbesar vs periode pembanding — minggu yang sama di bulan sebelumnya (otomatis), atau pembanding yang dipilih. Sumber = SUM(nominalDeviasi) per baris record — angka bertanda yang sama dengan KPI "Nominal Deviasi" di Ringkasan Eksekutif: negatif = LOSS (pemakaian melebihi BOM), positif = SURPLUS (pemakaian di bawah BOM).\n' +
-    'CARA BACA: Δ = Σ nominal deviasi sekarang − Σ pembanding (BERTANDA — nilai asli, bukan nilai mutlak; ranking berdasar |Δ|). Δ positif = deviasi bergerak ke arah SURPLUS (atau LOSS berkurang) → hijau; Δ negatif = bergerak ke arah LOSS (over-consumption meningkat) → merah. % = Δ / |Σ pembanding| — badge "Baru" saat base pembanding nol. Perubahan < Rp1.000 disaring sebagai noise. Server meranking 15, kartu menampilkan 10 teratas.\n' +
-    `DRILL-DOWN: klik baris untuk membuka ${childNoun} penyumbang terbesar di ${grainNoun} itu (top ${contributorLimit}) — diurutkan berdasar |Δ kuantiti deviasi| (volume, satuan barang), dan setiap baris juga menampilkan Δ nominal (Rp). Kuantiti 0 dengan nominal bergerak = efek harga.\n` +
-    'CONTOH: Σ nominal deviasi −500rb → −900rb: Δ = −400rb (LOSS memburuk, merah), % = −80%.';
-  const tooltipText = `Δ nominal deviasi (Rp, bertanda — nilai asli): negatif = LOSS, positif = SURPLUS (sama seperti KPI Ringkasan Eksekutif). Ranking berdasar |Δ|; ditampilkan nilai bertanda. Klik baris untuk drill-down: ${childNoun} dengan |Δ kuantiti deviasi| terbesar + Δ nominal. Rentang tanggal mengikuti minggu kumulatif (W2 = tgl 1–14).`;
+    'UNTUK APA: melihat resto / barang dengan pergerakan NOMINAL DEVIASI (Rp) terbesar vs periode pembanding — negatif = LOSS (pemakaian melebihi BOM), positif = SURPLUS.\n' +
+    'CARA BACA: ranking berdasar |Δ|; Δ negatif = LOSS memburuk (merah), Δ positif = bergerak ke arah SURPLUS (hijau). Perubahan < Rp1.000 disaring sebagai noise.\n' +
+    `DRILL-DOWN: klik baris untuk membuka ${childNoun} penyumbang terbesar di ${grainNoun} itu.\n` +
+    'CONTOH: Σ nominal deviasi −500rb → −900rb: Δ = −400rb (LOSS memburuk, merah).';
 
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
@@ -346,7 +346,6 @@ export const TopGrowthCard = memo(function TopGrowthCard({
             description={descriptionText}
             side="bottom"
           />
-          <InfoTooltip content={tooltipText} />
         </CardTitle>
         {/* SPEC-1 (§21): question-first subtitle (anti-pattern #12). */}
         <p className="text-xs text-muted-foreground ml-9"><span className="font-medium text-foreground/70">Siapa yang berubah paling besar?</span> — per resto dan per barang vs periode pembanding</p>
