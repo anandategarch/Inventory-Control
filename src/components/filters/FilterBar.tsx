@@ -149,7 +149,14 @@ export function FilterBar() {
   const compareValue = comparisonWeek
     ? `${comparisonWeek}|||${comparisonMonth || monthLabel}`
     : 'auto';
-  const hasActiveFilter = Boolean(area || kelompok || outletCode || pic);
+  // VH-3 (spec §4 L1 / D7): "Filter (n)" badge — counts the 5 dashboard
+  // filters (area, kelompok, outlet, PIC, item) that are non-null. The
+  // FilterBar has no collapse mechanism on desktop, so the badge rides the
+  // existing filter-controls row (no new collapse system); hidden when n=0.
+  const activeFilterCount = [area, kelompok, outletCode, pic, itemName].filter(Boolean).length;
+  // Item counts as an active filter too — keeps the Reset button consistent
+  // with the badge (the insight actions set `item` as a transient filter).
+  const hasActiveFilter = activeFilterCount > 0;
 
   async function handleIngest() {
     setIngesting(true);
@@ -240,6 +247,18 @@ export function FilterBar() {
       <div className="flex flex-col lg:flex-row lg:items-center gap-2 lg:gap-3">
         {/* Filter dropdowns — no labels (placeholder in dropdown is clear enough) */}
         <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
+          {/* D7: active-filter count badge — at-a-glance signal of how many
+              of the 5 filters are constraining the data (amber = watch). */}
+          {activeFilterCount > 0 && (
+            <Badge
+              variant="outline"
+              className="h-8 shrink-0 rounded-lg border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30 text-xs font-medium"
+              aria-label={`${activeFilterCount} filter aktif`}
+              title={`${activeFilterCount} filter aktif — klik Reset untuk membersihkan`}
+            >
+              Filter ({activeFilterCount})
+            </Badge>
+          )}
           <Select value={monthLabel || ''} onValueChange={handleMonthChange} disabled={isLoading}>
             <SelectTrigger className="h-8 text-xs bg-background hover:bg-muted/40 transition-colors min-w-[120px]"><SelectValue placeholder="Bulan" /></SelectTrigger>
                   <SelectContent>

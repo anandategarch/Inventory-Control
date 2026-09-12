@@ -4,6 +4,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { AnalysisData } from '@/hooks/useAnalysis';
+import { fmtHeatmapCompact, fmtIDR, formatByPreset } from '@/lib/format';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { getTooltipStyle } from '@/lib/chart-constants';
 import {
@@ -44,8 +45,8 @@ export const LossVsSurplusChart = memo(function LossVsSurplusChart({ data }: { d
             <BarChart data={chartData} margin={{ left: 0, right: 0, top: 10, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" className="opacity-60" />
               <XAxis dataKey="name" fontSize={11} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} />
-              <YAxis tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}K` : v.toFixed(0)} fontSize={11} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} />
-              <Tooltip cursor={{ fill: 'var(--muted)', opacity: 0.4, stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '3 3' }} formatter={(v: number | string) => Number(v).toLocaleString()} contentStyle={getTooltipStyle()} />
+              <YAxis tickFormatter={(v) => (v === 0 ? '0' : fmtHeatmapCompact(v))} fontSize={11} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} />
+              <Tooltip cursor={{ fill: 'var(--muted)', opacity: 0.4, stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '3 3' }} formatter={(v: number | string) => formatByPreset(Number(v), 'num0')} contentStyle={getTooltipStyle()} />
               <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
               {/* PERF (AUDIT-FE): isAnimationActive={false} — ~1.5s entrance animation
                   replays on every Radix tab re-entry (tab content unmounts) and on every
@@ -59,11 +60,11 @@ export const LossVsSurplusChart = memo(function LossVsSurplusChart({ data }: { d
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
           <div className="rounded-md border bg-red-50/40 dark:bg-red-950/20 px-3 py-1.5">
             <span className="text-muted-foreground">LOSS nominal:</span>{' '}
-            <span className="font-semibold text-red-600 dark:text-red-400 tabular-nums">Rp {(l.lossNominal / 1_000_000).toFixed(2)}Jt</span>
+            <span className="font-semibold text-red-600 dark:text-red-400 tabular-nums">{fmtIDR(l.lossNominal)}</span>
           </div>
           <div className="rounded-md border bg-emerald-50/40 dark:bg-emerald-950/20 px-3 py-1.5">
             <span className="text-muted-foreground">SURPLUS nominal:</span>{' '}
-            <span className="font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">Rp {(l.surplusNominal / 1_000_000).toFixed(2)}Jt</span>
+            <span className="font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">{fmtIDR(l.surplusNominal)}</span>
           </div>
         </div>
       </CardContent>

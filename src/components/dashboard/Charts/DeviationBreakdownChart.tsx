@@ -5,6 +5,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import type { AnalysisData } from '@/hooks/useAnalysis';
+import { fmtHeatmapCompact, fmtIDR, fmtNum, fmtPct, formatByPreset } from '@/lib/format';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import { getTooltipStyle } from '@/lib/chart-constants';
@@ -36,20 +37,11 @@ export const DeviationBreakdownChart = memo(function DeviationBreakdownChart({ d
     { name: 'Residual', value: b.residual, pct: (b.residual / total) * 100, color: b.residual / total > 0.5 ? 'var(--chart-loss)' : '#71717a', key: 'residual' },
   ];
 
-  const formatQty = (v: number) => {
-    const abs = Math.abs(v);
-    if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-    if (abs >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
-    return v.toFixed(0);
-  };
-
-  const formatRp = (v: number) => {
-    const abs = Math.abs(v);
-    if (abs >= 1_000_000_000) return `Rp ${(v / 1_000_000_000).toFixed(2)}M`;
-    if (abs >= 1_000_000) return `Rp ${(v / 1_000_000).toFixed(1)}Jt`;
-    if (abs >= 1_000) return `Rp ${(v / 1_000).toFixed(0)}Rb`;
-    return `Rp ${v.toFixed(0)}`;
-  };
+  // VH-3: local formatters delegate to lib/format (Indonesian suffixes +
+  // comma decimals — replaces the old dot-decimal "K" copies, closing the
+  // H-14-a mixed-decimal finding in this file).
+  const formatQty = (v: number) => fmtNum(v, '');
+  const formatRp = (v: number) => fmtIDR(v);
 
   const getTopDriver = (catKey: string) => {
     const cd = drivers.find(d => d.category === catKey);
@@ -86,10 +78,10 @@ export const DeviationBreakdownChart = memo(function DeviationBreakdownChart({ d
             <BarChart data={chartData} margin={{ left: 0, right: 0, top: 10, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" className="opacity-60" />
               <XAxis dataKey="name" fontSize={11} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} />
-              <YAxis tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}K` : v.toFixed(0)} fontSize={11} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} />
+              <YAxis tickFormatter={(v) => (v === 0 ? '0' : fmtHeatmapCompact(v))} fontSize={11} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} />
               <Tooltip
                 cursor={{ fill: 'var(--muted)', opacity: 0.4, stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '3 3' }}
-                formatter={(v: number | string, _n: string, p: { payload?: { pct?: number; name?: string } }) => [`${Number(v).toLocaleString()} (${p.payload?.pct?.toFixed(1) ?? '0'}%)`, p.payload?.name ?? '']}
+                formatter={(v: number | string, _n: string, p: { payload?: { pct?: number; name?: string } }) => [`${formatByPreset(Number(v), 'num0')} (${p.payload?.pct != null ? fmtPct(p.payload.pct / 100, false, 1) : '0%'})`, p.payload?.name ?? '']}
                 contentStyle={getTooltipStyle()}
               />
               {/* PERF (AUDIT-FE): isAnimationActive={false} — ~1.5s entrance animation
@@ -126,7 +118,7 @@ export const DeviationBreakdownChart = memo(function DeviationBreakdownChart({ d
                   <span className="flex items-center gap-1 min-w-0">
                     <span className="truncate max-w-[140px] text-foreground/80" title={top.name}>{top.name}</span>
                     <Badge variant="outline" className="text-[11px] h-4 px-1 shrink-0">
-                      {top.share.toFixed(0)}%
+                      {fmtPct(top.share / 100, false, 0)}
                     </Badge>
                   </span>
                 ) : (
@@ -141,7 +133,7 @@ export const DeviationBreakdownChart = memo(function DeviationBreakdownChart({ d
         {b.residual / total > 0.5 && (
           <div className="mt-2">
             <Badge variant="destructive" className="text-xs h-5 font-medium">
-              Residual {((b.residual / total) * 100).toFixed(0)}% — sebagian besar deviation tidak terjelaskan
+              Residual {fmtPct(b.residual / total, false, 0)} — sebagian besar deviation tidak terjelaskan
             </Badge>
           </div>
         )}
@@ -159,8 +151,8 @@ export const DeviationBreakdownChart = memo(function DeviationBreakdownChart({ d
                 <p className="text-xs font-semibold flex items-center gap-1.5">
                   <span className="h-2.5 w-2.5 rounded-sm" style={{ background: catColor }} />
                   {cd.label} — {catRow ? formatQty(catRow.value) : '—'}
-                  <span className="text-muted-foreground font-normal">
-                    ({catRow ? catRow.pct.toFixed(1) : '0'}% dari total)
+                  <span className="text-muted-foreground font-normal tabular-nums">
+                    ({catRow ? fmtPct(catRow.pct / 100, false, 1) : '0'} dari total)
                   </span>
                 </p>
                 <button onClick={() => setExpanded(null)} aria-label="Tutup panel Pareto" className="text-xs text-muted-foreground hover:text-foreground">
@@ -186,14 +178,14 @@ export const DeviationBreakdownChart = memo(function DeviationBreakdownChart({ d
                         <span className="w-14 text-right tabular-nums font-medium shrink-0" title={formatRp(d.nominal)}>
                           {formatQty(d.qty)}
                         </span>
-                        <span className="w-10 text-right tabular-nums text-muted-foreground">{d.sharePct.toFixed(0)}%</span>
-                        <span className="w-10 text-right tabular-nums text-muted-foreground/60">{d.cumPct.toFixed(0)}%</span>
+                        <span className="w-10 text-right tabular-nums text-muted-foreground">{fmtPct(d.sharePct / 100, false, 0)}</span>
+                        <span className="w-10 text-right tabular-nums text-muted-foreground/60">{fmtPct(d.cumPct / 100, false, 0)}</span>
                       </div>
                     ))}
                   </div>
                   {cd.remainderCount > 0 && (
                     <p className="text-[11px] text-muted-foreground/60 pl-6">
-                      Sisa {cd.remainderPct.toFixed(0)}%: {cd.remainderCount} item kecil
+                      Sisa {fmtPct(cd.remainderPct / 100, false, 0)}: {cd.remainderCount} item kecil
                     </p>
                   )}
                 </>

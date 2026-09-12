@@ -1,19 +1,24 @@
 'use client';
 
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useDashboard } from '@/hooks/useDashboard';
-import { fmtIDR, fmtPct } from '@/lib/format';
+import { fmtIDR, fmtPct, formatByPreset } from '@/lib/format';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import {
   Lightbulb, TrendingUp, TrendingDown, AlertTriangle, Coins,
-  MapPin, Package, ShieldAlert, Zap, ArrowRight,
+  MapPin, Package, ShieldAlert, Zap, ArrowRight, ChevronDown, ChevronUp,
 } from 'lucide-react';
 
 // ============================================================
 //  Insight type & severity styling
+//  VH-3 (spec §4 L4): callout-style cards — border-left only +
+//  prose (Gestalt similarity: two shapes, two meanings — data
+//  cards keep the full border, insights read as annotations).
+//  critical border-red-500 bg-red-500/5, warning border-amber-400
+//  bg-amber-50/40, positive emerald, info zinc.
 // ============================================================
 interface Insight {
   id: string;
@@ -26,46 +31,36 @@ interface Insight {
 }
 
 const SEVERITY_STYLES: Record<Insight['severity'], {
-  border: string;
-  bg: string;
-  iconBg: string;
+  container: string;
+  icon: string;
   title: string;
-  badge: string;
-  accent: string;
 }> = {
   critical: {
-    border: 'border-red-200/70 dark:border-red-900/60',
-    bg: 'bg-gradient-to-br from-red-50/80 to-red-50/30 dark:from-red-950/30 dark:to-red-950/10',
-    iconBg: 'bg-red-100 text-red-600 dark:bg-red-950/60 dark:text-red-400',
+    container: 'border-red-500 bg-red-500/5',
+    icon: 'text-red-600 dark:text-red-400',
     title: 'text-red-700 dark:text-red-400',
-    badge: 'border-red-300 text-red-700 dark:border-red-800 dark:text-red-400',
-    accent: 'bg-red-500',
   },
   warning: {
-    border: 'border-amber-200/70 dark:border-amber-900/60',
-    bg: 'bg-gradient-to-br from-amber-50/80 to-amber-50/30 dark:from-amber-950/30 dark:to-amber-950/10',
-    iconBg: 'bg-amber-100 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400',
+    container: 'border-amber-400 bg-amber-50/40 dark:bg-amber-950/20',
+    icon: 'text-amber-600 dark:text-amber-400',
     title: 'text-amber-700 dark:text-amber-400',
-    badge: 'border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-400',
-    accent: 'bg-amber-500',
   },
   info: {
-    border: 'border-zinc-200/80 dark:border-zinc-800/60',
-    bg: 'bg-gradient-to-br from-zinc-50/80 to-zinc-50/30 dark:from-zinc-900/40 dark:to-zinc-900/10',
-    iconBg: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800/60 dark:text-zinc-300',
+    container: 'border-zinc-400 bg-zinc-50/40 dark:bg-zinc-900/20',
+    icon: 'text-zinc-600 dark:text-zinc-300',
     title: 'text-zinc-700 dark:text-zinc-300',
-    badge: 'border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-300',
-    accent: 'bg-zinc-500',
   },
   positive: {
-    border: 'border-emerald-200/70 dark:border-emerald-900/60',
-    bg: 'bg-gradient-to-br from-emerald-50/80 to-emerald-50/30 dark:from-emerald-950/30 dark:to-emerald-950/10',
-    iconBg: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400',
+    container: 'border-emerald-500 bg-emerald-50/40 dark:bg-emerald-950/20',
+    icon: 'text-emerald-600 dark:text-emerald-400',
     title: 'text-emerald-700 dark:text-emerald-400',
-    badge: 'border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-400',
-    accent: 'bg-emerald-500',
   },
 };
+
+// VH-3 (spec §4 L4): at most 5 insight cards visible by default —
+// the rest collapse behind an "N lainnya" expander (progressive
+// disclosure; the summary count badges above stay complete).
+const MAX_VISIBLE = 5;
 
 // ============================================================
 //  buildInsights — auto-generate up to 10 textual insights
@@ -84,7 +79,7 @@ function buildInsights(data: AnalysisData): Insight[] {
       icon: <ShieldAlert className="h-4 w-4" />,
       severity: 'critical',
       title: 'Kondisi Inventory KRITIS',
-      body: `${abnormalPct.toFixed(1)}% record abnormal (>20%). ${hs.abnormal.toLocaleString()} dari ${total.toLocaleString()} record memerlukan investigasi segera.`,
+      body: `${fmtPct(abnormalPct / 100, false, 1)} record abnormal (>20%). ${hs.abnormal.toLocaleString('id-ID')} dari ${total.toLocaleString('id-ID')} record memerlukan investigasi segera.`,
     });
   } else if (abnormalPct > 5) {
     out.push({
@@ -92,7 +87,7 @@ function buildInsights(data: AnalysisData): Insight[] {
       icon: <AlertTriangle className="h-4 w-4" />,
       severity: 'warning',
       title: 'Kondisi Inventory Perlu Perhatian',
-      body: `${abnormalPct.toFixed(1)}% record abnormal (5-20%). ${hs.abnormal.toLocaleString()} dari ${total.toLocaleString()} record perlu monitoring.`,
+      body: `${fmtPct(abnormalPct / 100, false, 1)} record abnormal (5-20%). ${hs.abnormal.toLocaleString('id-ID')} dari ${total.toLocaleString('id-ID')} record perlu monitoring.`,
     });
   } else {
     out.push({
@@ -100,7 +95,7 @@ function buildInsights(data: AnalysisData): Insight[] {
       icon: <Lightbulb className="h-4 w-4" />,
       severity: 'positive',
       title: 'Kondisi Inventory Sehat',
-      body: `Hanya ${abnormalPct.toFixed(1)}% record abnormal (<5%). ${hs.normal.toLocaleString()} dari ${total.toLocaleString()} record dalam kondisi normal.`,
+      body: `Hanya ${fmtPct(abnormalPct / 100, false, 1)} record abnormal (<5%). ${hs.normal.toLocaleString('id-ID')} dari ${total.toLocaleString('id-ID')} record dalam kondisi normal.`,
     });
   }
 
@@ -126,7 +121,7 @@ function buildInsights(data: AnalysisData): Insight[] {
       icon: <AlertTriangle className="h-4 w-4" />,
       severity: 'warning',
       title: 'RESIDUAL Dominan',
-      body: `${(residualPct * 100).toFixed(1)}% QTY Deviasi tidak terjelaskan oleh Waste/Susut/Trial. Perlu validasi actual usage vs SOC dan sampling fisik.`,
+      body: `${fmtPct(residualPct, false, 1)} QTY Deviasi tidak terjelaskan oleh Waste/Susut/Trial. Perlu validasi actual usage vs SOC dan sampling fisik.`,
     });
   }
 
@@ -138,13 +133,15 @@ function buildInsights(data: AnalysisData): Insight[] {
     const best = sorted[sorted.length - 1];
     const worstPct = (worst.lossToSales ?? 0) * 100;
     const bestPct = (best.lossToSales ?? 0) * 100;
+    // ppt gap between the worst and best area (percent points, not a ratio).
+    const delta = worstPct - bestPct;
     const sev: Insight['severity'] = worstPct > 10 ? 'critical' : worstPct > 5 ? 'warning' : 'info';
     out.push({
       id: 'area-worst',
       icon: <MapPin className="h-4 w-4" />,
       severity: sev,
       title: `Area Terburuk: ${worst.area}`,
-      body: `LOSS/PENJUALAN ${worstPct.toFixed(2)}% (vs ${best.area} ${bestPct.toFixed(2)}%). Selisih ${(worstPct - bestPct).toFixed(2)} ppt. ${worst.outletCount} outlet di area ini.`,
+      body: `LOSS/PENJUALAN ${fmtPct(worst.lossToSales ?? 0, false, 2)} (vs ${best.area} ${fmtPct(best.lossToSales ?? 0, false, 2)}). Selisih ${delta > 0 ? '+' : ''}${formatByPreset(delta, 'num2')} ppt. ${worst.outletCount} outlet di area ini.`,
       action: `Fokus ke ${worst.area}`,
       actionTarget: { type: 'area', value: worst.area },
     });
@@ -160,7 +157,7 @@ function buildInsights(data: AnalysisData): Insight[] {
       icon: <Coins className="h-4 w-4" />,
       severity: sev,
       title: 'Biaya Bocor',
-      body: `Total |NOMINAL DEVIASI| ${fmtIDR(ci.totalCost)} setara ${pct.toFixed(2)}% dari PENJUALAN. LOSS ${fmtIDR(ci.lossNominal)} · SURPLUS ${fmtIDR(ci.surplusNominal)}.`,
+      body: `Total |NOMINAL DEVIASI| ${fmtIDR(ci.totalCost)} setara ${fmtPct(ci.pctOfSales ?? 0, false, 2)} dari PENJUALAN. LOSS ${fmtIDR(ci.lossNominal)} · SURPLUS ${fmtIDR(ci.surplusNominal)}.`,
     });
   }
 
@@ -191,7 +188,7 @@ function buildInsights(data: AnalysisData): Insight[] {
         icon: <TrendingDown className="h-4 w-4" />,
         severity: 'warning',
         title: 'Tren Biaya Neto Memburuk',
-        body: `Net cost ratio naik dari ${(first.netCostRatio * 100).toFixed(2)}% → ${(last.netCostRatio * 100).toFixed(2)}% (+${delta.toFixed(2)} ppt). LOSS meningkat lebih cepat dari SURPLUS.`,
+        body: `Net cost ratio naik dari ${fmtPct(first.netCostRatio, false, 2)} → ${fmtPct(last.netCostRatio, false, 2)} (+${formatByPreset(delta, 'num2')} ppt). LOSS meningkat lebih cepat dari SURPLUS.`,
       });
     } else if (delta < -0.5) {
       out.push({
@@ -199,7 +196,7 @@ function buildInsights(data: AnalysisData): Insight[] {
         icon: <TrendingUp className="h-4 w-4" />,
         severity: 'positive',
         title: 'Tren Biaya Neto Membaik',
-        body: `Net cost ratio turun dari ${(first.netCostRatio * 100).toFixed(2)}% → ${(last.netCostRatio * 100).toFixed(2)}% (${delta.toFixed(2)} ppt). Investigasi mitigasi berhasil atau SURPLUS naik.`,
+        body: `Net cost ratio turun dari ${fmtPct(first.netCostRatio, false, 2)} → ${fmtPct(last.netCostRatio, false, 2)} (${formatByPreset(delta, 'num2')} ppt). Investigasi mitigasi berhasil atau SURPLUS naik.`,
       });
     }
   }
@@ -215,7 +212,7 @@ function buildInsights(data: AnalysisData): Insight[] {
         icon: <TrendingDown className="h-4 w-4" />,
         severity: 'warning',
         title: 'Dominasi LOSS',
-        body: `${(lossShare * 100).toFixed(1)}% nominal deviation adalah LOSS (pemakaian aktual > SOC). Hanya ${((1 - lossShare) * 100).toFixed(1)}% SURPLUS. Fokus pada pencegahan over-usage.`,
+        body: `${fmtPct(lossShare, false, 1)} nominal deviation adalah LOSS (pemakaian aktual > SOC). Hanya ${fmtPct(1 - lossShare, false, 1)} SURPLUS. Fokus pada pencegahan over-usage.`,
       });
     } else if (lossShare < 0.40) {
       out.push({
@@ -223,7 +220,7 @@ function buildInsights(data: AnalysisData): Insight[] {
         icon: <TrendingUp className="h-4 w-4" />,
         severity: 'warning',
         title: 'Dominasi SURPLUS',
-        body: `${((1 - lossShare) * 100).toFixed(1)}% nominal deviation adalah SURPLUS (pemakaian aktual < SOC). Hanya ${(lossShare * 100).toFixed(1)}% LOSS. Periksa apakah SOC terlalu tinggi atau ada under-reporting.`,
+        body: `${fmtPct(1 - lossShare, false, 1)} nominal deviation adalah SURPLUS (pemakaian aktual < SOC). Hanya ${fmtPct(lossShare, false, 1)} LOSS. Periksa apakah SOC terlalu tinggi atau ada under-reporting.`,
       });
     }
   }
@@ -237,7 +234,7 @@ function buildInsights(data: AnalysisData): Insight[] {
       icon: <AlertTriangle className="h-4 w-4" />,
       severity: 'critical',
       title: `Anomali Historical: ${top.outletCode}`,
-      body: `${top.itemName} di ${top.outletCode} (${top.area}) memiliki z-score ${top.zScore.toFixed(2)} vs rata-rata historical. Current Dev/BOM ${(top.currentDevBom * 100).toFixed(1)}% vs rata-rata ${(top.historicalAvg * 100).toFixed(1)}%.`,
+      body: `${top.itemName} di ${top.outletCode} (${top.area}) memiliki z-score ${formatByPreset(top.zScore, 'num2')} vs rata-rata historical. Current Dev/BOM ${fmtPct(top.currentDevBom, false, 1)} vs rata-rata ${fmtPct(top.historicalAvg, false, 1)}.`,
       action: 'Drill-down item',
       actionTarget: { type: 'item', value: top.itemName },
     });
@@ -256,6 +253,9 @@ export const InsightsPanel = memo(function InsightsPanel({ data }: { data: Analy
   const setItem = useDashboard((s) => s.setItem);
   const setDrilldown = useDashboard((s) => s.setDrilldown);
   const setDeepDiveItem = useDashboard((s) => s.setDeepDiveItem);
+  // VH-3 (spec §4 L4): ≤5 cards visible by default, "N lainnya" expander
+  // for the rest.
+  const [showAll, setShowAll] = useState(false);
 
   const insights = buildInsights(data);
   const counts = {
@@ -264,6 +264,8 @@ export const InsightsPanel = memo(function InsightsPanel({ data }: { data: Analy
     info: insights.filter((i) => i.severity === 'info').length,
     positive: insights.filter((i) => i.severity === 'positive').length,
   };
+  const visible = showAll ? insights : insights.slice(0, MAX_VISIBLE);
+  const hiddenCount = insights.length - visible.length;
 
   const onAction = (insight: Insight) => {
     if (!insight.actionTarget) return;
@@ -330,21 +332,20 @@ export const InsightsPanel = memo(function InsightsPanel({ data }: { data: Analy
           </div>
         ) : (
           <div className="grid md:grid-cols-2 gap-3">
-            {insights.map((insight) => {
+            {visible.map((insight) => {
               const style = SEVERITY_STYLES[insight.severity];
               return (
+                // VH-3 (spec §4 L4): callout anatomy — border-left accent +
+                // tint, no icon chip / lift / full border (that chrome now
+                // belongs to DATA cards; insights read as annotations).
                 <div
                   key={insight.id}
-                  className={`relative rounded-lg border ${style.border} ${style.bg} p-3 pl-4 flex items-start gap-3 transition-all duration-200 shadow-sm hover:shadow-md hover:-translate-y-0.5`}
+                  className={`rounded-r-lg border-l-4 p-3 pl-4 flex items-start gap-2.5 ${style.container}`}
                 >
-                  {/* Left accent bar */}
-                  <span className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-lg ${style.accent}`} aria-hidden />
-                  <div className={`shrink-0 h-8 w-8 rounded-lg flex items-center justify-center ${style.iconBg} shadow-sm`}>
-                    {insight.icon}
-                  </div>
+                  <span className={`shrink-0 mt-0.5 ${style.icon}`}>{insight.icon}</span>
                   <div className="flex-1 min-w-0">
                     <p className={`text-sm font-semibold ${style.title}`}>{insight.title}</p>
-                    <p className="text-xs text-foreground/80 mt-1 leading-relaxed">{insight.body}</p>
+                    <p className="text-sm leading-relaxed text-foreground/90 mt-1">{insight.body}</p>
                     {insight.action && insight.actionTarget && (
                       <Button
                         variant="ghost"
@@ -361,6 +362,28 @@ export const InsightsPanel = memo(function InsightsPanel({ data }: { data: Analy
               );
             })}
           </div>
+        )}
+        {/* "N lainnya" expander — progressive disclosure for the tail */}
+        {insights.length > MAX_VISIBLE && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="mt-3 h-7 px-2 text-xs text-muted-foreground"
+            onClick={() => setShowAll((v) => !v)}
+            aria-expanded={showAll}
+          >
+            {showAll ? (
+              <>
+                <ChevronUp className="h-3.5 w-3.5 mr-1" />
+                Tampilkan lebih sedikit
+              </>
+            ) : (
+              <>
+                <ChevronDown className="h-3.5 w-3.5 mr-1" />
+                Tampilkan {hiddenCount} insight lainnya
+              </>
+            )}
+          </Button>
         )}
       </CardContent>
     </Card>

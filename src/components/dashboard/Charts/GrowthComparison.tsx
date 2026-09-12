@@ -4,7 +4,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { fmtPct } from '@/lib/format';
+import { fmtNum, fmtPct } from '@/lib/format';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
@@ -61,13 +61,10 @@ export const GrowthComparison = memo(function GrowthComparison({ data }: { data:
     return null;
   };
 
-  const formatDelta = (v: number) => {
-    const abs = Math.abs(v);
-    if (abs >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(2)}M`;
-    if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}Jt`;
-    if (abs >= 1_000) return `${(v / 1_000).toFixed(0)}Rb`;
-    return v.toFixed(0);
-  };
+  // VH-3: delegates to lib/format fmtNum (Indonesian suffixes + comma
+  // decimals — normalizes the old dot-decimal local copy, closing the
+  // H-14-a mixed-decimal finding in this file).
+  const formatDelta = (v: number) => fmtNum(v);
 
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
@@ -154,8 +151,8 @@ export const GrowthComparison = memo(function GrowthComparison({ data }: { data:
                         <span className={`truncate max-w-[140px] ${top.dir === 'up' ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`} title={top.name}>
                           {top.name}
                         </span>
-                        <Badge variant="outline" className="text-[11px] h-4 px-1 shrink-0">
-                          {top.share.toFixed(0)}%
+                        <Badge variant="outline" className="text-[11px] h-4 px-1 shrink-0 tabular-nums">
+                          {fmtPct(top.share / 100, false, 0)}
                         </Badge>
                       </span>
                     ) : (
@@ -193,7 +190,7 @@ export const GrowthComparison = memo(function GrowthComparison({ data }: { data:
                 <div id={panelId} role="region" aria-label={`${md.label} Pareto 80% detail`} className="mt-3 rounded-lg border p-3 space-y-3 bg-muted/20">
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-semibold">
-                      {md.label} — {growthVal != null ? `${(growthVal * 100).toFixed(1)}%` : '—'}
+                      {md.label} — {growthVal != null ? fmtPct(growthVal, true, 1) : '—'}
                     </p>
                     <button onClick={() => setExpanded(null)} aria-label="Tutup panel Pareto" className="text-xs text-muted-foreground hover:text-foreground">
                       ✕ Tutup
@@ -214,16 +211,16 @@ export const GrowthComparison = memo(function GrowthComparison({ data }: { data:
                             <div className="w-20 h-2 rounded-full bg-muted overflow-hidden shrink-0">
                               <div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, d.sharePct)}%` }} />
                             </div>
-                            <span className="w-12 text-right tabular-nums text-emerald-600 dark:text-emerald-400 font-medium shrink-0">
+                            <span className="w-14 text-right tabular-nums text-emerald-600 dark:text-emerald-400 font-medium shrink-0">
                               +{formatDelta(d.delta)}
                             </span>
-                            <span className="w-8 text-right tabular-nums text-muted-foreground">{d.sharePct.toFixed(0)}%</span>
-                            <span className="w-10 text-right tabular-nums text-muted-foreground/60">{d.cumPct.toFixed(0)}%</span>
+                            <span className="w-9 text-right tabular-nums text-muted-foreground">{fmtPct(d.sharePct / 100, false, 0)}</span>
+                            <span className="w-10 text-right tabular-nums text-muted-foreground/60">{fmtPct(d.cumPct / 100, false, 0)}</span>
                           </div>
                         ))}
                         {md.up.remainderCount > 0 && (
                           <p className="text-[11px] text-muted-foreground/60 pl-6">
-                            Sisa {md.up.remainderPct.toFixed(0)}%: {md.up.remainderCount} item kecil
+                            Sisa {fmtPct(md.up.remainderPct / 100, false, 0)}: {md.up.remainderCount} item kecil
                           </p>
                         )}
                       </div>
@@ -244,16 +241,16 @@ export const GrowthComparison = memo(function GrowthComparison({ data }: { data:
                             <div className="w-20 h-2 rounded-full bg-muted overflow-hidden shrink-0">
                               <div className="h-full bg-red-500" style={{ width: `${Math.min(100, d.sharePct)}%` }} />
                             </div>
-                            <span className="w-12 text-right tabular-nums text-red-600 dark:text-red-400 font-medium shrink-0">
+                            <span className="w-14 text-right tabular-nums text-red-600 dark:text-red-400 font-medium shrink-0">
                               {formatDelta(d.delta)}
                             </span>
-                            <span className="w-8 text-right tabular-nums text-muted-foreground">{d.sharePct.toFixed(0)}%</span>
-                            <span className="w-10 text-right tabular-nums text-muted-foreground/60">{d.cumPct.toFixed(0)}%</span>
+                            <span className="w-9 text-right tabular-nums text-muted-foreground">{fmtPct(d.sharePct / 100, false, 0)}</span>
+                            <span className="w-10 text-right tabular-nums text-muted-foreground/60">{fmtPct(d.cumPct / 100, false, 0)}</span>
                           </div>
                         ))}
                         {md.down.remainderCount > 0 && (
                           <p className="text-[11px] text-muted-foreground/60 pl-6">
-                            Sisa {md.down.remainderPct.toFixed(0)}%: {md.down.remainderCount} item kecil
+                            Sisa {fmtPct(md.down.remainderPct / 100, false, 0)}: {md.down.remainderCount} item kecil
                           </p>
                         )}
                       </div>

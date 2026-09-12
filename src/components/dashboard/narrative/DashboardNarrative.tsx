@@ -10,19 +10,20 @@
 //  narrative and its scroll position survives.
 //
 //  Layer story (Minto pyramid — answer first, evidence later):
-//    01 EXECUTIVE STATUS      — WHAT / HOW MUCH (KPI + health)
+//    01 EXECUTIVE STATUS      — WHAT / HOW MUCH (4 KPI + cascade)
 //    02 WHAT NEEDS ATTENTION  — WHERE (priority resto + items)
 //    03 WHY IT HAPPENED       — WHY, hypothesis (auto insights)
 //    04 DIAGNOSIS             — WHY, measured (growth /
 //                               breakdown / price effect /
 //                               top growth / loss vs surplus)
 //
-//  Every section keeps the modules AS-IS (no reskin — that is
-//  VH-3): ErrorBoundary per module, lazy chart imports with
-//  LoadingChart fallbacks, same grids. Only the layer grouping
-//  + LayerHeader eyebrows + the space-y-8 md:space-y-10
-//  inter-layer rhythm are new (spec §5.3: layer gap ≥ 2× the
-//  16px card gap).
+//  VH-3: the presentation layers are now reskinned per the spec
+//  tokens (ExecutiveStatus 4-KPI, compact L3 panels, callout
+//  insights, collapsible L5). Kept from VH-1: ErrorBoundary per
+//  module, lazy chart imports with LoadingChart fallbacks, the
+//  layer grouping + LayerHeader eyebrows + the space-y-8
+//  md:space-y-10 inter-layer rhythm (spec §5.3: layer gap ≥ 2×
+//  the 16px card gap).
 //
 //  PERF-FE: wrapped in React.memo for the same reason as the
 //  old DashboardTab — the parent (page.tsx) re-renders on any
@@ -33,17 +34,14 @@
 
 import { memo } from 'react';
 import dynamic from 'next/dynamic';
-import { BarChart3 } from 'lucide-react';
-import { ExecutiveSummary, HealthAlert } from '@/components/dashboard/ExecutiveSummary';
-import { TopItemsByNominal, TopItemsByDevBom } from '@/components/dashboard/TopItems';
+import { ExecutiveStatus } from '@/components/dashboard/narrative/ExecutiveStatus';
+import { ItemPriorityPanel } from '@/components/dashboard/narrative/ItemPriorityPanel';
 import { InsightsPanel } from '@/components/dashboard/InsightsPanel';
 import { RestoRecommendationCard } from '@/components/dashboard/RestoRecommendationCard';
 import { PriceEffectCard } from '@/components/dashboard/PriceEffectCard';
 import { TopGrowthCard } from '@/components/dashboard/TopGrowthCard';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
-import {
-  LoadingChart, SectionHeader, LayerHeader,
-} from '@/components/dashboard/shared';
+import { LoadingChart, LayerHeader } from '@/components/dashboard/shared';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 
 // Phase 4: Lazy-load heavy chart components (Recharts = 5.4MB)
@@ -65,54 +63,35 @@ export const DashboardNarrative = memo(function DashboardNarrative({ data, onRef
       {/* ====== L2 — EXECUTIVE STATUS (what / how much) ====== */}
       <section id="l2-status" aria-labelledby="l2-header" className="space-y-4 scroll-mt-32">
         <LayerHeader number="01" title="EXECUTIVE STATUS" id="l2-header" />
-        {/* HealthAlert keeps its as-is width (1 column of a 3-col grid);
-            ExecutiveSummary takes the remaining 2 columns. Cards are NOT
-            redesigned (reskin = VH-3). */}
-        <div className="grid lg:grid-cols-3 gap-4 min-w-0">
-          <div className="lg:col-span-2 min-w-0">
-            <ErrorBoundary label="Executive Summary">
-              <ExecutiveSummary data={data} />
-            </ErrorBoundary>
-          </div>
-          <ErrorBoundary label="Health Alert">
-            <HealthAlert data={data} />
-          </ErrorBoundary>
-        </div>
+        {/* VH-3 (D1-c): the old ExecutiveSummary + HealthAlert pair is
+            absorbed into ExecutiveStatus — 4 KPI (Deviasi hero + Residual
+            + Dev/BOM + Health) + the GROSS→W/S/T→NET cascade strip. */}
+        <ErrorBoundary label="Executive Status">
+          <ExecutiveStatus data={data} />
+        </ErrorBoundary>
       </section>
 
       {/* ====== L3 — WHAT NEEDS ATTENTION (where) ====== */}
       <section id="l3-attention" aria-labelledby="l3-header" className="space-y-4 scroll-mt-32">
         <LayerHeader number="02" title="WHAT NEEDS ATTENTION" id="l3-header" />
         <div className="grid lg:grid-cols-2 gap-4 min-w-0">
-          {/* Section: Resto Recommendation Engine (self-fetch, no data prop) */}
+          {/* Section: Resto Recommendation Engine (self-fetch, no change to the
+              hook/query; the analysis payload rides along for the D6 adaptive
+              rule + footer coverage stats). */}
           <ErrorBoundary label="Resto Prioritas Analisa">
-            <RestoRecommendationCard />
+            <RestoRecommendationCard data={data} />
           </ErrorBoundary>
-          {/* Section: Top Items
-              H-11 (#4a — UI dedup): the Dashboard's Top Outlets card was REMOVED —
-              it duplicated the Pareto tab's "Top Outlets (80% Deviation)"
-              QuadrantCard (same ABS(SUM(nominalDeviasi)) ranking, two backend
-              scans). The Pareto tab keeps the quadrant card (it is one of the 5
-              Pareto dimensions); outlet prioritization here is covered by Resto
-              Prioritas Analisa (left column) + Ranking Kondisi Outlet (Area tab).
-              STRUCTURAL (S-1, adapted): still directly after the executive
-              status layer — workflow Monitor (KPI) → Detect (which items
-              deviate most) → supporting analysis. */}
-          <div className="min-w-0">
-            <SectionHeader
-              icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
-              title="Item Prioritas"
-            />
-            {/* FIX (UI-05): min-w-0 on the wrapper prevents overflow.
-                Inside the L3 half-width column the two variants stack
-                (they were side-by-side at full width in the old Dashboard). */}
-            <div className="space-y-4 min-w-0">
-              <ErrorBoundary label="Top Items">
-                <TopItemsByNominal data={data} />
-                <TopItemsByDevBom data={data} />
-              </ErrorBoundary>
-            </div>
-          </div>
+          {/* Section: Top Items — VH-3 compact panel (D5-b toggle Nominal |
+              Dev/BOM, top-3 + expand, click → drill-down). The FULL TopItems
+              cards live in the Item tab (tabs/ItemTab.tsx, untouched).
+              H-11 (#4a — UI dedup): the Dashboard's Top Outlets card was
+              REMOVED — it duplicated the Pareto tab's "Top Outlets (80%
+              Deviation)" QuadrantCard; outlet prioritization here is covered
+              by Resto Prioritas Analisa (left column) + Ranking Kondisi
+              Outlet (Area tab). */}
+          <ErrorBoundary label="Item Prioritas">
+            <ItemPriorityPanel data={data} />
+          </ErrorBoundary>
         </div>
       </section>
 

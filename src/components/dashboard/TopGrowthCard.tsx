@@ -57,7 +57,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ChevronDown, ChevronRight, RefreshCw, TrendingUp } from 'lucide-react';
-import { fmtGrowth, growthColor } from '@/lib/format';
+import { fmtNum, fmtPct, growthColor } from '@/lib/format';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import type { AnalysisData } from '@/hooks/useAnalysis';
@@ -71,16 +71,13 @@ const CONTRIBUTOR_LIMIT_FALLBACK = 5;
 type Grain = 'outlet' | 'item';
 
 // ------------------------------------------------------------
-//  Formatting — compact signed nominal delta, mirrored verbatim
-//  from GrowthComparison.tsx formatDelta so the two growth sections
-//  (same tab, adjacent sections) read identically.
+//  Formatting — compact signed nominal delta.
+//  VH-3: delegates to lib/format fmtNum (Indonesian suffixes +
+//  comma decimals — normalizes the old dot-decimal local copy,
+//  closing the H-14-a mixed-decimal finding in this file).
 // ------------------------------------------------------------
 function formatDelta(v: number): string {
-  const abs = Math.abs(v);
-  if (abs >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(2)}M`;
-  if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}Jt`;
-  if (abs >= 1_000) return `${(v / 1_000).toFixed(0)}Rb`;
-  return v.toFixed(0);
+  return fmtNum(v);
 }
 
 function formatDeltaSigned(v: number): string {
@@ -428,7 +425,7 @@ export const TopGrowthCard = memo(function TopGrowthCard({
                             Baru
                           </Badge>
                         ) : (
-                          <span className={`tabular-nums ${growthColor(r.pct)}`}>{fmtGrowth(r.pct)}</span>
+                          <span className={`tabular-nums ${growthColor(r.pct)}`}>{fmtPct(r.pct, true, 1)}</span>
                         )}
                       </span>
                     </button>

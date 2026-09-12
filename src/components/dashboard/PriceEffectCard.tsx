@@ -28,10 +28,11 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tags } from 'lucide-react';
+import { ChevronDown, ChevronRight, Tags } from 'lucide-react';
 import { fmtIDR, fmtPct } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
@@ -180,6 +181,10 @@ export const PriceEffectCard = memo(function PriceEffectCard() {
   })));
 
   const [sortMode, setSortMode] = useState<SortMode>('nominal');
+  // VH-3 (spec §4 L5): the Bennet items table is COLLAPSIBLE — default view
+  // is the compact 4-tile summary + domination badge; the full table (and its
+  // sort chips) expand on demand (progressive disclosure).
+  const [tableOpen, setTableOpen] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['price-effect', monthLabel, currentWeek, comparisonMonth, comparisonWeek, area, kelompok, outletCode, pic],
@@ -269,7 +274,7 @@ export const PriceEffectCard = memo(function PriceEffectCard() {
           </div>
         ) : (
           <div className="space-y-4">
-            {/* Summary tiles */}
+            {/* Summary tiles (compact default view) */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               <SummaryTile
                 label="Δ |Nominal Deviasi|"
@@ -282,20 +287,74 @@ export const PriceEffectCard = memo(function PriceEffectCard() {
                 value={fmtIDR(s.priceEffect)}
                 valueCls={effectColor(s.priceEffect)}
                 bar={s.priceSharePct != null ? { priceSharePct: s.priceSharePct } : undefined}
-                sub={s.priceSharePct != null ? `${s.priceSharePct.toFixed(1)}% dari total efek` : 'tidak ada efek'}
+                sub={s.priceSharePct != null ? `${fmtPct(s.priceSharePct / 100, false, 1)} dari total efek` : 'tidak ada efek'}
               />
               <SummaryTile
                 label="Efek Kuantitas"
                 value={fmtIDR(s.qtyEffect)}
                 valueCls={effectColor(s.qtyEffect)}
-                sub={s.priceSharePct != null ? `${(100 - s.priceSharePct).toFixed(1)}% dari total efek` : 'tidak ada efek'}
+                sub={s.priceSharePct != null ? `${fmtPct((100 - s.priceSharePct) / 100, false, 1)} dari total efek` : 'tidak ada efek'}
               />
               <SummaryTile
                 label="AVG Price Δ (nasional)"
                 value={s.avgPriceChangePct != null ? fmtPctSigned(s.avgPriceChangePct / 100) : '—'}
                 valueCls={priceGrowthColor(s.avgPriceChangePct != null ? s.avgPriceChangePct / 100 : null)}
-                sub={`median ${s.medianPriceChangePct != null ? s.medianPriceChangePct.toFixed(1) + '%' : '—'} · naik ${s.itemsPriceUp} / turun ${s.itemsPriceDown} item`}
+                sub={`median ${s.medianPriceChangePct != null ? fmtPct(s.medianPriceChangePct / 100, false, 1) : '—'} · naik ${s.itemsPriceUp} / turun ${s.itemsPriceDown} item`}
               />
+            </div>
+
+            {/* VH-3: domination badge (which effect drives the Δ overall) +
+                the collapsible toggle for the per-item Bennet table. */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              {(() => {
+                // Same 70/30 driver thresholds the per-item badges use.
+                const ps = s.priceSharePct;
+                if (ps == null) {
+                  return (
+                    <Badge variant="outline" className="text-xs h-6 font-medium border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-300 bg-zinc-50/60 dark:bg-zinc-900/30">
+                      Belum ada efek teramati
+                    </Badge>
+                  );
+                }
+                if (ps >= 70) {
+                  return (
+                    <Badge variant="outline" className="text-xs h-6 font-medium border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30" title="≥70% dari total efek berasal dari pergerakan harga — tekanan harga, bukan pemborosan operasional">
+                      Didominasi HARGA · {fmtPct(ps / 100, false, 0)}
+                    </Badge>
+                  );
+                }
+                if (ps <= 30) {
+                  return (
+                    <Badge variant="outline" className="text-xs h-6 font-medium border-red-300 text-red-700 dark:border-red-800 dark:text-red-400 bg-red-50/60 dark:bg-red-950/30" title="≥70% dari total efek berasal dari perubahan kuantitas deviation — target investigasi operasional">
+                      Didominasi KUANTITAS · {fmtPct((100 - ps) / 100, false, 0)}
+                    </Badge>
+                  );
+                }
+                return (
+                  <Badge variant="outline" className="text-xs h-6 font-medium border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-300 bg-zinc-50/60 dark:bg-zinc-900/30" title="Efek harga dan kuantitas berkontribusi seimbang (30–70%)">
+                    Campuran Harga/Kuantitas
+                  </Badge>
+                );
+              })()}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1 px-2 text-xs text-muted-foreground"
+                onClick={() => setTableOpen((v) => !v)}
+                aria-expanded={tableOpen}
+              >
+                {tableOpen ? (
+                  <>
+                    <ChevronDown className="h-3.5 w-3.5" />
+                    Sembunyikan tabel item
+                  </>
+                ) : (
+                  <>
+                    <ChevronRight className="h-3.5 w-3.5" />
+                    Tabel detail item ({sortedItems.length})
+                  </>
+                )}
+              </Button>
             </div>
 
             {/* Reconciliation note — items outside the decomposition */}
@@ -309,75 +368,79 @@ export const PriceEffectCard = memo(function PriceEffectCard() {
               </p>
             )}
 
-            {/* Sort chips */}
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mr-1">Urutkan</span>
-              {SORT_OPTIONS.map((opt) => (
-                <button
-                  key={opt.key}
-                  type="button"
-                  onClick={() => setSortMode(opt.key)}
-                  className={`h-6 rounded-full px-2.5 text-xs font-medium border transition-colors ${
-                    sortMode === opt.key
-                      ? 'bg-foreground text-background border-foreground'
-                      : 'bg-background text-muted-foreground border-border hover:bg-muted/40'
-                  }`}
-                  aria-pressed={sortMode === opt.key}
-                >
-                  {opt.label}
-                </button>
-              ))}
-              <span className="ml-auto text-[11px] text-muted-foreground/70">Klik baris untuk drill-down item</span>
-            </div>
+            {tableOpen && (
+              <>
+                {/* Sort chips */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mr-1">Urutkan</span>
+                  {SORT_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => setSortMode(opt.key)}
+                      className={`h-6 rounded-full px-2.5 text-xs font-medium border transition-colors ${
+                        sortMode === opt.key
+                          ? 'bg-foreground text-background border-foreground'
+                          : 'bg-background text-muted-foreground border-border hover:bg-muted/40'
+                      }`}
+                      aria-pressed={sortMode === opt.key}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                  <span className="ml-auto text-[11px] text-muted-foreground/70">Klik baris untuk drill-down item</span>
+                </div>
 
-            {/* Items table — density spec unified (Task R/T): h-8 headers, text-xs cells */}
-            <ScrollArea className="h-80">
-              <Table>
-                <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
-                  <TableRow className="border-b hover:bg-transparent">
-                    <TableHead className="h-8 text-xs font-semibold uppercase tracking-wider">Item</TableHead>
-                    <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">QTY Dev Δ</TableHead>
-                    <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">Avg Price Δ</TableHead>
-                    <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">Nominal Δ</TableHead>
-                    <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">Efek Harga</TableHead>
-                    <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">Efek Kuantitas</TableHead>
-                    <TableHead className="text-center h-8 text-xs font-semibold uppercase tracking-wider w-28">Dominasi</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {sortedItems.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={7} className="text-center text-muted-foreground text-xs py-8">
-                        Tidak ada item yang dapat didekomposisi untuk periode ini.
-                      </TableCell>
-                    </TableRow>
-                  ) : sortedItems.map((m) => {
-                    const badge = DRIVER_BADGE[m.driver];
-                    return (
-                      <TableRow
-                        key={m.item}
-                        className="cursor-pointer hover:bg-muted/40 transition-colors"
-                        {...clickableRowProps(() => setDeepDiveItem({ itemName: m.item, outletCode: null }))}
-                      >
-                        <TableCell className="font-medium text-xs whitespace-normal" title={m.item}>{m.item}</TableCell>
-                        <TableCell className={`text-right text-xs tabular-nums ${m.qtyGrowth != null && m.qtyGrowth > 0 ? 'text-red-600 dark:text-red-400' : m.qtyGrowth != null && m.qtyGrowth < 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}>{fmtPctSigned(m.qtyGrowth)}</TableCell>
-                        <TableCell className={`text-right text-xs tabular-nums ${priceGrowthColor(m.priceGrowth)}`}>{fmtPctSigned(m.priceGrowth)}</TableCell>
-                        <TableCell className="text-right text-xs font-semibold tabular-nums">{fmtPctSigned(m.nomGrowth)}</TableCell>
-                        <TableCell className={`text-right text-xs font-semibold tabular-nums ${effectColor(m.priceEffect)}`} title={m.priceSharePct != null ? `${m.priceSharePct.toFixed(1)}% dari total efek item ini` : undefined}>{fmtIDR(m.priceEffect)}</TableCell>
-                        <TableCell className={`text-right text-xs font-semibold tabular-nums ${effectColor(m.qtyEffect)}`}>{fmtIDR(m.qtyEffect)}</TableCell>
-                        <TableCell className="text-center">
-                          <Badge variant="outline" className={`text-xs h-5 font-medium ${badge.className}`} title={badge.title}>{badge.label}</Badge>
-                        </TableCell>
+                {/* Items table — density spec unified (Task R/T): h-8 headers, text-xs cells */}
+                <ScrollArea className="h-80">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
+                      <TableRow className="border-b hover:bg-transparent">
+                        <TableHead className="h-8 text-xs font-semibold uppercase tracking-wider">Item</TableHead>
+                        <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">QTY Dev Δ</TableHead>
+                        <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">Avg Price Δ</TableHead>
+                        <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">Nominal Δ</TableHead>
+                        <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">Efek Harga</TableHead>
+                        <TableHead className="text-right h-8 text-xs font-semibold uppercase tracking-wider">Efek Kuantitas</TableHead>
+                        <TableHead className="text-center h-8 text-xs font-semibold uppercase tracking-wider w-28">Dominasi</TableHead>
                       </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </ScrollArea>
+                    </TableHeader>
+                    <TableBody>
+                      {sortedItems.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-center text-muted-foreground text-xs py-8">
+                            Tidak ada item yang dapat didekomposisi untuk periode ini.
+                          </TableCell>
+                        </TableRow>
+                      ) : sortedItems.map((m) => {
+                        const badge = DRIVER_BADGE[m.driver];
+                        return (
+                          <TableRow
+                            key={m.item}
+                            className="cursor-pointer hover:bg-muted/40 transition-colors"
+                            {...clickableRowProps(() => setDeepDiveItem({ itemName: m.item, outletCode: null }))}
+                          >
+                            <TableCell className="font-medium text-xs whitespace-normal" title={m.item}>{m.item}</TableCell>
+                            <TableCell className={`text-right text-xs tabular-nums ${m.qtyGrowth != null && m.qtyGrowth > 0 ? 'text-red-600 dark:text-red-400' : m.qtyGrowth != null && m.qtyGrowth < 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}>{fmtPctSigned(m.qtyGrowth)}</TableCell>
+                            <TableCell className={`text-right text-xs tabular-nums ${priceGrowthColor(m.priceGrowth)}`}>{fmtPctSigned(m.priceGrowth)}</TableCell>
+                            <TableCell className="text-right text-xs font-semibold tabular-nums">{fmtPctSigned(m.nomGrowth)}</TableCell>
+                            <TableCell className={`text-right text-xs font-semibold tabular-nums ${effectColor(m.priceEffect)}`} title={m.priceSharePct != null ? `${fmtPct(m.priceSharePct / 100, false, 1)} dari total efek item ini` : undefined}>{fmtIDR(m.priceEffect)}</TableCell>
+                            <TableCell className={`text-right text-xs font-semibold tabular-nums ${effectColor(m.qtyEffect)}`}>{fmtIDR(m.qtyEffect)}</TableCell>
+                            <TableCell className="text-center">
+                              <Badge variant="outline" className={`text-xs h-5 font-medium ${badge.className}`} title={badge.title}>{badge.label}</Badge>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </ScrollArea>
 
-            <p className="text-[11px] text-muted-foreground/70">
-              Indikasi awal — bukan bukti root cause. Item KUANTITAS-dominan perlu diperiksa volume pemakaian vs SOC; item HARGA-dominan perlu diperiksa pergerakan harga supplier. Sesuai Master Context §22/§55.
-            </p>
+                <p className="text-[11px] text-muted-foreground/70">
+                  Indikasi awal — bukan bukti root cause. Item KUANTITAS-dominan perlu diperiksa volume pemakaian vs SOC; item HARGA-dominan perlu diperiksa pergerakan harga supplier. Sesuai Master Context §22/§55.
+                </p>
+              </>
+            )}
           </div>
         )}
       </CardContent>
