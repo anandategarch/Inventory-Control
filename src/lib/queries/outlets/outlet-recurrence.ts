@@ -34,6 +34,13 @@
 //      (metrics/definitions.ts:196: "P1_NOMINAL_THRESHOLD =
 //      HIGH_LOSS_NOMINAL_THRESHOLD (default 50,000,000)").
 //
+//  FIX (BUG-2-c): `streak` now requires CALENDAR-consecutive months —
+//  monthKey is parsed to an absolute month index (YYYY-MM → year*12+month)
+//  and a gap of more than 1 month (e.g. abnormal Jan + Feb with no data +
+//  abnormal Mar) BREAKS the run. Previously the streak only counted rows
+//  that exist, so months without data silently bridged two non-adjacent
+//  abnormal months into a fake "streak 2".
+//
 //  PURELY ADDITIVE: this module computes NOTHING that feeds
 //  priorityScore, signal weights, or the existing queries —
 //  it only attaches an optional `history` field to each
@@ -57,7 +64,10 @@ export interface OutletRecurrenceHistory {
   periodCount: number;
   /** Months where devBom > tolerance fallback OR lossNominal > P1 nominal threshold. */
   abnormalCount: number;
-  /** Consecutive abnormal run ending at the most recent historical month. */
+  /** Consecutive abnormal run ending at the most recent historical month.
+   *  FIX (BUG-2-c): "consecutive" means CALENDAR-consecutive months — a
+   *  month with no data breaks the run (abnormal Jan + empty Feb + abnormal
+   *  Mar = streak 1, not 2). */
   streak: number;
   classification: OutletRecurrenceClassification;
 }
@@ -98,13 +108,19 @@ export async function queryOutletRecurrence(
   //
   // SQL shape:
   //   monthly  — per (outlet, monthKey) same-week sums + abnormal flag
-  //   ordered  — ROW_NUMBER() descending by monthKey (most recent = 1)
+  //   ordered  — ROW_NUMBER() descending by monthKey (most recent = 1) +
+  //              the absolute month index parsed from "YYYY-MM"
+  //   chained  — FIX (BUG-2-c): flags the rows that BREAK the consecutive
+  //              abnormal run: normal months AND calendar gaps > 1 month
+  //              (LAG over rnDesc compares each month with the one before
+  //              it, i.e. the more recent one — months without data no
+  //              longer bridge the streak)
   //   final    — windowed to the last 12 months, then per outlet:
   //     periodCount  = months actually available
   //     abnormalCount= abnormal months
   //     streak       = consecutive abnormal run ending at the most recent
-  //                   month = (rnDesc of first normal month − 1); when every
-  //                   month is abnormal there is no normal month → all of
+  //                   month = (rnDesc of first chain-breaking month − 1);
+  //                   when no month breaks the chain there is none → all of
   //                   them (COUNT(*))
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<OutletRecurrenceRow[]>`
     WITH monthly AS (
@@ -130,15 +146,39 @@ export async function queryOutletRecurrence(
       SELECT
         "outletCode",
         "abnormal",
-        ROW_NUMBER() OVER (PARTITION BY "outletCode" ORDER BY "monthKey" DESC) as "rnDesc"
+        "monthKey",
+        ROW_NUMBER() OVER (PARTITION BY "outletCode" ORDER BY "monthKey" DESC) as "rnDesc",
+        -- FIX (BUG-2-c): monthKey "YYYY-MM" → absolute month index
+        -- (year*12 + month) so calendar adjacency is a plain −1 check.
+        (CAST(split_part("monthKey", '-', 1) AS INTEGER) * 12
+          + CAST(split_part("monthKey", '-', 2) AS INTEGER)) as "mIdx"
       FROM monthly
+    ),
+    chained AS (
+      SELECT
+        "outletCode",
+        "abnormal",
+        "rnDesc",
+        -- FIX (BUG-2-c): chain-breakers — normal months AND months whose
+        -- calendar gap to the previous (more recent) month is > 1 (a month
+        -- with NO data simply doesn't appear as a row, so the gap check is
+        -- what stops it from silently bridging two non-adjacent abnormals).
+        -- rnDesc = 1 only breaks when it is itself normal (streak 0); it is
+        -- never a calendar-gap breaker because the chain STARTS there.
+        CASE
+          WHEN "rnDesc" = 1 THEN NOT "abnormal"
+          WHEN NOT "abnormal" THEN TRUE
+          WHEN "mIdx" <> LAG("mIdx") OVER (PARTITION BY "outletCode" ORDER BY "rnDesc") - 1 THEN TRUE
+          ELSE FALSE
+        END as "breaksChain"
+      FROM ordered
     )
     SELECT
       "outletCode",
       CAST(COUNT(*) AS INTEGER) as "periodCount",
       CAST(COUNT(*) FILTER (WHERE "abnormal") AS INTEGER) as "abnormalCount",
-      CAST(COALESCE(MIN(CASE WHEN NOT "abnormal" THEN "rnDesc" END) - 1, COUNT(*)) AS INTEGER) as "streak"
-    FROM ordered
+      CAST(COALESCE(MIN(CASE WHEN "breaksChain" THEN "rnDesc" END) - 1, COUNT(*)) AS INTEGER) as "streak"
+    FROM chained
     WHERE "rnDesc" <= ${OUTLET_RECURRENCE_WINDOW_MONTHS}
     GROUP BY "outletCode"
   `);

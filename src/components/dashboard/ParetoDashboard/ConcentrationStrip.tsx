@@ -30,6 +30,13 @@ export function ConcentrationStrip({
   const stats = deriveConcentration(data);
   if (!stats) return null;
 
+  // FIX (BUG-2-a #6): with fewer than 5 drivers the CR5 the level is computed
+  // from is the LAST driver's cumPct (≈100% whenever the whole dimension
+  // fits inside the 80% cut), so the chip would read TINGGI trivially and
+  // carry no signal. Show "—" instead; the CR3/CR5 numbers above still tell
+  // the actual concentration story.
+  const levelKnown = data.drivers.length >= 5;
+
   const dimLabel = DIM_LABELS[dimension].toLowerCase();
   // cumPct is stored 0-100 — fmtPctAbs expects a ratio, hence /100.
   const cr3Text = fmtPctAbs(stats.cr3 / 100);
@@ -61,12 +68,22 @@ export function ConcentrationStrip({
         <span aria-hidden="true" className="text-muted-foreground/60">·</span>
         <span>{n80Label}</span>
       </p>
-      <Badge
-        variant="outline"
-        className={`ml-auto text-[10px] font-semibold ${CONCENTRATION_LEVEL_STYLE[stats.level]}`}
-      >
-        {stats.level}
-      </Badge>
+      {levelKnown ? (
+        <Badge
+          variant="outline"
+          className={`ml-auto text-[10px] font-semibold ${CONCENTRATION_LEVEL_STYLE[stats.level]}`}
+        >
+          {stats.level}
+        </Badge>
+      ) : (
+        <Badge
+          variant="outline"
+          title="Level konsentrasi belum bisa ditentukan — dimensi ini memiliki kurang dari 5 entitas"
+          className="ml-auto text-[10px] font-semibold text-muted-foreground bg-muted/40"
+        >
+          —
+        </Badge>
+      )}
     </div>
   );
 }

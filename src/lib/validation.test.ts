@@ -131,5 +131,37 @@ describe('validation helpers', () => {
       const result = validateQuery(drilldownQuerySchema, params);
       expect(result.success).toBe(false);
     });
+
+    // FIX (BUG-2-b / BUG-1-c #9): area/kelompok/pic are part of the schema now —
+    // the route reads them from the parsed result instead of raw searchParams.
+    it('accepts valid area/kelompok/pic params', () => {
+      const params = new URLSearchParams();
+      params.set('area', 'JAWA TIMUR 1');
+      params.set('kelompok', 'MLG');
+      params.set('pic', 'Andi');
+      const result = validateQuery(drilldownQuerySchema, params);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.area).toBe('JAWA TIMUR 1');
+        expect(result.data.kelompok).toBe('MLG');
+        expect(result.data.pic).toBe('Andi');
+      }
+    });
+
+    it('rejects a 1000-char kelompok (BUG-2-b: unbounded filter values)', () => {
+      const params = new URLSearchParams();
+      params.set('kelompok', 'K'.repeat(1000));
+      const result = validateQuery(drilldownQuerySchema, params);
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects an over-length area and pic', () => {
+      const params = new URLSearchParams();
+      params.set('area', 'A'.repeat(51));
+      expect(validateQuery(drilldownQuerySchema, params).success).toBe(false);
+      const params2 = new URLSearchParams();
+      params2.set('pic', 'P'.repeat(101));
+      expect(validateQuery(drilldownQuerySchema, params2).success).toBe(false);
+    });
   });
 });

@@ -35,7 +35,7 @@ import { fetchRecords } from './fetch-records';
 import { runQueries } from './run-queries';
 import { postProcess } from './post-process';
 import { assembleResponse } from './assemble-response';
-import { setCachedRaw } from '@/lib/aggregation-cache';
+import { setCachedRaw, getCacheGeneration } from '@/lib/aggregation-cache';
 import { logger } from '@/lib/logger';
 import type { ResolvedParams } from './validate-and-resolve';
 
@@ -56,6 +56,15 @@ export function triggerBackgroundRecompute(cacheKey: string, params: ResolvedPar
   recomputingKeys.add(cacheKey);
   void (async () => {
     try {
+      // FIX (BUG-2-b): capture the cache generation BEFORE the pipeline
+      // starts. If an invalidation (ingest/settings/pic/delete/migrate)
+      // lands while this recompute is in flight, the result is (at least
+      // partly) PRE-mutation data — writing it back would re-poison the
+      // just-invalidated key under a FRESH computedAt and defeat the
+      // invalidation (BUG-1-c #2, the "data lama setelah upload" symptom).
+      // Skip the write in that case; the next request takes the miss path
+      // and recomputes clean.
+      const gen = getCacheGeneration();
       // fetchRecords MUTATES params in place (fills prevWeek/prevMonth via
       // resolveComparePeriod + re-resolves month/compareMonthExplicit) — pass
       // a copy so the caller's snapshot is never clobbered. startedAt is
@@ -71,6 +80,12 @@ export function triggerBackgroundRecompute(cacheKey: string, params: ResolvedPar
       const queries = await runQueries(p, records);
       const processed = await postProcess(p, records, queries);
       const result = assembleResponse(p, records, queries, processed);
+      if (getCacheGeneration() !== gen) {
+        // FIX (BUG-2-b): invalidation landed mid-recompute — the result is
+        // pre-mutation data; do NOT write it back.
+        logger.info('[analysis] SWR background recompute skipped write-back (cache invalidated mid-compute)', { cacheKey });
+        return;
+      }
       // PERF (H-8 QUICK WIN 5 — single stringify): serialize once and store
       // the raw string (same pattern as the route's cold path). awaitWrite=true
       // — block ~50-150ms so the next request hits the cache.

@@ -487,3 +487,31 @@ Permintaan user 2025-12 (verbatim diringkas): (1) tombol "lihat semua" di Resto/
 
 ---
 *Audit dilakukan read-only — tidak ada file repo yang dimodifikasi.*
+
+## 🐛 BUG-2 — BUG HUNT 4 AGENT + FIX ROUND (2026-09-13)
+
+**Metode:** sandbox re-clone @ `d3ecb3f` → 4 agent audit paralel (analytics / frontend / API-cache / regression-diff 4 commit terakhir) → verifikasi Main atas setiap temuan teratas → 3 agent fix paralel (file-set disjoint, kontrak antar-agent) → gerbang penuh + harness browser mock 13/13 + VLM review.
+
+**Temuan terverifikasi & DIFIX (24):**
+
+| # | Severity | Area | Bug | Fix |
+|---|---|---|---|---|
+| 1 | TINGGI | frontend | Drill "Harga turun" sort ASC — menampilkan mover TERKECIL | Komparator dibalik (DESC, mirip "naik") |
+| 2 | TINGGI | frontend | Guard `{} as RestoProfile` palsu → TypeError tab Resto saat payload parsial | Tipe `restoProfile?` opsional + render kondisional + notice parsial |
+| 3 | TINGGI | narrative | Hero "N resto menjadi prioritas" menampilkan LIMIT (5) | Field server `priorityCount` (pre-slice TINGGI+SEDANG) |
+| 4 | TINGGI | cache | `buildCacheKey` sentinel `'ALL'` collides dengan input `area=ALL/kelompok=All` → cache poisoning | Marker `\u0000ALL`/`\u0000NONE` + normalisasi route |
+| 5 | TINGGI | cache | SWR/in-flight write-back race — recompute pra-mutasi ditulis balik pasca-invalidasi | Generation counter (miss/SWR/awaiter/bg-recompute) |
+| 6 | TINGGI | analytics | Identitas bridge Bennet PATAH untuk baris ghost (qty=0, nominal>0 satu sisi) | Leg "Anomali Data" (`anomalyNominal`) — identitas SELALU eksak |
+| 7 | SEDANG | analytics | Waterfall kaki bar salah saat level menyeberang nol (stack Recharts pecah) | Custom Bar shape (rect from→to penuh kontrol) |
+| 8 | SEDANG | frontend | Badge gap "di bawah/di atas best" TERTUKAR utk metrik bad | Label dari tanda gap, warna dari isWorse |
+| 9 | SEDANG | frontend | Ganti parentDim → childDim basi → breakdown hilang diam-diam | Reconcile child + guard render |
+| 10 | SEDANG | API | peer-comparison ×3: `kelompok=all` mentah ke SQL, cache key menormalkan | Normalisasi sekali di handler |
+| 11 | SEDANG | API | Error internal bocor (items/trend tanpa gate NODE_ENV) | `errorResponse()` |
+| 12 | SEDANG | period | Compare manual same-month cross-week → growth kumulatif palsu (~-50%) | Case 2 tolak + opsi FilterBar di-exclude |
+| 13 | SEDANG | analytics | Pareto nested sharePct/cumPct dari subtotal top-N (menggelembung) | `SUM() OVER ()` total populasi (parent + child + by-other-metric) |
+| 14 | SEDANG | analytics | benchmark-opportunity group `o.area` ≠ filter `ir.area` (drift) | `MAX(ir.area)` konsisten areas.ts |
+| 15-24 | RENDAH | campur | Chip CR trivial ≤5 driver; rank 0 terpotong domain; kartu Peluang tersembunyi s.d. outlet dipilih; streak rekurensi melompati bulan kosong; z min-weeks hardcode 4; "N item" menghitung record; price-effect noMatch buang compare user; drilldown tanpa zod; pic/import unbounded; bulan mentah di cache key recommendations | Semua difix (lihat worklog BUG-2-a/b/c) |
+
+**Kualitas:** tsc 0 error · vitest **473/473** (+27 test baru: price-effect Bennet identity 257 baris, cache sentinel+race 222 baris, pareto populasi, period-resolver, validation) · eslint 0 error · `next build` sukses · **harness browser mock 13/13** (hero 12, waterfall anomali + connector, drill sort, resto parsial tanpa crash, pareto child auto-geser, peluang tanpa outlet, 0 pageerror) · VLM review visual OK (desktop + 375px).
+
+**TIDAK difix (perlu keputusan / risiko tidak sebanding):** `CACHE_ANALYSIS` s-maxage=300 vs invalidasi di belakang CDN (topologi deploy); z-score item-trend leave-one-out memakai bulan sesudahnya (konvensi terdokumentasi, beda dari historical.ts); label "Ranking Item Nasional" sebenarnya rank pasangan item×outlet; analysis 404-in-flight di-serve 200 (edge transien); schema `WEEK 99` longgar; bullet duplikat `benchmarkHighCount` (resto-recommendations.ts:358); copy inline resolve-period outlet-items/services:74-75 belum kena guard cross-week.

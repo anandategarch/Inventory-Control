@@ -139,7 +139,16 @@ export function FilterBar() {
     for (const m of status.months) {
       const ws = status.weeksByMonth[m.key] || [];
       for (const w of ws) {
-        if (m.label === monthLabel && w === currentWeek) continue;
+        // FIX (BUG-2-b / BUG-1-c #5): exclude ALL periods of the CURRENT month,
+        // not just the exact current period. Weeks are CUMULATIVE snapshots
+        // (W1=1-7, W2=1-14, W3=1-21, W4=1-25) — offering "WEEK 1 — Agustus"
+        // as a compare option while the current period is "WEEK 4 — Agustus"
+        // invites a 25-day-vs-7-day comparison that shows up as a false
+        // ~-72% "growth" (the exact class the auto path already rejects —
+        // see period-resolver FIX AUDIT-BUG-2). Other months' weeks stay
+        // selectable (explicit user choice; the day-range labels make the
+        // windows visible).
+        if (m.label === monthLabel) continue;
         allComparePeriods.push({
           label: `${w} — ${m.label}`,
           monthLabel: m.label,

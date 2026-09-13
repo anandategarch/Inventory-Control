@@ -64,10 +64,14 @@ interface ChartRow {
   period: string;
   /** Full label for tooltip, e.g. "JUNI · WEEK 4". */
   fullLabel: string;
-  /** National rank (1 = worst). FIX (BUG-3-05): always number — query coerces
-   *  null→0 via `Number(r.rankNominal) || 0`. The `| null` in the type was
-   *  dead (unreachable) since the source RankPeriod.rankNominal is `number`. */
-  rank: number;
+  /** National rank (1 = worst). FIX (BUG-2-a #9): null = the item had NO
+   *  deviation that period — the query coerces SQL NULL → 0 via
+   *  `Number(r.rankNominal) || 0`, and rank 0 is a "not ranked" sentinel
+   *  (real ranks start at 1). Mapping 0 → null here keeps the point OUTSIDE
+   *  the [1, maxRank] Y domain (previously it was clipped away silently by
+   *  allowDataOverflow) and lets `connectNulls` bridge the line across the
+   *  gap. */
+  rank: number | null;
   /** Total items ranked in that period (denominator for "Rank #N of M"). */
   totalItems: number;
   /** This item's |nominalDeviasi| for that period (IDR-formatted in tooltip). */
@@ -93,7 +97,8 @@ function buildRow(p: RankPeriod): ChartRow {
   return {
     period: `${p.monthLabel.slice(0, 3)} ${p.weekLabel.replace('WEEK ', 'W')}`,
     fullLabel: `${p.monthLabel} · ${p.weekLabel}`,
-    rank: p.rankNominal,
+    // FIX (BUG-2-a #9): 0 = "not ranked" sentinel → null (see ChartRow.rank).
+    rank: p.rankNominal > 0 ? p.rankNominal : null,
     totalItems: p.totalItems,
     absNominal: p.absNominal,
   };
@@ -109,16 +114,21 @@ interface CustomTooltipProps {
 function CustomTooltip({ active, payload }: CustomTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
   const row = payload[0].payload;
-  const color = rankColor(row.rank);
+  // FIX (BUG-2-a #9): unranked period (rank null) — the point is bridged by
+  // connectNulls, but the tooltip still fires for that column.
+  const color = row.rank != null ? rankColor(row.rank) : undefined;
   return (
     <div className="rounded-md border bg-background/95 backdrop-blur-sm shadow-lg p-2.5 text-[11px] space-y-1 max-w-[240px]">
       <p className="font-semibold text-foreground">{row.fullLabel}</p>
       <div className="flex justify-between gap-4">
         <span className="text-muted-foreground">Rank Nasional:</span>
-        {/* FIX (BUG-3-05): rank is always number now (dead null branch removed) */}
-        <span className="font-bold tabular-nums" style={{ color }}>
-          #{row.rank} dari {row.totalItems} item
-        </span>
+        {row.rank != null ? (
+          <span className="font-bold tabular-nums" style={{ color }}>
+            #{row.rank} dari {row.totalItems} item
+          </span>
+        ) : (
+          <span className="font-medium text-muted-foreground">— belum terdeviasi</span>
+        )}
       </div>
       <div className="flex justify-between gap-4">
         <span className="text-muted-foreground">|Nominal Deviasi|:</span>
@@ -135,10 +145,11 @@ export const ItemTrendRankChart = memo(function ItemTrendRankChart({ periods, on
   // chart auto-scales. Domain [1, maxRank] with `reversed` puts rank #1
   // at the TOP (worst) and #maxRank at the BOTTOM (best).
   // Floor at 2 so a single-rank chart still has a visible Y range.
-  // FIX (BUG-3-05): rank is always number now — no null filter needed.
+  // FIX (BUG-2-a #9): null ranks (unranked periods) contribute 0 and never
+  // affect the bound.
   const maxRank = useMemo(() => {
     if (data.length === 0) return 2;
-    return Math.max(2, ...data.map(d => d.rank));
+    return Math.max(2, ...data.map(d => d.rank ?? 0));
   }, [data]);
 
   // Phase 2 drill-down — same pattern as ItemTrendLineChart. Recharts
@@ -159,7 +170,9 @@ export const ItemTrendRankChart = memo(function ItemTrendRankChart({ periods, on
   // is satisfied (it requires a ReactElement, not null).
   const renderDot = (props: { cx?: number; cy?: number; payload?: ChartRow }) => {
     const { cx, cy, payload } = props;
-    if (cx == null || cy == null || !payload) {
+    // FIX (BUG-2-a #9): payload.rank null (unranked period) → no dot — the
+    // value point does not exist in the [1, maxRank] domain.
+    if (cx == null || cy == null || !payload || payload.rank == null) {
       return <g />;
     }
     const fill = rankColor(payload.rank);

@@ -54,12 +54,21 @@ export const analysisQuerySchema = z.object({
   pic: picSchema,
 });
 
-// /api/drilldown?outletCode=&itemName=&weekLabel=&monthLabel=&limit=&cursor=
+// /api/drilldown?outletCode=&itemName=&weekLabel=&monthLabel=&area=&kelompok=&pic=&limit=&cursor=
+// FIX (BUG-2-b / BUG-1-c #9): area/kelompok/pic were read raw from
+// searchParams in the route (the schema here silently STRIPPED them as
+// unknown keys — zod object default) → a 1000-char kelompok reached
+// resolveKelompokOutletCodes' SQL unvalidated. Added with the same optional
+// bounded shapes the other filter routes use (areaSchema ≤50 /
+// kelompokSchema ≤50 / picSchema ≤100).
 export const drilldownQuerySchema = z.object({
   outletCode: outletCodeSchema,
   itemName: itemNameSchema,
   weekLabel: weekLabelSchema,
   monthLabel: monthLabelSchema,
+  area: areaSchema,
+  kelompok: kelompokSchema,
+  pic: picSchema,
   limit: limitSchema,
   cursor: cursorSchema,
 });

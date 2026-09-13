@@ -38,6 +38,22 @@ describe('resolveComparePeriod — Case 2: explicit compareWeek + compareMonth',
     expect(mockWeekFindMany).not.toHaveBeenCalled();
     expect(mockSourceFileFindMany).not.toHaveBeenCalled();
   });
+
+  // FIX (BUG-2-b / BUG-1-c #5): same-month cross-week explicit compare must be
+  // refused — cumulative weeks (W1=1-7 … W4=1-25) make W4 vs W1 of the same
+  // month a 25-day-vs-7-day comparison → false cumulative "growth".
+  it('returns {null, null} for same-month cross-week compare (BUG-2-b)', async () => {
+    const r = await resolveComparePeriod('WEEK 4', 'Agustus 2026', 'WEEK 1', 'Agustus 2026');
+    expect(r).toEqual({ prevWeek: null, prevMonth: null });
+    expect(mockWeekFindMany).not.toHaveBeenCalled();
+    expect(mockSourceFileFindMany).not.toHaveBeenCalled();
+  });
+
+  it('returns {null, null} for same-month cross-week compare regardless of week order', async () => {
+    // W1 current vs W4 compare of the SAME month is equally invalid.
+    const r = await resolveComparePeriod('WEEK 1', 'Agustus 2026', 'WEEK 4', 'Agustus 2026');
+    expect(r).toEqual({ prevWeek: null, prevMonth: null });
+  });
 });
 
 describe('resolveComparePeriod — Case 1: auto-previous (compareWeek null)', () => {

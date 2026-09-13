@@ -62,7 +62,10 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
       if (pic) p.set('pic', pic);
       // FIX: only send parentDim/childDim when NOT default (item→outlet)
       // to avoid unnecessary queryParetoNested call on every request.
-      if (parentDim !== 'item' || childDim !== 'outlet') {
+      // FIX (BUG-2-a #5): also never send parentDim === childDim — the route
+      // only builds nestedGeneralized when the two differ, so an equal pair
+      // silently yields null and drops the Breakdown Bertingkat card.
+      if (parentDim !== childDim && (parentDim !== 'item' || childDim !== 'outlet')) {
         p.set('parentDim', parentDim);
         p.set('childDim', childDim);
       }
@@ -141,7 +144,20 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
         action={(
           <div className="flex items-center gap-2">
             {/* FIX #42 selectors — moved into SectionHeader action slot (VH-7) */}
-            <Select value={parentDim} onValueChange={(v) => setParentDim(v as ParetoDimension)}>
+            <Select value={parentDim} onValueChange={(v) => {
+              const next = v as ParetoDimension;
+              setParentDim(next);
+              // FIX (BUG-2-a #5): reconcile childDim when the new parent
+              // swallows it — otherwise the child Select keeps a stale value
+              // that is no longer among its (filtered ≠ parent) options, the
+              // route sees parentDim === childDim, skips the nested query,
+              // and the Breakdown Bertingkat card silently disappears
+              // (e.g. default outlet child + user picks parent=Outlet).
+              // Shift the child to the first remaining dimension instead.
+              if (next === childDim) {
+                setChildDim((Object.keys(DIM_LABELS) as ParetoDimension[]).find((d) => d !== next) ?? 'item');
+              }
+            }}>
               <SelectTrigger className="h-8 w-[120px] text-xs">
                 <SelectValue placeholder="Parent" />
               </SelectTrigger>
@@ -234,14 +250,20 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
 
       {/* FIX #42: Generalized nested breakdown (parentDim → childDim) —
           rendered when the user-selected combo differs from the default
-          Item→Outlet (which is already shown by the card above). */}
-      <GeneralizedNested
-        nestedGen={nestedGen}
-        parentDim={parentDim}
-        childDim={childDim}
-        expandedGen={expandedGen}
-        toggleGen={toggleGen}
-      />
+          Item→Outlet (which is already shown by the card above).
+          FIX (BUG-2-a #5): render guard — with parentDim === childDim (stale
+          state; unreachable after the reconciliation in the parent selector)
+          there is no nested data to show, so skip instead of rendering a
+          mislabeled/empty breakdown card. */}
+      {parentDim !== childDim && (
+        <GeneralizedNested
+          nestedGen={nestedGen}
+          parentDim={parentDim}
+          childDim={childDim}
+          expandedGen={expandedGen}
+          toggleGen={toggleGen}
+        />
+      )}
 
       {/* Pareto Item Abnormal (|Dev/BOM| > 50%) — full width, below Nested Breakdown */}
       <ParetoDevBomCard data={analysisData} />

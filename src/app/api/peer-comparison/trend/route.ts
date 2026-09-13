@@ -29,6 +29,7 @@ import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { queryPeerTrend, queryPeerComparison } from '@/lib/queries/outlets/peer-comparison';
 import { validateQuery, peerComparisonTrendQuerySchema } from '@/lib/validation';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
+import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // FIX: 30→60 — trend across multiple weeks can be slow
@@ -61,6 +62,13 @@ export async function GET(req: NextRequest) {
     // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok scopes the PEER set only —
     // passed to queryPeerComparison for the auto-compute peer set path.
     const kelompok = url.searchParams.get('kelompok');
+    // FIX (BUG-2-b / BUG-1-c #3): normalize 'all' (case-insensitive) → null
+    // ONCE, then use kelompokParam for BOTH the cache key AND the query —
+    // the raw value used to reach queryPeerComparison, where UPPER('all')
+    // matched 0 outlets → an empty peer set cached under the no-filter key
+    // (cache poisoning, 5-min TTL). Mirrors the benchmark-opportunity
+    // route's normalizeKelompok pattern.
+    const kelompokParam = kelompok && kelompok.toLowerCase() !== 'all' ? kelompok : null;
 
     if (!outletCode || !month) {
       return NextResponse.json({ success: false, error: 'outletCode and month required' }, { status: 400 });
@@ -80,7 +88,7 @@ export async function GET(req: NextRequest) {
       route: 'peer-comparison-trend',
       month,
       outletCode,
-      kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
+      kelompok: kelompokParam,
       extra: { peers: peersParam },
     });
 
@@ -99,7 +107,7 @@ export async function GET(req: NextRequest) {
         // month mode → MAX(weekLabel) = whole-month aggregate (matches
         // the main table's peer band derivation; see outlets.ts:177-182).
         // Pass kelompok so the auto-computed peer set respects the global filter.
-        const { peers } = await queryPeerComparison(outletCode, month, null, 'month', 20, kelompok);
+        const { peers } = await queryPeerComparison(outletCode, month, null, 'month', 20, kelompokParam);
         peerCodes = peers
           .filter((p) => !p.isTarget)
           .map((p) => p.outletCode)
@@ -131,6 +139,9 @@ export async function GET(req: NextRequest) {
     });
   } catch (e: unknown) {
     logger.error("[peer-comparison-trend] error:", { error: e });
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    // FIX (BUG-2-b / BUG-1-c #4): use the gated errorResponse helper (same as
+    // the sibling routes) instead of echoing e.message raw — internal DB/SQL
+    // error details must not leak to clients in production.
+    return errorResponse(e, "peer-comparison-trend");
   }
 }

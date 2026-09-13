@@ -63,16 +63,16 @@ export async function GET(req: NextRequest) {
       kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
       outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
       pic,
-      // v: 2 (H-13) — payload shape changed (signals.zScoreAbnormalCount →
-      // signals.highDevBomCount). Old-shape cached payloads must never be
-      // served to the new frontend (and vice versa). The route prefix in
-      // invalidateAnalysisCache() is unchanged, so mutations still clear rows
-      // of BOTH shapes.
-      extra: { limit, v: 2 },
+      // v: 3 (BUG-2-c) — payload shape changed: top-level `priorityCount` added
+      // (outlets with priorityLevel TINGGI/SEDANG, pre-slice — replaces the
+      // display-limit hero count). v: 2 (H-13) was the signals rename. The route
+      // prefix in invalidateAnalysisCache() is unchanged, so mutations still
+      // clear rows of ALL shapes.
+      extra: { limit, v: 3 },
     });
     const REC_CACHE_TTL = 5 * 60 * 1000; // 5 min
 
-    const { data: cachedOrFresh, cached, stale } = await withCacheAndDedup<{ success: boolean; recommendations: unknown[]; cached?: boolean }>(earlyCacheKey, REC_CACHE_TTL, async () => {
+    const { data: cachedOrFresh, cached, stale } = await withCacheAndDedup<{ success: boolean; recommendations: unknown[]; priorityCount?: number; cached?: boolean }>(earlyCacheKey, REC_CACHE_TTL, async () => {
       const resolver = await getMonthResolver();
       let resolvedMonth = resolveMonthLabel(month!, resolver) || month!;
       let resolvedPrevMonth = prevMonth;
@@ -138,8 +138,10 @@ export async function GET(req: NextRequest) {
 
       // FIX (BUG-HUNT-RECENT): early-return if PIC has no outlets — cached as
       // empty result so subsequent identical requests skip PIC resolution.
+      // FIX (BUG-2-c): priorityCount included on the empty path too (0 — no
+      // outlets evaluated, so no priority outlets).
       if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
-        return { success: true, recommendations: [] };
+        return { success: true, recommendations: [], priorityCount: 0 };
       }
 
       const filters = {
@@ -159,7 +161,10 @@ export async function GET(req: NextRequest) {
       // runtime Settings, no new numbers.
       // Non-fatal on failure: the field is optional, so the card simply hides
       // the chip (logged, recommendations still returned).
-      const [recommendations, recurrenceMap] = await Promise.all([
+      // FIX (BUG-2-c): queryRestoRecommendations now returns an envelope
+      // { recommendations, priorityCount } — destructure both; only the
+      // array flows into the recurrence merge below.
+      const [{ recommendations, priorityCount }, recurrenceMap] = await Promise.all([
         queryRestoRecommendations(
           resolvedMonth,
           week!,
@@ -188,8 +193,12 @@ export async function GET(req: NextRequest) {
       // Merge: spread keeps every existing field untouched; `history` is only
       // ADDED when the outlet has same-week historical months (otherwise the
       // key stays absent — old-cache payloads without it remain type-valid).
+      // FIX (BUG-2-c): `priorityCount` (pre-slice TINGGI+SEDANG outlet total)
+      // rides at the TOP LEVEL next to `recommendations` — it is a scalar, so
+      // it deliberately does NOT take part in the recommendations.map below.
       return {
         success: true,
+        priorityCount,
         recommendations: recommendations.map((r) => {
           const history = recurrenceMap.get(r.outletCode);
           return history ? { ...r, history } : r;

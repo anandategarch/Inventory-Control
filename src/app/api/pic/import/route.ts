@@ -25,7 +25,11 @@ export const maxDuration = 60;
 
 const importSchema = z
   .object({
-    csvContent: z.string().min(1),
+    // FIX (BUG-2-b / BUG-1-c #12): bound the CSV body — the whole PIC map is
+    // ~333 outlets × ~30 chars ≈ 10KB; 100_000 chars is generous headroom.
+    // An unbounded string let any client POST a multi-MB body that the
+    // per-line parse loop then churned through (resource-exhaustion class).
+    csvContent: z.string().min(1).max(100_000),
   })
   .strict();
 

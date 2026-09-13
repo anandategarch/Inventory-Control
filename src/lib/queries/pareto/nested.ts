@@ -287,11 +287,19 @@ export async function queryParetoNested(
     ? Prisma.raw(', o.name, o.area')
     : Prisma.raw('');
 
-  // Step 1: query top N parents by |nominalDeviasi|
+  // Step 1: query top N parents by |nominalDeviasi|.
+  // FIX (BUG-2-c): `populationTotal` (SUM(...) OVER () window — evaluated
+  // AFTER GROUP BY/HAVING but BEFORE the LIMIT) carries the TOTAL over the
+  // WHOLE parent population, not just the top-N slice the LIMIT returns.
+  // sharePct/cumPct are now computed against it, matching the by-dimension
+  // cards (computePareto8020 over the full population) instead of hitting a
+  // misleading 100% at row N when the population is larger than maxItems
+  // (e.g. 109 items with maxItems=10 → item #1's share was inflated).
   const topParents = await withStatementTimeout((tx) => tx.$queryRaw<
     Array<{
       name: string;
       totalAbsNominal: number;
+      populationTotal: number | null;
       nominalDeviasi: number;
       qtyDeviasi: number;
       outletCount: number;
@@ -299,6 +307,7 @@ export async function queryParetoNested(
   >`
     SELECT ${parentGroupExpr} as "name",
       ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
+      SUM(ABS(SUM(ir."nominalDeviasi"))) OVER () as "populationTotal",
       SUM(ir."nominalDeviasi") as "nominalDeviasi",
       SUM(ir."qtyDeviasi") as "qtyDeviasi",
       CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount"
@@ -317,7 +326,13 @@ export async function queryParetoNested(
     return { items: [], totalAbsNominal: 0, parentDim, childDim };
   }
 
-  const grandTotal = topParents.reduce((s, r) => s + Number(r.totalAbsNominal), 0);
+  // FIX (BUG-2-c): denominator = FULL population total (window column on
+  // every row — LIMIT cannot clip it). Defensive fallback to the old
+  // top-N subtotal when the window value is unexpectedly null/NaN/0.
+  const populationTotal = Number(topParents[0].populationTotal) || 0;
+  const grandTotal = populationTotal > 0
+    ? populationTotal
+    : topParents.reduce((s, r) => s + Number(r.totalAbsNominal), 0);
 
   // Step 2: per-parent child breakdown — ONE combined query for ALL parents
   // (AUDIT-FOLLOWUP-NESTED-N+1; previously one withStatementTimeout
@@ -345,6 +360,7 @@ export async function queryParetoNested(
       label: string | null;
       area: string | null;
       totalAbsNominal: number;
+      parentChildPopulationTotal: number | null;
       nominalDeviasi: number;
       qtyDeviasi: number;
     }>
@@ -353,6 +369,11 @@ export async function queryParetoNested(
       SELECT ${parentGroupExpr} as "parentName", ${childGroupExpr} as "name",
         ${childDetailCols}
         ABS(SUM(ir."nominalDeviasi")) as "totalAbsNominal",
+        -- FIX (BUG-2-c): full child population total per parent (window is
+        -- evaluated over ALL per_child rows, BEFORE the ranked/rn<=20 cap
+        -- and before the parent IN-list LIMIT could clip anything) — the
+        -- denominator for honest child sharePct/cumPct.
+        SUM(ABS(SUM(ir."nominalDeviasi"))) OVER (PARTITION BY ${parentGroupExpr}) as "parentChildPopulationTotal",
         SUM(ir."nominalDeviasi") as "nominalDeviasi",
         SUM(ir."qtyDeviasi") as "qtyDeviasi"
       FROM "InventoryRecord" ir
@@ -373,7 +394,7 @@ export async function queryParetoNested(
         ROW_NUMBER() OVER (PARTITION BY "parentName" ORDER BY "totalAbsNominal" DESC, "name") AS rn
       FROM per_child
     )
-    SELECT "parentName", "name", "label", "area", "totalAbsNominal", "nominalDeviasi", "qtyDeviasi"
+    SELECT "parentName", "name", "label", "area", "totalAbsNominal", "parentChildPopulationTotal", "nominalDeviasi", "qtyDeviasi"
     FROM ranked
     WHERE rn <= 20
     ORDER BY "parentName", "totalAbsNominal" DESC, "name"
@@ -396,7 +417,16 @@ export async function queryParetoNested(
     // ORDER BY "parentName", "totalAbsNominal" DESC, "name" above.
     const childRows = childRowsByParent.get(parent.name) ?? [];
 
-    const childTotal = childRows.reduce((s, r) => s + Number(r.totalAbsNominal), 0);
+    // FIX (BUG-2-c): child shares are computed against the parent's FULL
+    // child population (window column computed pre-cap), with a defensive
+    // fallback to the returned-rows subtotal when the window value is
+    // unexpectedly null/NaN/0. Child cumPct therefore no longer hits a
+    // misleading 100% at the rn<=20 cap, and the Pareto-80% cutoff below
+    // stops at an honest 80% of the parent's total deviation.
+    const childPopulationTotal = Number(childRows[0]?.parentChildPopulationTotal) || 0;
+    const childTotal = childPopulationTotal > 0
+      ? childPopulationTotal
+      : childRows.reduce((s, r) => s + Number(r.totalAbsNominal), 0);
     let childCumPct = 0;
     const allChildren = childRows.map((r) => {
       const sharePct = childTotal > 0 ? (Number(r.totalAbsNominal) / childTotal) * 100 : 0;

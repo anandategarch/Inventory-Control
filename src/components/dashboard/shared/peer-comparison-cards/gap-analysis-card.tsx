@@ -61,6 +61,13 @@ export const GapAnalysisCard = memo(function GapAnalysisCard({
             // For Sales (higherBetter=true) — downIsGood=false (up = good).
             const downIsGood = !r.higherBetter;
             const isWorse = r.higherBetter ? gap < 0 : gap > 0;
+            // FIX (BUG-2-a #4): the badge TEXT must describe the NUMBER's
+            // direction vs best, not the verdict. For bad metrics
+            // (higherBetter=false) the target can be numerically ABOVE best
+            // while still being WORSE — e.g. Dev/BOM 8% vs best 3% (gap=+5)
+            // used to read "di bawah best" right next to the +5 delta.
+            // Color stays verdict-driven (isWorse → red, else green).
+            const gapLabel = gap > 0 ? 'di atas best' : gap < 0 ? 'di bawah best' : 'setara best';
 
             // Map the row's format function to a preset code.
             // The row.format is a closure that already handles formatting
@@ -84,7 +91,7 @@ export const GapAnalysisCard = memo(function GapAnalysisCard({
                         : 'text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30'
                     }`}
                   >
-                    {isWorse ? 'di bawah best' : 'di atas best'}
+                    {gapLabel}
                   </Badge>
                 </div>
 

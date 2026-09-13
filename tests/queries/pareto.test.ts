@@ -4,6 +4,7 @@
 // (3) the result transformation (computePareto) produces the right shape.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { queryParetoByItem, queryParetoByOutlet, queryParetoByArea } from '@/lib/queries/pareto';
+import { queryParetoNested } from '@/lib/queries/pareto/nested';
 
 const { mockQueryRaw, mockExecuteRaw } = vi.hoisted(() => ({
   mockQueryRaw: vi.fn(),
@@ -131,5 +132,73 @@ describe('queryParetoByArea', () => {
     mockQueryRaw.mockResolvedValueOnce([]);
     const r = await queryParetoByArea('WEEK 1', 'M', {});
     expect(r.drivers).toEqual([]);
+  });
+});
+
+// ============================================================
+// FIX (BUG-2-c): queryParetoNested — sharePct/cumPct vs FULL population
+// --------------------------------------------------------
+// The parent share/cum used to be computed from the SUBTOTAL of the top-N
+// slice (grandTotal = Σ topParents), inflating item #1's share and forcing
+// cumPct to a misleading 100% at row maxItems. Step-1 now carries the
+// population total via `SUM(...) OVER ()` and shares are computed against
+// it — same semantics as computePareto8020 on the by-dimension cards.
+// ============================================================
+describe('queryParetoNested — population-based sharePct/cumPct', () => {
+  beforeEach(() => {
+    mockQueryRaw.mockReset();
+    mockExecuteRaw.mockReset();
+  });
+
+  it('computes parent shares against the population total (window column), not the top-N subtotal', async () => {
+    // Population: 12 parents, total = 252. maxItems=10 → the top-10 subtotal
+    // is 245 (K=4 and L=3 stay outside the slice).
+    const population: Array<[string, number]> = [
+      ['A', 100], ['B', 50], ['C', 30], ['D', 20], ['E', 10], ['F', 9],
+      ['G', 8], ['H', 7], ['I', 6], ['J', 5], ['K', 4], ['L', 3],
+    ];
+    const POPULATION_TOTAL = population.reduce((s, [, v]) => s + v, 0); // 252
+    // Step-1 rows (top 10): each row carries the window populationTotal.
+    mockQueryRaw.mockResolvedValueOnce(
+      population.slice(0, 10).map(([name, v]) => ({
+        name, totalAbsNominal: v, populationTotal: POPULATION_TOTAL,
+        nominalDeviasi: -v, qtyDeviasi: -Math.round(v / 10), outletCount: 3,
+      })),
+    );
+    // Step-2 rows: 3 outlet children for parent A (population of A = 100 —
+    // equal to the window total so shares are checkable by hand).
+    mockQueryRaw.mockResolvedValueOnce([
+      { parentName: 'A', name: 'out1', label: 'Outlet 1', area: 'X', totalAbsNominal: 60, parentChildPopulationTotal: 100, nominalDeviasi: -60, qtyDeviasi: -6 },
+      { parentName: 'A', name: 'out2', label: 'Outlet 2', area: 'X', totalAbsNominal: 30, parentChildPopulationTotal: 100, nominalDeviasi: -30, qtyDeviasi: -3 },
+      { parentName: 'A', name: 'out3', label: 'Outlet 3', area: 'X', totalAbsNominal: 10, parentChildPopulationTotal: 100, nominalDeviasi: -10, qtyDeviasi: -1 },
+    ]);
+    const r = await queryParetoNested('WEEK 1', 'Agustus 2026', {}, 'item', 'outlet', 10);
+
+    // totalAbsNominal = the POPULATION total (252), not the top-10 subtotal (245)
+    expect(r.totalAbsNominal).toBe(252);
+    expect(r.items).toHaveLength(10);
+    // A: 100/252 = 39.7% (would be 40.8% against the 245 subtotal)
+    expect(r.items[0].name).toBe('A');
+    expect(r.items[0].sharePct).toBe(39.7);
+    // Last top-10 row (J=5): cum = 245/252 = 97.2% — NOT the old
+    // misleading 100% at the cap row.
+    expect(r.items[9].name).toBe('J');
+    expect(r.items[9].cumPct).toBe(97.2);
+    // Child shares vs the parent's full child population (window column):
+    // 60/100, 30/100 → Pareto-80 cutoff keeps the first two children only.
+    const children = r.items[0].children;
+    expect(children).toHaveLength(2);
+    expect(children[0].sharePct).toBe(60);
+    expect(children[0].cumPct).toBe(60);
+    expect(children[1].sharePct).toBe(30);
+    expect(children[1].cumPct).toBe(90);
+  });
+
+  it('returns empty items when no parents pass the HAVING filter', async () => {
+    mockQueryRaw.mockResolvedValueOnce([]); // step-1: no rows
+    const r = await queryParetoNested('WEEK 1', 'M', {}, 'item', 'outlet', 10);
+    expect(r.items).toEqual([]);
+    expect(r.totalAbsNominal).toBe(0);
+    expect(mockQueryRaw).toHaveBeenCalledTimes(1); // step-2 never runs
   });
 });

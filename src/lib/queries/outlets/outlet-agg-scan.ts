@@ -72,6 +72,11 @@ export interface OutletAggScanRow {
   grossAbsNominal: number;
   qtyDeviasiLoss: number;
   residualNominal: number;
+  // FIX (BUG-2-c): toleranceBreachCount, toleranceBreachHighCount,
+  // highDevBomCount, benchmarkHighCount, hasNoTolerance and highLossItem are
+  // DISTINCT-ITEM counts (COUNT(DISTINCT CASE ... THEN itemId END)) — one
+  // item with several akunPenyesuaian rows counts once. deviatingItems and
+  // overExplainedCount remain RECORD counts (not item-labelled in the UI).
   toleranceBreachCount: number;
   toleranceBreachHighCount: number;
   /** Items with |Dev/BOM| > 50% — fixed-threshold count, NOT a z-score (H-13). */
@@ -138,19 +143,28 @@ async function computeOutletAggregateScan(
         SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ir."absQtyDeviasi" ELSE 0 END) as "qtyDeviasiLoss",
         COUNT(DISTINCT ir."itemId") as "itemCount",
         COUNT(CASE WHEN ir."absNominalDeviasi" > 0 THEN 1 END) as "deviatingItems",
+        -- FIX (BUG-2-c): the "N item" counts below used to COUNT RECORDS
+        -- (outlet×item×akunPenyesuaian grain) — one item with >1 adjustment
+        -- account was counted more than once, inflating every item-based
+        -- signal (S3/S9/S11/S12/S15) and their analysis bullets. Now
+        -- COUNT(DISTINCT CASE WHEN ... THEN itemId END) — distinct ITEMS.
         -- FIX CALC-2: ABS() on both sides — pctQtyDeviasiToBom and tolerancePct are SIGNED in Excel
-        COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > ABS(ir."tolerancePct") THEN 1 END) as "toleranceBreachCount",
-        COUNT(CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > ABS(ir."tolerancePct") * 2 THEN 1 END) as "toleranceBreachHighCount",
+        COUNT(DISTINCT CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > ABS(ir."tolerancePct") THEN ir."itemId" END) as "toleranceBreachCount",
+        COUNT(DISTINCT CASE WHEN ir."tolerancePct" IS NOT NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > ABS(ir."tolerancePct") * 2 THEN ir."itemId" END) as "toleranceBreachHighCount",
         -- High Dev/BOM item count (H-13): items with |pctQtyDeviasiToBom| > 0.50 — a
         -- fixed-threshold count, NOT a z-score. Formerly aliased "zScoreAbnormalCount".
-        COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.50 THEN 1 END) as "highDevBomCount",
-        COUNT(CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.50 THEN 1 END) as "benchmarkHighCount",
+        COUNT(DISTINCT CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.50 THEN ir."itemId" END) as "highDevBomCount",
+        -- BUG-2-c: benchmarkHighCount is the SAME expression as highDevBomCount
+        -- (verified duplicate — see BUG-1-a #8 / BUG2-RESTO-3) — kept as a
+        -- separate column for the legacy payload shape, now also DISTINCT so
+        -- the two can never drift apart again.
+        COUNT(DISTINCT CASE WHEN ir."pctQtyDeviasiToBom" IS NOT NULL AND ABS(ir."pctQtyDeviasiToBom") > 0.50 THEN ir."itemId" END) as "benchmarkHighCount",
         0 as "benchmarkWarningCount",
         COUNT(CASE WHEN ir."qtyDeviasi" IS NOT NULL AND ir."qtyDeviasi" != 0 AND ABS(ir."qtyWaste") + ABS(ir."qtySusut") + ABS(ir."qtyTrial") > ABS(ir."qtyDeviasi") THEN 1 END) as "overExplainedCount",
         -- FIX REC-1: COUNT() of items without tolerance (was MAX() returning 0/1)
-        COUNT(CASE WHEN ir."tolerancePct" IS NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL THEN 1 END) as "hasNoTolerance",
+        COUNT(DISTINCT CASE WHEN ir."tolerancePct" IS NULL AND ir."pctQtyDeviasiToBom" IS NOT NULL THEN ir."itemId" END) as "hasNoTolerance",
         -- FIX (AUDIT7-CALC-11): runtime-configurable HIGH_LOSS_NOMINAL threshold (part of the cache key via hlt)
-        COUNT(CASE WHEN ir."nominalLossSurplus" < -${highLossThreshold} THEN 1 END) as "highLossItem",
+        COUNT(DISTINCT CASE WHEN ir."nominalLossSurplus" < -${highLossThreshold} THEN ir."itemId" END) as "highLossItem",
         -- FIX CALC-5 + VERIFY3-8: outlet direction from net nominalLossSurplus with qtyDeviasi NULL fallback
         ${DIRECTION_FROM_SUM_SQL} as "outletDirection"
       FROM "InventoryRecord" ir
@@ -287,12 +301,15 @@ export async function queryOutletAggregateScan(
       month,
       week,
       filters,
-      // v: 2 (H-13) — row shape changed (zScoreAbnormalCount → highDevBomCount,
-      // zScoreWarningCount removed). The version marker separates old-shape
-      // rows from new-shape rows so neither is ever served to the other's
-      // mapper. Invalidation prefix ('q-outlet-agg') is unchanged — mutations
-      // still clear BOTH shapes.
-      extra: { hlt, v: 2 },
+      // v: 3 (BUG-2-c) — the "N item" count columns (toleranceBreach*,
+      // highDevBomCount, benchmarkHighCount, hasNoTolerance, highLossItem)
+      // changed semantics: RECORD counts → DISTINCT-ITEM counts
+      // (COUNT(DISTINCT CASE WHEN ... THEN itemId END)). The version marker
+      // separates old-shape rows from new-shape rows so neither is ever
+      // served to the other's mapper. v: 2 (H-13) was the column rename.
+      // Invalidation prefix ('q-outlet-agg') is unchanged — mutations still
+      // clear rows of ALL shapes.
+      extra: { hlt, v: 3 },
     },
     () => computeOutletAggregateScan(week, month, filters, hlt),
   );

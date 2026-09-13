@@ -222,16 +222,29 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
   }
 
   // CRITICAL null guards: server occasionally returns partial payloads (e.g. during
-  // ingest race conditions). Without these guards, accessing `data.restoProfile`
-  // directly would throw a TypeError that crashes the entire dashboard.
-  const profile: RestoProfile = data.restoProfile ?? ({} as RestoProfile);
+  // ingest race conditions).
+  // FIX (BUG-2-a #2): `data.restoProfile ?? ({} as RestoProfile)` was a FAKE
+  // guard — the `as` cast only silenced the compiler while the nested
+  // `profile.investigation.healthScore` (and ~21 more `profile.x.y` accesses
+  // in the 6 Profil Outlet cards below) still threw TypeError on exactly the
+  // partial-payload case this comment documents. `profile` is now honestly
+  // `RestoProfile | null`: the 6 profile cards + the header health ring
+  // render ONLY with a full profile, a partial-state notice takes their
+  // place, and the rest of the tab (Bahan Analysis, Menu Analysis, Ranking
+  // Nasional) keeps rendering.
+  const profile: RestoProfile | null = data.restoProfile ?? null;
   const outlet = data.outlet ?? { code: '', name: '', area: '', pic: null };
   const rankings: { financial: ItemRow[]; operational: ItemRow[]; unexplained: ItemRow[] } =
     data.rankings ?? { financial: [], operational: [], unexplained: [] };
   const currentRanking = rankings[rankingTab as keyof typeof rankings] || [];
 
-  // Health score ring color
-  const healthScore = profile.investigation.healthScore;
+  // Health score ring color — only reached with a profile present (see the
+  // conditional render in the header card below). FIX (BUG-2-a #2, follow-up
+  // Main): `profile` is genuinely nullable at runtime, so this must be
+  // optional-chained — with healthScore falling back to 0 on partial
+  // payloads (the ring itself is not rendered without a profile, so the 0
+  // is never shown as a fabricated score).
+  const healthScore = profile?.investigation?.healthScore ?? 0;
   const scoreRing = healthScore < 30 ? 'stroke-red-500' : healthScore < 50 ? 'stroke-amber-500' : healthScore < 70 ? 'stroke-yellow-500' : 'stroke-emerald-500';
   const scoreText = healthScore < 30 ? 'text-red-600 dark:text-red-400' : healthScore < 50 ? 'text-amber-600 dark:text-amber-400' : healthScore < 70 ? 'text-yellow-600 dark:text-yellow-400' : 'text-emerald-600 dark:text-emerald-400';
   const radius = 26;
@@ -280,20 +293,24 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
                 </p>
               </div>
             </div>
-            {/* Health Score ring */}
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="relative h-14 w-14 rounded-full bg-muted/30 ring-2 ring-foreground/10 flex items-center justify-center">
-                <svg className="absolute inset-0 -rotate-90" viewBox="0 0 64 64" aria-hidden>
-                  <circle cx="32" cy="32" r={radius} className="fill-none stroke-muted/50" strokeWidth="4" />
-                  <circle cx="32" cy="32" r={radius} className={`fill-none ${scoreRing}`} strokeWidth="4" strokeLinecap="round" strokeDasharray={`${dash} ${circ}`} />
-                </svg>
-                <span className={`text-sm font-bold tabular-nums ${scoreText}`}>{healthScore}</span>
+            {/* Health Score ring — FIX (BUG-2-a #2): only with a full
+                restoProfile; a partial payload would otherwise show a
+                fabricated "0 / Kritis" ring. */}
+            {profile && (
+              <div className="flex items-center gap-3 shrink-0">
+                <div className="relative h-14 w-14 rounded-full bg-muted/30 ring-2 ring-foreground/10 flex items-center justify-center">
+                  <svg className="absolute inset-0 -rotate-90" viewBox="0 0 64 64" aria-hidden>
+                    <circle cx="32" cy="32" r={radius} className="fill-none stroke-muted/50" strokeWidth="4" />
+                    <circle cx="32" cy="32" r={radius} className={`fill-none ${scoreRing}`} strokeWidth="4" strokeLinecap="round" strokeDasharray={`${dash} ${circ}`} />
+                  </svg>
+                  <span className={`text-sm font-bold tabular-nums ${scoreText}`}>{healthScore}</span>
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Health Score</p>
+                  <p className={`text-xs font-semibold ${scoreText}`}>{healthScore < 30 ? 'Kritis' : healthScore < 50 ? 'Perhatian' : healthScore < 70 ? 'Cukup' : 'Sehat'}</p>
+                </div>
               </div>
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Health Score</p>
-                <p className={`text-xs font-semibold ${scoreText}`}>{healthScore < 30 ? 'Kritis' : healthScore < 50 ? 'Perhatian' : healthScore < 70 ? 'Cukup' : 'Sehat'}</p>
-              </div>
-            </div>
+            )}
           </div>
         </CardHeader>
       </Card>
@@ -312,6 +329,11 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
         title="Profil Outlet"
         description="Bagaimana kondisi outlet terpilih — performa, perilaku, historis, benchmark, dan risiko item?"
       />
+      {/* FIX (BUG-2-a #2): the 6 profile cards only render with a full
+          restoProfile — on a partial payload (ingest race) a partial-state
+          notice takes their place instead of the old `as`-cast TypeError
+          that killed the whole Resto tab. */}
+      {profile ? (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {/* 1. Performance */}
         <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
@@ -402,6 +424,19 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
           </CardContent>
         </Card>
       </div>
+      ) : (
+        <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
+          <CardContent className="py-8 text-center">
+            <div className="flex flex-col items-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl border bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 mb-3">
+                <Gauge className="h-6 w-6" />
+              </div>
+              <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Profil outlet belum tersedia untuk periode ini</p>
+              <p className="text-xs text-muted-foreground mt-1 max-w-md">Data analisa resto lain di bawah (Bahan Analysis, Menu Analysis, Ranking Nasional) tetap ditampilkan.</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Menu Analysis — Phase 3: Group by menu + outlier detection */}
       {activeOutlet && (

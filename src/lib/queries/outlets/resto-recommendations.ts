@@ -58,6 +58,16 @@ export interface RestoRecommendation {
   history?: OutletRecurrenceHistory;
 }
 
+/** FIX (BUG-2-c): query result envelope. `priorityCount` = outlets evaluated
+ *  with priorityLevel TINGGI or SEDANG (i.e. priorityScore >= 30), counted
+ *  over the FULL evaluated array BEFORE the display `limit` slice — the
+ *  hero caption "N resto menjadi prioritas" used to show the display limit
+ *  (sliced length, max 5) instead of the true priority total. */
+export interface RestoRecommendationsResult {
+  recommendations: RestoRecommendation[];
+  priorityCount: number;
+}
+
 export async function queryRestoRecommendations(
   month: string,
   week: string,
@@ -73,7 +83,7 @@ export async function queryRestoRecommendations(
   // Callers should pass `thresholds.HIGH_LOSS_NOMINAL_THRESHOLD` so Settings UI
   // changes propagate to the priority score.
   highLossThreshold: number = 50_000_000,
-): Promise<RestoRecommendation[]> {
+): Promise<RestoRecommendationsResult> {
   const f = buildSqlFilters(filters);
 
   // Fetch current period outlet aggregates + previous period + historical avg
@@ -414,8 +424,17 @@ export async function queryRestoRecommendations(
     };
   });
 
-  // Sort by priority score desc, take top N
-  return recommendations
-    .sort((a, b) => b.priorityScore - a.priorityScore)
-    .slice(0, limit);
+  // Sort by priority score desc, take top N.
+  // FIX (BUG-2-c): count the TRUE priority total (TINGGI + SEDANG =
+  // priorityLevel !== 'RENDAH', i.e. priorityScore >= 30) over the FULL
+  // evaluated array BEFORE slicing to the display limit — the /api/recommendations
+  // response exposes it as `priorityCount` so the hero caption "N resto menjadi
+  // prioritas" no longer shows the display cap (5).
+  const priorityCount = recommendations.filter((r) => r.priorityLevel !== 'RENDAH').length;
+  return {
+    recommendations: recommendations
+      .sort((a, b) => b.priorityScore - a.priorityScore)
+      .slice(0, limit),
+    priorityCount,
+  };
 }

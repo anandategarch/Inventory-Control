@@ -472,7 +472,14 @@ export async function queryParetoByDevBom(
     .sort((a, b) => (b.absNominal - a.absNominal) || a.itemName.localeCompare(b.itemName))
     .slice(0, maxDrivers);
 
-  const grandTotal = topItems.reduce((s, r) => s + r.absNominal, 0);
+  // FIX (BUG-2-c): grandTotal is the FULL population total over ALL
+  // threshold-passing items (outletRows returns every (item, outlet) row —
+  // no SQL LIMIT — so the population is fully materialized here), NOT just
+  // the top-N slice. sharePct/cumPct are therefore honest percentages of the
+  // population (same semantics as computePareto8020 on the by-dimension
+  // cards) instead of inflating to a misleading 100% at row maxDrivers;
+  // remainderPct = 100 − cumPct becomes the true "rest of population".
+  const grandTotal = itemAggs.reduce((s, r) => s + r.absNominal, 0);
   let cumPct = 0;
 
   const drivers: ParetoDevBomRow[] = topItems.map((item) => {

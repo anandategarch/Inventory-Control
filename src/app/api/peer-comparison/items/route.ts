@@ -21,6 +21,7 @@ import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { buildSqlFilters, withStatementTimeout } from '@/lib/queries/shared';
 import { validateQuery, peerComparisonItemsQuerySchema } from '@/lib/validation';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
+import { errorResponse } from '@/lib/error-response';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // FIX: 30→60 — item comparison can be slow with many items
@@ -54,6 +55,13 @@ export async function GET(req: NextRequest) {
     // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok scopes the PEER set only —
     // the focus outlet's top-items CTE is queried by outletCode regardless.
     const kelompok = url.searchParams.get('kelompok');
+    // FIX (BUG-2-b / BUG-1-c #3): normalize 'all' (case-insensitive) → null
+    // ONCE, then use kelompokParam for BOTH the cache key AND the query —
+    // the raw value used to reach the peer_outlets CTE, where
+    // UPPER('all') matched 0 outlets → an empty result cached under the
+    // no-filter key (cache poisoning, 5-min TTL). Mirrors the
+    // benchmark-opportunity route's normalizeKelompok pattern.
+    const kelompokParam = kelompok && kelompok.toLowerCase() !== 'all' ? kelompok : null;
 
     if (!outletCode || !month) {
       return NextResponse.json({ success: false, error: 'outletCode and month required' }, { status: 400 });
@@ -69,14 +77,14 @@ export async function GET(req: NextRequest) {
       month,
       week,
       outletCode,
-      kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
+      kelompok: kelompokParam,
       extra: { mode, topItems },
     });
 
     const { data: resultData, cached, stale } = await withCacheAndDedup<{ items: GroupedItem[] }>(
       cacheKey,
       PEER_ITEMS_CACHE_TTL,
-      () => computePeerComparisonItems({ outletCode, month, week, mode, topItems, kelompok }),
+      () => computePeerComparisonItems({ outletCode, month, week, mode, topItems, kelompok: kelompokParam }),
     );
 
     return NextResponse.json({
@@ -90,7 +98,10 @@ export async function GET(req: NextRequest) {
     });
   } catch (e: unknown) {
     logger.error("[peer-comparison-items] error:", { error: e });
-    return NextResponse.json({ success: false, error: (e instanceof Error ? e.message : String(e)) }, { status: 500 });
+    // FIX (BUG-2-b / BUG-1-c #4): use the gated errorResponse helper (same as
+    // the sibling routes) instead of echoing e.message raw — internal DB/SQL
+    // error details must not leak to clients in production.
+    return errorResponse(e, "peer-comparison-items");
   }
 }
 

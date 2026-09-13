@@ -139,9 +139,14 @@ export const ExecutiveStatus = memo(function ExecutiveStatus({ data }: { data: A
   // SPEC-1 (§4.2 hero interpretation): "N resto menjadi prioritas" —
   // same /api/recommendations query as the L3 RestoRecommendationCard
   // (same dashboard scope → identical queryKey → TanStack dedupes; no
-  // extra request). Count = rows the existing engine flags as priority.
+  // extra request).
+  // FIX (BUG-2-a #3): `recommendations.length` is capped by the DISPLAY limit
+  // (RECOMMENDATIONS_LIMIT = 5) — on a 333-outlet network the hero used to
+  // read "5 resto menjadi prioritas" no matter the real count. BUG-2-c adds
+  // the server-side pre-slice `priorityCount`; until it lands (or on a stale
+  // cached response without the field) fall back to the capped length.
   const { data: recsResp } = useRecommendations(null);
-  const priorityRestoCount = recsResp?.recommendations?.length ?? 0;
+  const priorityRestoCount = recsResp?.priorityCount ?? recsResp?.recommendations?.length ?? 0;
 
   // Health score + verdict — same fields + thresholds as the old HealthAlert.
   const total = hs.normal + hs.warning + hs.abnormal;

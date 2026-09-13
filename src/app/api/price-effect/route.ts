@@ -28,7 +28,7 @@ import { logger } from '@/lib/logger';
 import { rateLimit, getClientIP } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolveOutletCodeFilters } from '@/lib/outlet-code-filters';
-import { queryPriceEffect, type PriceEffectResult } from '@/lib/queries/price-effect';
+import { queryPriceEffect, type PriceEffectResult, type PriceEffectSummary } from '@/lib/queries/price-effect';
 import { validateQuery } from '@/lib/validation';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
@@ -120,11 +120,30 @@ export async function GET(req: NextRequest) {
           pic,
         );
         if (noMatch) {
-          // Filters matched zero outlets — empty but well-formed result
-          return queryPriceEffect(week, resolvedMonth, null, null, {
-            area: null, kelompok: null, outletCode: null,
-            itemName: null, picOutletCodes: null,
-          });
+          // FIX (BUG-2-b / BUG-1-c #11): filters matched ZERO outlets — return
+          // a preserved EMPTY summary instead of re-running queryPriceEffect
+          // with all filters dropped. The old path (a) threw away the user's
+          // compare params (hasCompare:false even though they supplied one —
+          // misleading "pick a compare period" hint) and (b) ran an UNFILTERED
+          // full-scan aggregation whose result was then discarded (wasted
+          // 154-row GROUP BY per CTE). Shape mirrors emptySummary in
+          // price-effect.ts (JANGAN edit file itu); hasCompare reflects the
+          // USER's compare params — false only when they did not supply both
+          // compareWeek + compareMonth, matching queryPriceEffect's own
+          // `!!(prevWeek && prevMonth)` semantics. anomalyNominal is an
+          // additive BUG-2-c field — 0 in the empty state.
+          const emptySummary: PriceEffectSummary = {
+            hasCompare: Boolean(compareWeek && resolvedCompareMonth),
+            matchedItems: 0, newItems: 0, goneItems: 0,
+            newNominal: 0, goneNominal: 0,
+            nomCurr: 0, nomPrev: 0, netDelta: 0,
+            qtyEffect: 0, priceEffect: 0,
+            priceSharePct: null, avgPriceChangePct: null, medianPriceChangePct: null,
+            itemsPriceUp: 0, itemsPriceDown: 0,
+            currTotalNominal: 0, prevTotalNominal: 0,
+            anomalyNominal: 0,
+          };
+          return { summary: emptySummary, items: [] } satisfies PriceEffectResult;
         }
 
         return queryPriceEffect(

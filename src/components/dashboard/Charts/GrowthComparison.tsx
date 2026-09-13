@@ -80,7 +80,12 @@ export const GrowthComparison = memo(function GrowthComparison({ data }: { data:
       .sort((a, b) => Math.abs(b.priceEffect) - Math.abs(a.priceEffect));
     const down = priceItems
       .filter((m) => (m.priceGrowth ?? 0) < 0)
-      .sort((a, b) => Math.abs(a.priceEffect) - Math.abs(b.priceEffect));
+      // FIX (BUG-2-a #1): sort DESC by |priceEffect|, mirroring `up` above —
+      // was ASC (a − b), so the panel's slice(0, 5) listed the SMALLEST
+      // movers and the biggest price-drop items never appeared (the
+      // getTopDriver('price') fallback via priceDown[0] also picked the
+      // smallest). After the flip, slice(0, 5) + priceDown[0] are correct.
+      .sort((a, b) => Math.abs(b.priceEffect) - Math.abs(a.priceEffect));
     const max = up.reduce((mx, m) => Math.max(mx, Math.abs(m.priceEffect)), 0);
     return { priceUp: up, priceDown: down, priceUpMax: max };
   }, [priceItems]);

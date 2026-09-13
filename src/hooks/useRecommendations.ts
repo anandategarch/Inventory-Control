@@ -45,6 +45,12 @@ export interface RestoRecommendation extends Recommendation {
 export interface RecommendationsResponse {
   success: boolean;
   recommendations: RestoRecommendation[];
+  /** FIX (BUG-2-a #3, contract with BUG-2-c/server): total outlets the engine
+   *  flags as priority (level TINGGI/SEDANG) BEFORE the display `limit`
+   *  slice — so the ExecutiveStatus hero can show the REAL count instead of
+   *  the capped list length (RECOMMENDATIONS_LIMIT = 5). Optional until the
+   *  server ships it; consumers must fall back to `recommendations.length`. */
+  priorityCount?: number;
   error?: string;
   cached?: boolean;
   stale?: boolean;

@@ -53,7 +53,11 @@ export interface OutletItemsResponse {
   success: boolean;
   outlet: { code: string; name: string; area: string; pic: string | null };
   period: { month: string; week: string; prevWeek: string | null; prevMonth: string | null };
-  restoProfile: RestoProfile;
+  /** FIX (BUG-2-a #2): OPTIONAL — the server can return a partial payload
+   *  (e.g. during an ingest race), and the old REQUIRED typing is what let
+   *  the fake `{} as RestoProfile` guard compile while still crashing at
+   *  runtime. Honest type = optional; consumers must null-check. */
+  restoProfile?: RestoProfile;
   rankings: { financial: ItemRow[]; operational: ItemRow[]; unexplained: ItemRow[] };
   allItems: OutletItem[];
   /** Top 30 deviasi items for THIS outlet (with national rank + peer benchmark).

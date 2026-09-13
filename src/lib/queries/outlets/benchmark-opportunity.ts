@@ -85,7 +85,16 @@ export async function queryBenchmarkOpportunity(
       SELECT
         o.code as "outletCode",
         o.name as "outletName",
-        o.area as "area",
+        -- FIX (BUG-2-c): area from InventoryRecord (ir.area), NOT Outlet.area —
+        -- the same source buildSqlFilters filters on and areas.ts groups by.
+        -- Production data has drift between the two (outlet reassignments),
+        -- so o.area grouped outlets into areas their FILTERED records don't
+        -- belong to (an area-filtered outlet could land in a foreign area's
+        -- median). MAX(ir.area) keeps GROUP BY o.id unique (one row per
+        -- outlet — no double-count in the median when a single outlet's
+        -- records span two areas in one period), mirroring areas.ts which
+        -- also aggregates on ir.area.
+        MAX(ir.area) as "area",
         -- FIX CALC-4 convention (dashboard.ts): LOSS = negative
         -- nominalLossSurplus — take ABS per record, per-outlet SUM.
         SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END) as "lossNominal",

@@ -235,5 +235,16 @@ describe('queryParetoByDevBom', () => {
     expect(r.drivers[0].outlets).toHaveLength(20); // 25 rows → capped at 20
     // outletCount reflects ALL threshold-passing outlets (25), not the capped 20
     expect(r.drivers[0].outletCount).toBe(25);
+    // FIX (BUG-2-c) semantics update: sharePct/cumPct are now computed against
+    // the FULL population total (I1 = 30 + 24×1 = 54, so 54+20+10 = 84), not
+    // the top-N subtotal (74) — the old subtotal inflated shares and forced
+    // cumPct to a misleading 100% at the maxDrivers cap. I1: 54/84 = 64.3%,
+    // I2: 20/84 = 23.8% (cum 88.1%), remainderPct = the true rest-of-population.
+    expect(r.totalAbsNominal).toBe(84);
+    expect(r.drivers[0].sharePct).toBe(64.3);
+    expect(r.drivers[0].cumPct).toBe(64.3);
+    expect(r.drivers[1].sharePct).toBe(23.8);
+    expect(r.drivers[1].cumPct).toBe(88.1);
+    expect(r.remainderPct).toBe(11.9);
   });
 });

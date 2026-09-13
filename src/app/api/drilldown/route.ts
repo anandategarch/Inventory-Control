@@ -45,9 +45,23 @@ export async function GET(req: NextRequest) {
     const itemName = url.searchParams.get('itemName');
     const weekLabel = url.searchParams.get('weekLabel');
     const monthLabel = url.searchParams.get('monthLabel');
-    const areaFilter = url.searchParams.get('area');
-    const kelompokFilter = url.searchParams.get('kelompok');
-    const picFilter = url.searchParams.get('pic');
+    // FIX (BUG-2-b / BUG-1-c #9): area/kelompok/pic now come from the Zod-parsed
+    // result (drilldownQuerySchema validates + length-bounds them) instead of
+    // raw searchParams — a 1000-char kelompok used to pass straight into
+    // resolveKelompokOutletCodes' SQL. The other params keep their existing
+    // raw reads (already validated by the same schema; empty-string
+    // falsy-handling preserved exactly as before).
+    // FIX (BUG-2-b): 'all' (case-insensitive) = no filter, normalized BEFORE
+    // the cache key AND the query — the key builder folds 'all' into the
+    // no-filter sentinel, so the query must drop it too or an empty filtered
+    // result would be cached under the no-filter key (same poisoning class
+    // as BUG-1-c #3). Mirrors the build-where.ts / peer-comparison convention.
+    // pic stays raw — it is free text, not an 'all'-marker field.
+    const normalizeAll = (v: string | null): string | null =>
+      v && v.trim().toLowerCase() !== 'all' ? v : null;
+    const areaFilter = normalizeAll(validation.data.area ?? null);
+    const kelompokFilter = normalizeAll(validation.data.kelompok ?? null);
+    const picFilter = validation.data.pic ?? null;
     const parsedLimit = parseInt(url.searchParams.get('limit') || '50', 10);
     const limit = Math.min(Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50, 500);
     // FIX Medium #2: cursor-based pagination.

@@ -27,6 +27,27 @@ const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 // the same Promise instead of computing in parallel.
 const inflightPromises = new Map<string, Promise<unknown>>();
 
+// FIX (BUG-2-b): generation counter — bumped by EVERY invalidation path in
+// this file (invalidateCache / invalidateAnalysisCache). A computation
+// captures it BEFORE it starts; if the counter has advanced by the time it
+// finishes, the result is (at least partly) PRE-mutation data and must NOT
+// be written back — otherwise the invalidation is silently undone (stale
+// data re-cached under a fresh computedAt, served for another full TTL —
+// BUG-1-c #2, the "data lama setelah upload" symptom). In-flight awaiters
+// use the same check to refuse results computed before an invalidation
+// they should have seen.
+let cacheGeneration = 0;
+
+/**
+ * FIX (BUG-2-b): read the current cache generation. Used by callers that
+ * write cache rows OUTSIDE withCacheAndDedup (background-recompute guards
+ * its setCachedRaw write-back with this) to detect invalidations that
+ * landed while they were computing.
+ */
+export function getCacheGeneration(): number {
+  return cacheGeneration;
+}
+
 /**
  * Build a cache key from the filter parameters.
  * Format: "analysis␟2026-08␟WEEK 1␟WEEK 1␟Juli 2026␟JAWA TIMUR 1␟MLG␟1016.MLGJAK␟MINYAK MIE␟Andi"
@@ -42,8 +63,10 @@ const inflightPromises = new Map<string, Promise<unknown>>();
  * \x1f is a control character that will never appear in user input, making
  * the key collision-proof.
  *
- * FIX (BUG-BE-5 / BUG-PERF-7): normalize 'all' → 'ALL' + uppercase kelompok
- * so that `?kelompok=all` and no kelompok param produce the SAME cache key.
+ * FIX (BUG-BE-5 / BUG-PERF-7): normalize 'all' → the no-filter sentinel +
+ * uppercase kelompok so that `?kelompok=all` and no kelompok param produce
+ * the SAME cache key. (BUG-2-b: the sentinel is now NUL-prefixed — see
+ * SENTINEL_ALL below — so it can never collide with a literal filter value.)
  *
  * PERF-CACHE-01..04: `extra` field for route-specific params that affect the
  * response but aren't part of the standard filter set (e.g. pareto's parentDim/
@@ -70,16 +93,42 @@ export function buildCacheKey(parts: {
 }): string {
   // FIX (BUG-EDGE-4): \x1f (ASCII Unit Separator) — never appears in user input.
   const SEP = '\x1f';
+  // FIX (BUG-2-b): sentinel markers carry a NUL (\u0000) prefix so they can
+  // NEVER be forged by user input. The old plain 'ALL'/'NONE' markers
+  // collided with literal filter values: `?area=ALL`, `?kelompok=All`
+  // (→ .toUpperCase() below → 'ALL'), `?outlet=ALL`, `?item=ALL`, `?pic=ALL`
+  // all slipped past the case-sensitive `!== 'all'` check and were cached
+  // under the key IDENTICAL to the no-filter view — the empty/partial
+  // payload was then served to every unfiltered request for the full TTL
+  // (cache poisoning, BUG-1-c #1). A NUL-prefixed token is impossible to
+  // produce via a URL query param — same philosophy as the SEP above.
+  //
+  // NOTE: changing the markers changes EVERY cache key, so all pre-fix rows
+  // miss once (cold recompute) and age out via cleanupExpiredCache — that
+  // is intentional (self-healing: any pre-fix poisoned row becomes
+  // unreachable under the new keys). No migration needed.
+  //
+  // FIX (BUG-2-b): 'all' stays a CASE-SENSITIVE no-filter marker, exactly
+  // mirroring the query layer (build-where.ts / shared.ts drop only the
+  // lowercase 'all') so the cache key and the SQL filter can never
+  // disagree. Case variants like 'ALL'/'All' are deliberately kept as
+  // LITERAL filter values — the query filters on them literally (0 rows),
+  // so they get their OWN cache entry and can no longer touch the
+  // no-filter key. Routes wanting case-insensitive 'all' normalization
+  // must normalize BEFORE calling buildCacheKey AND before querying (the
+  // peer-comparison family's kelompokParam pattern).
+  const SENTINEL_ALL = '\u0000ALL';
+  const SENTINEL_NONE = '\u0000NONE';
   const filter = [
-    parts.month || 'ALL',
-    parts.week || 'ALL',
-    parts.compareWeek || 'NONE',
-    parts.compareMonth || 'NONE',
-    parts.area && parts.area !== 'all' ? parts.area : 'ALL',
-    parts.kelompok && parts.kelompok !== 'all' ? parts.kelompok.toUpperCase() : 'ALL',
-    parts.outletCode && parts.outletCode !== 'all' ? parts.outletCode : 'ALL',
-    parts.itemName || 'ALL',
-    parts.pic || 'ALL',
+    parts.month || SENTINEL_ALL,
+    parts.week || SENTINEL_ALL,
+    parts.compareWeek || SENTINEL_NONE,
+    parts.compareMonth || SENTINEL_NONE,
+    parts.area && parts.area !== 'all' ? parts.area : SENTINEL_ALL,
+    parts.kelompok && parts.kelompok !== 'all' ? parts.kelompok.toUpperCase() : SENTINEL_ALL,
+    parts.outletCode && parts.outletCode !== 'all' ? parts.outletCode : SENTINEL_ALL,
+    parts.itemName || SENTINEL_ALL,
+    parts.pic || SENTINEL_ALL,
   ];
   // PERF-CACHE: append route-specific extras (sorted for determinism).
   // Format: "key=value" — value is stringified; null/undefined/empty → skipped.
@@ -259,8 +308,15 @@ export function getInflight<T>(cacheKey: string): Promise<T> | null {
 export function setInflight<T>(cacheKey: string, promise: Promise<T>): Promise<T> {
   inflightPromises.set(cacheKey, promise);
   // Auto-cleanup when the promise settles
+  // FIX (BUG-2-b): delete ONLY if this promise is still the registered one —
+  // the in-flight re-enter path (generation mismatch after awaiting a stale
+  // compute) can register a NEWER promise for the same key while the older
+  // one is still settling; an unconditional delete here would drop the new
+  // registration and re-open the stampede window this map exists to close.
   promise.finally(() => {
-    inflightPromises.delete(cacheKey);
+    if (inflightPromises.get(cacheKey) === promise) {
+      inflightPromises.delete(cacheKey);
+    }
   }).catch(() => {
     // Swallow — the original caller handles the error
   });
@@ -316,8 +372,31 @@ export async function withCacheAndDedup<T>(
   //    MUST be checked BEFORE any await to close the check-then-act race.
   const inflight = getInflight<T>(cacheKey);
   if (inflight) {
+    // FIX (BUG-2-b): capture the generation BEFORE awaiting. If an
+    // invalidation landed while we waited, the awaited result was computed
+    // from PRE-mutation data — serving it as `cached:true` would leak
+    // stale data past the invalidation (BUG-1-c #2). Instead, re-enter the
+    // dedup: join a newer in-flight if one was already registered, else
+    // fall through and become the request that computes fresh (step 2).
+    const genAtAwait = cacheGeneration;
     const data = await inflight;
-    return { data, cached: true };
+    if (genAtAwait === cacheGeneration) {
+      return { data, cached: true };
+    }
+    const refreshed = getInflight<T>(cacheKey);
+    if (refreshed && refreshed !== inflight) {
+      // Another post-invalidation request already started a fresh compute
+      // for this key — await it rather than computing a duplicate.
+      const genAtSecondAwait = cacheGeneration;
+      const refreshedData = await refreshed;
+      if (genAtSecondAwait === cacheGeneration) {
+        return { data: refreshedData, cached: true };
+      }
+    }
+    // Invalidation landed again (or nobody re-registered) — fall through
+    // to a fresh compute below. No deadlock: the awaited promise already
+    // settled, and step 2 registers ours (setInflight's cleanup is guarded
+    // against deleting a newer registration).
   }
 
   // 2. Register in-flight Promise BEFORE the DB cache check (next await).
@@ -348,9 +427,22 @@ export async function withCacheAndDedup<T>(
       //     so concurrent requests awaiting it get FRESH data.
       (async () => {
         try {
+          // FIX (BUG-2-b): capture the generation BEFORE computeFn. If an
+          // invalidation lands while the background recompute runs, the
+          // result is (at least partly) PRE-mutation data — writing it
+          // back would re-poison the just-invalidated key under a FRESH
+          // computedAt (BUG-1-c #2). Skip the write; the next request
+          // recomputes clean.
+          const gen = cacheGeneration;
           const fresh = await computeFn();
-          // awaitWrite=true — block ~50-150ms so the next request hits cache.
-          await setCached(cacheKey, fresh, true);
+          if (gen === cacheGeneration) {
+            // awaitWrite=true — block ~50-150ms so the next request hits cache.
+            await setCached(cacheKey, fresh, true);
+          }
+          // ALWAYS resolve the in-flight Promise — never settling it would
+          // hang every awaiter parked on it. Awaiters capture the generation
+          // themselves before awaiting and re-enter the fresh path if it
+          // advanced, so handing them the pre-mutation value is safe.
           resolveComputation(fresh);
         } catch (e) {
           rejectComputation(e);
@@ -360,12 +452,21 @@ export async function withCacheAndDedup<T>(
     }
 
     // 4. No cache entry (fresh or stale) — compute synchronously.
+    // FIX (BUG-2-b): generation guard — capture BEFORE computeFn; if an
+    // invalidation landed mid-compute, the result is pre-mutation data
+    // and must NOT be written back (the invalidation would be silently
+    // undone). The data is still returned — it is already computed and
+    // this response is one-off (never cached), so the next request sees
+    // the post-mutation state.
+    const gen = cacheGeneration;
     const data = await computeFn();
 
     // 5. Cache write — awaitWrite=true blocks ~50-150ms so the next request
     //    hits the cache. awaitWrite=false fires-and-forgets (faster response,
     //    but next request may re-compute if write hasn't completed).
-    await setCached(cacheKey, data, awaitWrite);
+    if (gen === cacheGeneration) {
+      await setCached(cacheKey, data, awaitWrite);
+    }
 
     // 6. Resolve in-flight + return.
     resolveComputation(data);
@@ -432,6 +533,11 @@ export async function cleanupExpiredCache(force = false): Promise<void> {
  * raw prefix strings.
  */
 export async function invalidateCache(prefix?: string): Promise<void> {
+  // FIX (BUG-2-b): bump the generation FIRST (synchronously) so every
+  // computation that finishes from this point on — including ones still
+  // holding PRE-mutation results — skips its cache write-back (see
+  // withCacheAndDedup's generation guard + background-recompute's guard).
+  cacheGeneration++;
   try {
     if (prefix) {
       // Delete all entries where cacheKey starts with prefix
@@ -459,6 +565,11 @@ export async function invalidateCache(prefix?: string): Promise<void> {
  * migrate-direction).
  */
 export async function invalidateAnalysisCache(): Promise<void> {
+  // FIX (BUG-2-b): bump the generation IMMEDIATELY — before the awaited
+  // deleteMany batch — so in-flight computations observe the invalidation
+  // even while the DB rows are still being deleted. (Each per-route
+  // invalidateCache call below also bumps; the counter is monotonic.)
+  cacheGeneration++;
   // CACHE-01 FIX: Invalidate ALL cached routes — not just analysis.
   // Mutations (ingest, settings, pic, data delete, migrate-direction) affect
   // ALL cached data, not just /api/analysis. Without this, pareto/recommendations/

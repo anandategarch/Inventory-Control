@@ -154,7 +154,19 @@ export async function resolveComparePeriod(
 ): Promise<ResolvedPeriod> {
   // Case 2: both compareWeek + compareMonthExplicit provided — use them directly.
   // No DB lookup needed; caller already validated the month label exists.
+  // FIX (BUG-2-b / BUG-1-c #5): same-month cross-week compare = comparing a
+  // cumulative week against ANOTHER cumulative window of the SAME month
+  // (W1=1-7, W2=1-14, W3=1-21, W4=1-25) — e.g. W4 vs W1 compares 25 days
+  // vs 7 days and yields a false "growth" that is just the window delta.
+  // The AUTO path (Case 1 / resolvePreviousPeriod) already refuses this
+  // (FIX AUDIT-BUG-2); the explicit path must refuse it too. Return the
+  // same nulls convention so callers short-circuit into their no-comparison
+  // path (verified null-safe: analysis fetch-records, export-report
+  // data-fetcher).
   if (compareWeek && compareMonthExplicit) {
+    if (compareMonthExplicit === month && compareWeek !== week) {
+      return { prevWeek: null, prevMonth: null };
+    }
     return { prevWeek: compareWeek, prevMonth: compareMonthExplicit };
   }
 

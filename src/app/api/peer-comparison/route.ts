@@ -47,6 +47,13 @@ export async function GET(req: NextRequest) {
     // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok scopes the PEER set only —
     // the focus outlet is still queried by outletCode regardless.
     const kelompok = url.searchParams.get('kelompok');
+    // FIX (BUG-2-b / BUG-1-c #3): normalize 'all' (case-insensitive) → null
+    // ONCE, then use kelompokParam for BOTH the cache key AND the query —
+    // the raw value used to reach queryPeerComparison, where
+    // UPPER('all') matched 0 outlets → an empty peer set got cached under
+    // the no-filter key (cache poisoning, 5-min TTL). Mirrors the
+    // benchmark-opportunity route's normalizeKelompok pattern.
+    const kelompokParam = kelompok && kelompok.toLowerCase() !== 'all' ? kelompok : null;
 
     if (!outletCode || !month) {
       return NextResponse.json({ success: false, error: 'outletCode and month required' }, { status: 400 });
@@ -64,7 +71,7 @@ export async function GET(req: NextRequest) {
       month,
       week,
       outletCode,
-      kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
+      kelompok: kelompokParam,
       extra: { mode, limit },
     });
 
@@ -72,7 +79,7 @@ export async function GET(req: NextRequest) {
     const { data: peerData, cached, stale } = await withCacheAndDedup<PeerComparisonData>(
       cacheKey,
       PEER_CACHE_TTL,
-      async () => queryPeerComparison(outletCode, month, week, mode, limit, kelompok),
+      async () => queryPeerComparison(outletCode, month, week, mode, limit, kelompokParam),
     );
 
     return NextResponse.json({

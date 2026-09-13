@@ -15,31 +15,40 @@
 //    + Efek Kuantitas      qtyEffect          matched items
 //    + Item Baru           newNominal         items only in current period
 //    − Item Hilang         −goneNominal       items only in compare period
+//    ± Anomali Data        anomalyNominal     items with nominal but NO
+//                          (FIX BUG-2-a #8)   quantity recorded (qty=0) on
+//                          one side — cannot be decomposed into
+//                          price/quantity, so their residual rides as
+//                          its own leg (neutral color)
 //    Sekarang (anchor)     currTotalNominal   Σ|nominalDeviasi| of ALL
 //                          items, current period (matched + new)
-//  Identity (dev-asserted inside price-effect.ts):
-//    currTotalNominal − prevTotalNominal
-//      === qtyEffect + priceEffect + newNominal − goneNominal
+//  Identity (ALWAYS exact, per BUG-2-a #8 + BUG-2-c server field):
+//    prev + price + qty + new − gone + anomaly = curr
 //
-//  Technique: stacked-bar waterfall (classic Recharts recipe) — a
-//  transparent `base` Bar lifts each visible `delta` Bar to its
-//  running level; dashed ReferenceLine segments bridge consecutive
-//  legs at the running level. Item Baru / Item Hilang legs render
-//  ONLY when those items exist (zero-height legs read as bugs).
+//  Technique (FIX BUG-2-a #7): CUSTOM BAR SHAPE — each leg is one
+//  <rect> drawn from yPixel(from) to yPixel(to) (from = level before
+//  the step, to = running level after; anchors span 0 → total). The
+//  old stacked [base, delta] recipe depended on Recharts' mixed-sign
+//  stack internals; the shape gives full control and renders a leg
+//  that crosses zero (e.g. 1Jt → −2Jt) as ONE continuous bar. Dashed
+//  ReferenceLine segments bridge consecutive legs at the running
+//  level. Item Baru / Item Hilang / Anomali legs render ONLY when
+//  they exist (zero-height legs read as bugs).
 //
 //  Colors — --chart-* tokens ONLY, no new hex (§5.4):
 //    anchors  = --chart-residual (zinc family)
 //    legs +   = --chart-waste    (amber family)
 //    legs −   = --chart-loss     (red)
+//    anomali  = --chart-residual (zinc — neutral, not a verdict)
 //
-//  PERF (AUDIT-FE): isAnimationActive={false} on every Bar — the
+//  PERF (AUDIT-FE): isAnimationActive={false} on the Bar — the
 //  card re-mounts on period-change refetch; entrance animations
 //  would replay every time.
 // ============================================================
 
 import { memo, useEffect, useMemo, useState } from 'react';
 import {
-  Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { fmtHeatmapCompact, fmtIDR } from '@/lib/format';
 import { getTooltipStyle } from '@/lib/chart-constants';
@@ -50,6 +59,8 @@ import type { PriceEffectSummary } from '@/hooks/usePriceEffect';
 const ANCHOR_COLOR = 'var(--chart-residual)';
 const LEG_UP_COLOR = 'var(--chart-waste)';
 const LEG_DOWN_COLOR = 'var(--chart-loss)';
+// FIX (BUG-2-a #8): anomaly is data quality noise, not a verdict — neutral zinc.
+const ANOMALY_COLOR = 'var(--chart-residual)';
 
 function legColor(v: number): string {
   if (v > 0) return LEG_UP_COLOR;
@@ -57,7 +68,9 @@ function legColor(v: number): string {
   return ANCHOR_COLOR; // zero-height leg — never visible
 }
 
-/** One waterfall step. `base` is the transparent stack lifter. */
+/** One waterfall step (FIX BUG-2-a #7): `from`/`to` are the DATA extents of
+ *  the bar — anchors rise 0 → total, legs span before → running level. The
+ *  custom shape maps them to pixels; `running` stays for the tooltip. */
 interface BridgeRow {
   key: string;
   /** Full leg name — tooltip + aria-label (Indonesian). */
@@ -66,17 +79,28 @@ interface BridgeRow {
   label: string;
   /** Signed leg value (anchors: the period total). */
   value: number;
-  /** Transparent base = min(level before, level after); 0 for anchors. */
-  base: number;
-  /** Visible stack height = |value|. */
-  delta: number;
+  /** Data level the bar starts from (0 for anchors, `before` for legs). */
+  from: number;
+  /** Data level the bar ends at (= running level after this step). */
+  to: number;
   /** Running level AFTER this step (tooltip "Level"). */
   running: number;
   color: string;
   kind: 'anchor' | 'leg';
   /** Item count — only present on the Item Baru / Item Hilang legs. */
   count?: number;
+  /** Extra tooltip line — only the Anomali Data leg (FIX BUG-2-a #8). */
+  note?: string;
 }
+
+/**
+ * FIX (BUG-2-a #8): contract with BUG-2-c (server / price-effect.ts) — the
+ * summary will carry `anomalyNominal`: Σ per-item Bennet residual
+ * (netDelta − qtyEffect − priceEffect) of "ghost" rows (qtyDeviasi = 0 but
+ * nominalDeviasi > 0 on one side). Declared locally so this file compiles
+ * independently of that change; `?? 0` keeps stale cached responses safe.
+ */
+type SummaryWithAnomaly = PriceEffectSummary & { anomalyNominal?: number };
 
 /** Anchors print the plain total; legs print a signed contribution. */
 function fmtLeg(row: BridgeRow): string {
@@ -101,11 +125,11 @@ function useCompactTicks(): boolean {
   return compact;
 }
 
-function buildRows(s: PriceEffectSummary, compact: boolean): BridgeRow[] {
+function buildRows(s: SummaryWithAnomaly, compact: boolean): BridgeRow[] {
   const sign = (v: number) => (v >= 0 ? '+' : '−');
   const defs: Array<{
     key: string; name: string; short: string;
-    value: number; kind: 'anchor' | 'leg'; count?: number;
+    value: number; kind: 'anchor' | 'leg'; count?: number; note?: string;
   }> = [
       { key: 'prev', name: 'Sebelumnya', short: 'Awal', value: s.prevTotalNominal, kind: 'anchor' },
       { key: 'price', name: 'Efek Harga', short: 'Harga', value: s.priceEffect, kind: 'leg' },
@@ -119,6 +143,17 @@ function buildRows(s: PriceEffectSummary, compact: boolean): BridgeRow[] {
     // Stored negative so the sign logic + running total stay uniform.
     defs.push({ key: 'gone', name: 'Item Hilang', short: 'Hilang', value: -s.goneNominal, kind: 'leg', count: s.goneItems });
   }
+  // FIX (BUG-2-a #8): ghost rows (qty=0 but nominal>0 on one side) cannot be
+  // decomposed into price/quantity — surface their residual as its own leg
+  // so the bridge reconciles EXACTLY: prev + price + qty + new − gone +
+  // anomaly = curr. Skip when ~0 (float dust / stale cache without the field).
+  const anomaly = s.anomalyNominal ?? 0;
+  if (Math.abs(anomaly) > 0.005) {
+    defs.push({
+      key: 'anomaly', name: 'Anomali Data', short: 'Anomali', value: anomaly, kind: 'leg',
+      note: 'Item dengan nominal tanpa kuantitas tercatat (qty=0) — tidak bisa didekomposisi harga/kuantitas',
+    });
+  }
   defs.push({ key: 'curr', name: 'Sekarang', short: 'Akhir', value: s.currTotalNominal, kind: 'anchor' });
 
   let running = s.prevTotalNominal;
@@ -130,16 +165,18 @@ function buildRows(s: PriceEffectSummary, compact: boolean): BridgeRow[] {
       label: compact
         ? d.short
         : d.kind === 'anchor' ? d.name : `${sign(d.value)} ${d.name}`,
-      // Anchors always rise from zero; legs float between levels.
-      base: d.kind === 'anchor' ? 0 : Math.min(before, running),
-      delta: Math.abs(d.value),
+      // FIX (BUG-2-a #7): anchors rise from zero; legs span before → running.
+      from: d.kind === 'anchor' ? 0 : before,
+      to: running,
       running,
-      color: d.kind === 'anchor' ? ANCHOR_COLOR : legColor(d.value),
+      color: d.key === 'anomaly'
+        ? ANOMALY_COLOR
+        : d.kind === 'anchor' ? ANCHOR_COLOR : legColor(d.value),
     };
   });
 }
 
-/** Custom tooltip — renders ONE row (the stacked transparent base is skipped). */
+/** Custom tooltip — renders ONE row (a single Bar means a single payload entry). */
 function BridgeTooltip({ active, payload }: {
   active?: boolean;
   payload?: ReadonlyArray<{ payload?: BridgeRow }>;
@@ -155,13 +192,38 @@ function BridgeTooltip({ active, payload }: {
       </p>
       <p className="tabular-nums">{fmtLeg(row)}</p>
       <p className="tabular-nums opacity-70">Level: {fmtIDR(row.running)}</p>
+      {/* FIX (BUG-2-a #8): short explanation for the Anomali Data leg. */}
+      {row.note && <p className="opacity-70 max-w-[220px] leading-snug">{row.note}</p>}
     </div>
   );
+}
+
+/** Props Recharts passes into a custom Bar `shape` (the subset we read). */
+interface BridgeShapeProps {
+  x?: number;
+  width?: number;
+  /** Full Y-axis plot extent — from the bar entry's `background`. */
+  background?: { x?: number; y?: number; width?: number; height?: number };
+  payload?: BridgeRow;
 }
 
 export const BridgeWaterfall = memo(function BridgeWaterfall({ summary }: { summary: PriceEffectSummary }) {
   const compact = useCompactTicks();
   const rows = useMemo(() => buildRows(summary, compact), [summary, compact]);
+  const hasAnomaly = rows.some((r) => r.key === 'anomaly');
+
+  // FIX (BUG-2-a #7): EXPLICIT Y domain, shared by the axis ticks and the
+  // custom shape below — the shape must map data values to pixels with the
+  // exact same [lo, hi] the YAxis renders (the old function-form domain
+  // [(dataMin) => Math.min(0, dataMin), …] is replaced by the same values
+  // computed up-front from the rows). Floor at 0 like before; guard against
+  // a degenerate flat domain. Declared BEFORE the hasData early-return so
+  // the hook order stays stable (same rule as the rows memo above).
+  const [yLo, yHi] = useMemo(() => {
+    const lo = Math.min(0, ...rows.map((r) => Math.min(r.from, r.to)));
+    const hi = Math.max(...rows.map((r) => Math.max(r.from, r.to)));
+    return [lo, Math.max(hi, lo + 1)];
+  }, [rows]);
 
   // Guard AFTER all hooks (stable hook order): render only with a compare
   // period, finite anchors, at least one decomposable item and a non-zero
@@ -172,6 +234,33 @@ export const BridgeWaterfall = memo(function BridgeWaterfall({ summary }: { summ
     && (summary.matchedItems > 0 || summary.newItems > 0 || summary.goneItems > 0)
     && (summary.prevTotalNominal > 0 || summary.currTotalNominal > 0);
   if (!hasData) return null;
+
+  /**
+   * FIX (BUG-2-a #7): custom bar shape — ONE <rect> per step, drawn from
+   * yPixel(from) to yPixel(to). Unlike the old stacked [base, delta] recipe,
+   * this renders every case correctly (positive, negative, and CROSS-ZERO
+   * legs: a harga leg from 1Jt down to −2Jt is one continuous bar, not two
+   * pieces split at the zero line). Recharts hands each shape the entry's
+   * `background` (= the full Y-axis plot extent) and our `payload`; the
+   * linear scale maps [yLo, yHi] onto [background.y + height, background.y]
+   * — the exact mapping the axis ticks use.
+   */
+  const renderBridgeBar = (props: unknown) => {
+    // FIX (BUG-2-a #7, follow-up Main): Recharts' ActiveShape union types the
+    // callable as `(props: unknown) => JSX.Element`, so the parameter must be
+    // `unknown` and cast to the subset we actually read.
+    const { x, width, background, payload } = props as BridgeShapeProps;
+    if (x == null || width == null || !background || background.y == null || background.height == null || !payload) {
+      return <g />;
+    }
+    const { from, to, color } = payload;
+    const span = yHi - yLo;
+    const yPixel = (v: number) => background.y! + ((yHi - v) / span) * background.height!;
+    const yTop = yPixel(Math.max(from, to));
+    const height = Math.abs(yPixel(from) - yPixel(to));
+    if (height <= 0) return <g />; // zero-height leg — never visible
+    return <rect x={x} y={yTop} width={width} height={height} fill={color} />;
+  };
 
   // Dashed connectors — horizontal line at the running level, bridging
   // each step to the next (classic waterfall grammar).
@@ -194,7 +283,7 @@ export const BridgeWaterfall = memo(function BridgeWaterfall({ summary }: { summ
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
         <p className="text-xs text-muted-foreground">
           <span className="font-medium text-foreground/70">Dari perubahan nominal, berapa dari harga vs kuantitas?</span>
-          {' '}— jembatan harga · kuantitas · item baru/hilang
+          {' '}— jembatan harga · kuantitas · item baru/hilang{hasAnomaly ? ' · anomali' : ''}
         </p>
         <p className="text-[11px] text-muted-foreground tabular-nums">
           Rekonsiliasi: {fmtIDR(summary.prevTotalNominal)} → {fmtIDR(summary.currTotalNominal)}
@@ -208,7 +297,7 @@ export const BridgeWaterfall = memo(function BridgeWaterfall({ summary }: { summ
             <XAxis dataKey="label" interval={0} fontSize={10} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} />
             <YAxis
               width={40}
-              domain={[(dataMin: number) => Math.min(0, dataMin), (dataMax: number) => dataMax]}
+              domain={[yLo, yHi]}
               tickFormatter={(v: number) => (v === 0 ? '0' : fmtHeatmapCompact(v))}
               fontSize={10}
               stroke="var(--muted-foreground)"
@@ -226,11 +315,11 @@ export const BridgeWaterfall = memo(function BridgeWaterfall({ summary }: { summ
                 ifOverflow="extendDomain"
               />
             ))}
-            {/* Transparent stack lifter — carries each delta to its level. */}
-            <Bar dataKey="base" stackId="bridge" isAnimationActive={false} fill="transparent" />
-            <Bar dataKey="delta" stackId="bridge" isAnimationActive={false} maxBarSize={48}>
-              {rows.map((r) => <Cell key={r.key} fill={r.color} />)}
-            </Bar>
+            {/* FIX (BUG-2-a #7): single Bar + custom shape (see renderBridgeBar).
+                dataKey="to" only feeds Recharts' internal rect/tooltip plumbing —
+                the shape ignores it (its values stay inside [yLo, yHi], so the
+                axis domain is never widened behind the shape's mapping). */}
+            <Bar dataKey="to" isAnimationActive={false} maxBarSize={48} shape={renderBridgeBar} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -249,6 +338,12 @@ export const BridgeWaterfall = memo(function BridgeWaterfall({ summary }: { summ
           <span className="h-2.5 w-2.5 rounded-sm" style={{ background: LEG_DOWN_COLOR }} aria-hidden />
           kaki turun
         </span>
+        {hasAnomaly && (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: ANOMALY_COLOR }} aria-hidden />
+            anomali data (qty=0)
+          </span>
+        )}
       </div>
     </div>
   );

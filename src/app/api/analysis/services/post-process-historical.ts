@@ -112,6 +112,11 @@ export async function buildHistoricalAnalysis(
     { month, week, filters: filterOpts, extra: { keys: histCriticalKeysHash(histCriticalKeys) } },
     () => queryHistoricalCriticalItems(week, month, filterOpts, histCriticalKeys),
   );
+  // FIX (BUG-2-c): hoisted above the mapping — the four multi-metric z-score
+  // guards below used to hardcode `n >= 4` while the devBom path (line ~167)
+  // already read thresholds.HISTORICAL_MIN_WEEKS, so a Settings change never
+  // propagated to qtyDeviasi/waste/susut/trial. All five now share ONE value.
+  const minWeeks = thresholds.HISTORICAL_MIN_WEEKS ?? 4;
   const histCriticalItems = histCriticalRows.map(row => {
     const key = `${row.outletId}|${row.itemId}`;
     const stats = historicalByOutletItem.get(key);
@@ -121,13 +126,15 @@ export async function buildHistoricalAnalysis(
 
     // Phase B-1 MM-01 + ZS-02 FIX: Multi-metric Z-Scores with per-metric MIN_WEEKS + stdDev guards
     // QTY Deviasi: Z-Score uses ABS(current) vs mean(ABS(weekly)) per PRD §5.2
-    const qtyDeviasiZScore = (stats.qtyDeviasi.n >= 4 && stats.qtyDeviasi.stdDev > 0)
+    // FIX (BUG-2-c): `n >= 4` hardcoded → thresholds.HISTORICAL_MIN_WEEKS
+    // (hoisted above, shared with the devBom guard + empty-state diagnostics).
+    const qtyDeviasiZScore = (stats.qtyDeviasi.n >= minWeeks && stats.qtyDeviasi.stdDev > 0)
       ? calcZScoreFromStats(row.qtyDeviasi, stats.qtyDeviasi.mean, stats.qtyDeviasi.stdDev) : 0;
-    const wasteZScore = (stats.waste.n >= 4 && stats.waste.stdDev > 0)
+    const wasteZScore = (stats.waste.n >= minWeeks && stats.waste.stdDev > 0)
       ? calcZScoreFromStats(row.qtyWaste, stats.waste.mean, stats.waste.stdDev) : 0;
-    const susutZScore = (stats.susut.n >= 4 && stats.susut.stdDev > 0)
+    const susutZScore = (stats.susut.n >= minWeeks && stats.susut.stdDev > 0)
       ? calcZScoreFromStats(row.qtySusut, stats.susut.mean, stats.susut.stdDev) : 0;
-    const trialZScore = (stats.trial.n >= 4 && stats.trial.stdDev > 0)
+    const trialZScore = (stats.trial.n >= minWeeks && stats.trial.stdDev > 0)
       ? calcZScoreFromStats(row.qtyTrial, stats.trial.mean, stats.trial.stdDev) : 0;
 
     return {
@@ -164,7 +171,8 @@ export async function buildHistoricalAnalysis(
   //  record (stats.devBom.stdDev <= 0 || stats.devBom.n < minWeeks).
   //  This is O(map.size) — small (5K-10K entries) and runs once.
   // ============================================================
-  const minWeeks = thresholds.HISTORICAL_MIN_WEEKS ?? 4;
+  // FIX (BUG-2-c): `minWeeks` was hoisted above the mapping (shared with the
+  // four multi-metric z-score guards) — no separate declaration here.
   const zWarnThreshold = thresholds.HISTORICAL_ZSCORE_WARN ?? 1.5;
   const zHighThreshold = thresholds.HISTORICAL_ZSCORE_HIGH ?? 2;
   const statsCount = historicalByOutletItem.size;
