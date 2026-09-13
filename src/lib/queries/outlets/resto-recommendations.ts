@@ -355,7 +355,10 @@ export async function queryRestoRecommendations(
     if (overExplainedCount > 0) analysis.push(`${overExplainedCount} item Waste+Susut+Trial melebihi total deviasi — indikasi salah input atau fraud`);
     if (highLossItem > 0) analysis.push(`${highLossItem} item dengan nominal loss > Rp ${Math.round(highLossThreshold / 1_000_000)}Jt (HIGH_LOSS_NOMINAL)`);
     if (hasNoTolerance > 0) analysis.push(`${hasNoTolerance} item belum diset toleransinya — tidak bisa deteksi breach`);
-    if (benchmarkHighCount > 0) analysis.push(`${benchmarkHighCount} item dengan deviasi > 50% BOM (proxy benchmark high — jauh di atas normal)`);
+    // FIX (audit A3 pass): removed the duplicate `benchmarkHighCount` bullet —
+    // its SQL expression in outlet-agg-scan is IDENTICAL to highDevBomCount
+    // (BUG-2-c comment there), so when both fired the narrative showed the
+    // same "> 50% BOM" count twice. The highDevBomCount bullet above covers it.
     if (toleranceBreachCount > 0 && toleranceBreachHighCount === 0) analysis.push(`${toleranceBreachCount} item melebihi toleransi (TOLERANCE_BREACH)`);
     // FIX: removed 2 residual bullets per user request (not needed in analysis):
     // - "Residual X% — Y dari Z total deviasi LOSS tidak terjelaskan" (was line 851)

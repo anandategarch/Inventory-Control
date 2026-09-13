@@ -41,8 +41,8 @@ import { memo } from 'react';
 import dynamic from 'next/dynamic';
 import { ExecutiveStatus } from '@/components/dashboard/narrative/ExecutiveStatus';
 import { ItemPriorityPanel } from '@/components/dashboard/narrative/ItemPriorityPanel';
+import { OutletPriorityPanel } from '@/components/dashboard/narrative/OutletPriorityPanel';
 import { InsightsPanel } from '@/components/dashboard/InsightsPanel';
-import { RestoRecommendationCard } from '@/components/dashboard/RestoRecommendationCard';
 import { PriceEffectCard } from '@/components/dashboard/PriceEffectCard';
 import { TopGrowthCard } from '@/components/dashboard/TopGrowthCard';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
@@ -82,20 +82,22 @@ export const DashboardNarrative = memo(function DashboardNarrative({ data, onRef
       <section id="l3-attention" aria-labelledby="l3-header" className="space-y-4 scroll-mt-40">
         <LayerHeader number="02" title="PRIORITY ACTIONS" id="l3-header" description="Di mana harus bertindak lebih dulu? Resto dan item prioritas berdasarkan dampak." />
         <div className="grid lg:grid-cols-2 gap-4 min-w-0">
-          {/* Section: Resto Recommendation Engine (self-fetch, no change to the
-              hook/query; the analysis payload rides along for the D6 adaptive
-              rule + footer coverage stats). */}
-          <ErrorBoundary label="Resto Prioritas Analisa">
-            <RestoRecommendationCard data={data} />
+          {/* PANEL-1 (A3): outlet prioritization — ONE compact multi-lens
+              panel (Prioritas | Kondisi | Peluang Rp), replacing the single
+              RestoRecommendationCard. Same ItemPriorityPanel pattern: the
+              FULL versions live on in their tabs (RestoAnalysis, Area tab
+              health ranking, Peer tab benchmark card) — H-11 (#4a) removed the
+              Dashboard's duplicate Top Outlets card for the same reason.
+              The Prioritas lens self-fetches via the shared useRecommendations
+              hook (dedupes with ExecutiveStatus + Resto tab); Peluang is
+              lens-gated (fetch only on activation); the analysis payload
+              rides along for the D6 adaptive rule + footer coverage stats. */}
+          <ErrorBoundary label="Prioritas Outlet">
+            <OutletPriorityPanel data={data} />
           </ErrorBoundary>
           {/* Section: Top Items — VH-3 compact panel (D5-b toggle Nominal |
               Dev/BOM, top-3 + expand, click → drill-down). The FULL TopItems
-              cards live in the Item tab (tabs/ItemTab.tsx, untouched).
-              H-11 (#4a — UI dedup): the Dashboard's Top Outlets card was
-              REMOVED — it duplicated the Pareto tab's "Top Outlets (80%
-              Deviation)" QuadrantCard; outlet prioritization here is covered
-              by Resto Prioritas Analisa (left column) + Ranking Kondisi
-              Outlet (Area tab). */}
+              cards live in the Item tab (tabs/ItemTab.tsx, untouched). */}
           <ErrorBoundary label="Item Prioritas">
             <ItemPriorityPanel data={data} />
           </ErrorBoundary>
