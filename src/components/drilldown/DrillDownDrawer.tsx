@@ -103,7 +103,7 @@ export function DrillDownDrawer() {
 
   return (
     <Sheet open={open} onOpenChange={handleClose}>
-      <SheetContent side="right" className="w-full sm:max-w-2xl p-0 flex flex-col">
+      <SheetContent side="right" className="w-full max-w-2xl p-0 flex flex-col">
         <SheetHeader className="p-4 border-b shrink-0">
           <div className="flex items-center justify-between">
             <div>

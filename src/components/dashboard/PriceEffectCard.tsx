@@ -188,7 +188,7 @@ export const PriceEffectCard = memo(function PriceEffectCard() {
           </div>
         ) : isLoading ? (
           <div className="space-y-3">
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="grid grid-cols-4 gap-3">
               {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-[76px] rounded-lg" />)}
             </div>
             {/* ANA-1-B: waterfall section skeleton (heading + 160px chart). */}
@@ -206,7 +206,7 @@ export const PriceEffectCard = memo(function PriceEffectCard() {
         ) : (
           <div className="space-y-4">
             {/* Summary tiles (compact default view) */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="grid grid-cols-4 gap-3">
               <SummaryTile
                 label="Δ |Nominal Deviasi|"
                 value={fmtIDR(s.netDelta)}

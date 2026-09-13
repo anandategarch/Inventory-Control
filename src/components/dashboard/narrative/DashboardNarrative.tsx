@@ -26,9 +26,8 @@
 //  tokens (ExecutiveStatus 4-KPI, compact L3 panels, callout
 //  insights, collapsible L5). Kept from VH-1: ErrorBoundary per
 //  module, lazy chart imports with LoadingChart fallbacks, the
-//  layer grouping + LayerHeader eyebrows + the space-y-8
-//  md:space-y-10 inter-layer rhythm (spec §5.3: layer gap ≥ 2×
-//  the 16px card gap).
+//  layer grouping + LayerHeader eyebrows + the space-y-10
+//  inter-layer rhythm (spec §5.3: layer gap ≥ 2× the 16px card gap).
 //
 //  PERF-FE: wrapped in React.memo for the same reason as the
 //  old DashboardTab — the parent (page.tsx) re-renders on any
@@ -64,7 +63,7 @@ export interface DashboardNarrativeProps {
 
 export const DashboardNarrative = memo(function DashboardNarrative({ data, onRefresh }: DashboardNarrativeProps) {
   return (
-    <div className="space-y-8 md:space-y-10 min-w-0">
+    <div className="space-y-10 min-w-0">
       {/* ====== L2 — CONTROL STATUS (what / how much) ====== */}
       <section id="l2-status" aria-labelledby="l2-header" className="space-y-4 scroll-mt-40">
         {/* VH-6 (Superset "Name with Purpose"): question-oriented story
@@ -81,7 +80,7 @@ export const DashboardNarrative = memo(function DashboardNarrative({ data, onRef
       {/* ====== L3 — PRIORITY ACTIONS (where) ====== */}
       <section id="l3-attention" aria-labelledby="l3-header" className="space-y-4 scroll-mt-40">
         <LayerHeader number="02" title="PRIORITY ACTIONS" id="l3-header" description="Di mana harus bertindak lebih dulu? Resto dan item prioritas berdasarkan dampak." />
-        <div className="grid lg:grid-cols-2 gap-4 min-w-0">
+        <div className="grid grid-cols-2 gap-4 min-w-0">
           {/* PANEL-1 (A3): outlet prioritization — ONE compact multi-lens
               panel (Prioritas | Kondisi | Peluang Rp), replacing the single
               RestoRecommendationCard. Same ItemPriorityPanel pattern: the
@@ -118,7 +117,7 @@ export const DashboardNarrative = memo(function DashboardNarrative({ data, onRef
         {/* SPEC-1 (§7.3): PRIMARY EVIDENCE — the two lenses that decompose
             the deviation itself get the 2-col top row and the strongest
             visual weight. Growth context moves DOWN to supporting. */}
-        <div className="grid lg:grid-cols-2 gap-4 min-w-0">
+        <div className="grid grid-cols-2 gap-4 min-w-0">
           <ErrorBoundary label="Deviation Breakdown">
             <DeviationBreakdownChart data={data} />
           </ErrorBoundary>
@@ -138,7 +137,7 @@ export const DashboardNarrative = memo(function DashboardNarrative({ data, onRef
           <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/80">
             Supporting Evidence
           </p>
-          <div className="grid lg:grid-cols-3 gap-4 min-w-0">
+          <div className="grid grid-cols-3 gap-4 min-w-0">
             <ErrorBoundary label="Growth Comparison">
               <GrowthComparison data={data} />
             </ErrorBoundary>

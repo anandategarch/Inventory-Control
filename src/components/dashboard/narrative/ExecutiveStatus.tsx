@@ -201,8 +201,8 @@ export const ExecutiveStatus = memo(function ExecutiveStatus({ data }: { data: A
 
   return (
     <div className="space-y-4 min-w-0">
-      {/* KPI grid — spec §4 L2: grid-cols-2 md:grid-cols-4 gap-4, <dl> semantics */}
-      <dl className="grid grid-cols-2 gap-4 md:grid-cols-4">
+      {/* KPI grid — spec §4 L2: grid-cols-4 gap-4 (desktop-only), <dl> semantics */}
+      <dl className="grid grid-cols-4 gap-4">
         <KpiCard
           label="Nominal Deviasi"
           tooltip={KPI_TOOLTIPS.nominalDeviasi}

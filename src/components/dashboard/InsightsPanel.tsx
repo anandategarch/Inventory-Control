@@ -359,7 +359,7 @@ export const InsightsPanel = memo(function InsightsPanel({ data }: { data: Analy
             <p className="text-sm text-muted-foreground">Tidak ada insight yang dapat dihasilkan dari data ini.</p>
           </div>
         ) : (
-          <div className="grid md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             {visible.map((insight) => {
               const style = SEVERITY_STYLES[insight.severity];
               return (

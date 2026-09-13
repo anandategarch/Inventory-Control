@@ -98,7 +98,7 @@ export function LoadingState({ text = 'Memuat data analisis...' }: { text?: stri
         <span className="text-xs tabular-nums font-mono opacity-70">{elapsed}s</span>
       </div>
       {/* Skeleton grid — KPI cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-6 gap-3">
         {Array.from({ length: 6 }).map((_, i) => (
           <div key={i} className="rounded-xl border bg-card p-4 space-y-2 shadow-sm">
             <div className="flex items-center justify-between">
@@ -122,7 +122,7 @@ export function LoadingState({ text = 'Memuat data analisis...' }: { text?: stri
         ))}
       </div>
       {/* Skeleton — insights + health */}
-      <div className="grid lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         {Array.from({ length: 3 }).map((_, i) => (
           <div key={i} className="rounded-xl border bg-card p-5 space-y-3 shadow-sm">
             <Skeleton className="h-5 w-32" />
@@ -133,7 +133,7 @@ export function LoadingState({ text = 'Memuat data analisis...' }: { text?: stri
         ))}
       </div>
       {/* Skeleton — top items tables */}
-      <div className="grid lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         {Array.from({ length: 3 }).map((_, i) => (
           <div key={i} className="rounded-xl border bg-card p-5 space-y-2 shadow-sm">
             <Skeleton className="h-5 w-40" />

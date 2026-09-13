@@ -363,7 +363,7 @@ export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, me
           below can use `stroke="var(--color-qty)"` instead of hardcoded
           `'#f59e0b'`. The existing CustomTooltip is preserved (it has richer
           content than the generic ChartTooltipContent). */}
-      <ChartContainer config={chartConfig} className="h-56 sm:h-72">
+      <ChartContainer config={chartConfig} className="h-72">
         <LineChart
           data={data}
           margin={{ left: 0, right: 16, top: 10, bottom: 5 }}

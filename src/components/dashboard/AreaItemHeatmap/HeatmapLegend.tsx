@@ -44,7 +44,7 @@ export function HeatmapLegend({
         <summary className="cursor-pointer hover:text-foreground select-none">
           Lihat daftar item lengkap ({items.length})
         </summary>
-        <ol className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-0.5 mt-1 pl-4 list-decimal">
+        <ol className="grid grid-cols-3 gap-x-4 gap-y-0.5 mt-1 pl-4 list-decimal">
           {items.map((item, idx) => (
             <li key={`${item}-${idx}`} className="break-words leading-tight" title={item}>
               <span className="text-muted-foreground/60 mr-1">{idx + 1}.</span>

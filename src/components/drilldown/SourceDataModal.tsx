@@ -103,7 +103,7 @@ export function SourceDataModal() {
 
   return (
     <Dialog open={sourceModalOpen} onOpenChange={setSourceModal}>
-      <DialogContent className="sm:max-w-[1100px] max-h-[85vh] flex flex-col overflow-hidden" showCloseButton={false}>
+      <DialogContent className="max-w-[1100px] max-h-[85vh] flex flex-col overflow-hidden" showCloseButton={false}>
         <DialogHeader className="shrink-0">
           <div className="flex items-center justify-between">
             <div>

@@ -262,7 +262,7 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
   // ---------- Render ----------
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[820px] max-h-[85vh] flex flex-col">
+      <DialogContent className="max-w-[820px] max-h-[85vh] flex flex-col">
         <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <Users className="h-5 w-5" />

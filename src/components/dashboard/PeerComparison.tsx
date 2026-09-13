@@ -318,7 +318,7 @@ export function PeerComparison() {
         title="Ringkasan Target vs Peer"
         description="Seberapa baik outlet terpilih dibanding peer group (resto dengan sales ±10%)?"
       />
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 gap-4">
         {targetRow && otherPeers.length > 0 && (
           <EfficiencyScoreCard
             score={efficiencyScore}

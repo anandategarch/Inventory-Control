@@ -28,7 +28,7 @@ export interface GapAnalysisCardProps {
   subtitle?: string;
   /** Footer note shown below the grid (optional — Item Tab omits). */
   footerText?: string;
-  /** Grid columns: 1 (single col, Item Tab style) or 2 (sm:grid-cols-2, Peer Tab style). Default 2. */
+  /** Grid columns: 1 (single col, Item Tab style) or 2 (grid-cols-2, Peer Tab style). Default 2. */
   gridCols?: 1 | 2;
 }
 
@@ -38,7 +38,7 @@ export const GapAnalysisCard = memo(function GapAnalysisCard({
   footerText,
   gridCols = 2,
 }: GapAnalysisCardProps) {
-  const gridClass = gridCols === 2 ? 'grid gap-2 sm:grid-cols-2' : 'grid gap-2';
+  const gridClass = gridCols === 2 ? 'grid gap-2 grid-cols-2' : 'grid gap-2';
 
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">

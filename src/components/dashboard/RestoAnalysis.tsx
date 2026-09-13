@@ -258,7 +258,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
           unlike the global FilterBar outlet which refilters the dashboard. */}
       <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
         <CardContent className="py-2.5">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+          <div className="flex flex-row items-center gap-3">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
               <Store className="h-3.5 w-3.5" />
             </span>
@@ -266,7 +266,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
               <p className="text-xs font-medium">Filter Resto</p>
               <p className="text-[11px] text-muted-foreground">Pilih outlet untuk dianalisis — periode mengikuti Bulan/Minggu aktif.</p>
             </div>
-            <div className="w-full sm:w-80">{restoPicker('w-full')}</div>
+            <div className="w-80">{restoPicker('w-full')}</div>
           </div>
         </CardContent>
       </Card>
@@ -334,7 +334,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
           notice takes their place instead of the old `as`-cast TypeError
           that killed the whole Resto tab. */}
       {profile ? (
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         {/* 1. Performance */}
         <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
           <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-md border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0"><TrendingUp className="h-3 w-3" /></span>Performance</CardTitle></CardHeader>

@@ -38,7 +38,7 @@ export const RankingSummaryCard = memo(function RankingSummaryCard({
   itemLayout = 'horizontal',
 }: RankingSummaryCardProps) {
   const gridClass = gridCols === 3
-    ? 'grid grid-cols-2 sm:grid-cols-3 gap-2'
+    ? 'grid grid-cols-3 gap-2'
     : 'grid grid-cols-2 gap-2';
   const itemClass = itemLayout === 'vertical'
     ? 'flex flex-col items-center justify-between rounded-lg border bg-muted/20 px-2.5 py-2'

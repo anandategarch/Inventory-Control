@@ -46,7 +46,7 @@
 //  would replay every time.
 // ============================================================
 
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useMemo } from 'react';
 import {
   Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
@@ -109,39 +109,26 @@ function fmtLeg(row: BridgeRow): string {
 }
 
 /**
- * Narrow screens (< sm) swap to short unsigned ticks — six long labels
- * would collide inside a half-width card at ~300px. SSR-safe (defaults
- * to full labels; compact flips after mount, not during hydration).
+ * X tick — always the full signed labels (desktop-only app — the
+ * < sm compact-tick matchMedia variant was removed).
  */
-function useCompactTicks(): boolean {
-  const [compact, setCompact] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 639px)');
-    const update = () => setCompact(mq.matches);
-    update();
-    mq.addEventListener('change', update);
-    return () => mq.removeEventListener('change', update);
-  }, []);
-  return compact;
-}
-
-function buildRows(s: SummaryWithAnomaly, compact: boolean): BridgeRow[] {
+function buildRows(s: SummaryWithAnomaly): BridgeRow[] {
   const sign = (v: number) => (v >= 0 ? '+' : '−');
   const defs: Array<{
-    key: string; name: string; short: string;
+    key: string; name: string;
     value: number; kind: 'anchor' | 'leg'; count?: number; note?: string;
   }> = [
-      { key: 'prev', name: 'Sebelumnya', short: 'Awal', value: s.prevTotalNominal, kind: 'anchor' },
-      { key: 'price', name: 'Efek Harga', short: 'Harga', value: s.priceEffect, kind: 'leg' },
-      { key: 'qty', name: 'Efek Kuantitas', short: 'Kuantitas', value: s.qtyEffect, kind: 'leg' },
+      { key: 'prev', name: 'Sebelumnya', value: s.prevTotalNominal, kind: 'anchor' },
+      { key: 'price', name: 'Efek Harga', value: s.priceEffect, kind: 'leg' },
+      { key: 'qty', name: 'Efek Kuantitas', value: s.qtyEffect, kind: 'leg' },
     ];
   // Reconciliation legs only when they exist — keeps the bridge compact.
   if (s.newItems > 0 || s.newNominal !== 0) {
-    defs.push({ key: 'new', name: 'Item Baru', short: 'Baru', value: s.newNominal, kind: 'leg', count: s.newItems });
+    defs.push({ key: 'new', name: 'Item Baru', value: s.newNominal, kind: 'leg', count: s.newItems });
   }
   if (s.goneItems > 0 || s.goneNominal !== 0) {
     // Stored negative so the sign logic + running total stay uniform.
-    defs.push({ key: 'gone', name: 'Item Hilang', short: 'Hilang', value: -s.goneNominal, kind: 'leg', count: s.goneItems });
+    defs.push({ key: 'gone', name: 'Item Hilang', value: -s.goneNominal, kind: 'leg', count: s.goneItems });
   }
   // FIX (BUG-2-a #8): ghost rows (qty=0 but nominal>0 on one side) cannot be
   // decomposed into price/quantity — surface their residual as its own leg
@@ -150,11 +137,11 @@ function buildRows(s: SummaryWithAnomaly, compact: boolean): BridgeRow[] {
   const anomaly = s.anomalyNominal ?? 0;
   if (Math.abs(anomaly) > 0.005) {
     defs.push({
-      key: 'anomaly', name: 'Anomali Data', short: 'Anomali', value: anomaly, kind: 'leg',
+      key: 'anomaly', name: 'Anomali Data', value: anomaly, kind: 'leg',
       note: 'Item dengan nominal tanpa kuantitas tercatat (qty=0) — tidak bisa didekomposisi harga/kuantitas',
     });
   }
-  defs.push({ key: 'curr', name: 'Sekarang', short: 'Akhir', value: s.currTotalNominal, kind: 'anchor' });
+  defs.push({ key: 'curr', name: 'Sekarang', value: s.currTotalNominal, kind: 'anchor' });
 
   let running = s.prevTotalNominal;
   return defs.map((d) => {
@@ -162,9 +149,7 @@ function buildRows(s: SummaryWithAnomaly, compact: boolean): BridgeRow[] {
     running = d.kind === 'anchor' ? d.value : before + d.value;
     return {
       ...d,
-      label: compact
-        ? d.short
-        : d.kind === 'anchor' ? d.name : `${sign(d.value)} ${d.name}`,
+      label: d.kind === 'anchor' ? d.name : `${sign(d.value)} ${d.name}`,
       // FIX (BUG-2-a #7): anchors rise from zero; legs span before → running.
       from: d.kind === 'anchor' ? 0 : before,
       to: running,
@@ -208,8 +193,7 @@ interface BridgeShapeProps {
 }
 
 export const BridgeWaterfall = memo(function BridgeWaterfall({ summary }: { summary: PriceEffectSummary }) {
-  const compact = useCompactTicks();
-  const rows = useMemo(() => buildRows(summary, compact), [summary, compact]);
+  const rows = useMemo(() => buildRows(summary), [summary]);
   const hasAnomaly = rows.some((r) => r.key === 'anomaly');
 
   // FIX (BUG-2-a #7): EXPLICIT Y domain, shared by the axis ticks and the

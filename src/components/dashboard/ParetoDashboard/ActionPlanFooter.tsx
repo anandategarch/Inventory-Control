@@ -24,7 +24,7 @@ export function ActionPlanFooter({ paretoData }: { paretoData: ParetoData }) {
             <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
               Action Plan — Prioritas Investigasi
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+            <div className="grid grid-cols-4 gap-2">
               <div className="flex items-center gap-1.5 text-xs">
                 <Package className="h-3 w-3 text-amber-600 dark:text-amber-400 shrink-0" />
                 <span className="text-amber-700 dark:text-amber-400">

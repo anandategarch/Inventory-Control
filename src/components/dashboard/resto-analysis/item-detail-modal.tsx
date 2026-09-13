@@ -86,7 +86,7 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
         ) : (
           <div className="space-y-4">
             {/* Summary Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div className="grid grid-cols-4 gap-2">
               <SummaryCard label="Dev/BOM" value={fmtPct(data.current?.devBom)} sub={data.historical?.zScore != null ? `zScore: ${fmtDecimal(data.historical.zScore, 2)}` : ''} color={data.current?.devBom != null && Math.abs(data.current.devBom) > 0.10 ? 'text-red-600' : ''} />
               <SummaryCard label="Nominal" value={fmtIDR(data.current?.nominalLossSurplus)} color={directionColor(data.current?.direction || '')} />
               <SummaryCard label="Residual%" value={fmtPct(data.current?.residualRatio)} sub={data.current?.residualRatio != null && data.current.residualRatio > 0.5 ? 'TINGGI' : ''} color={data.current?.residualRatio != null && data.current.residualRatio > 0.5 ? 'text-red-600' : ''} />
@@ -96,7 +96,7 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
             {/* Benchmark */}
             <Card className="shadow-md shadow-black/5 dark:shadow-black/20">
               <CardHeader className="pb-2"><CardTitle className="text-sm">Benchmark (Current Period)</CardTitle></CardHeader>
-              <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+              <CardContent className="grid grid-cols-4 gap-2 text-xs">
                 <Row label="Outlet Dev/BOM" value={fmtPct(data.benchmark?.outletDevBom)} />
                 <Row label="Area Avg Dev/BOM" value={fmtPct(data.benchmark?.areaAvgDevBom)} />
                 <Row label="Semua Resto Avg" value={fmtPct(data.benchmark?.allRestoAvgDevBom)} />

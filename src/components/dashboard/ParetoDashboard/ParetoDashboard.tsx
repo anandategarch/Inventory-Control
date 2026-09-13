@@ -190,7 +190,7 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
       <ConcentrationStrip dimension={parentDim} data={activePareto} />
 
       {/* 5-Quadrant Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 gap-4">
         <QuadrantCard
           title="Top Items (80% Deviation)"
           icon={<Package className="h-3.5 w-3.5" />}

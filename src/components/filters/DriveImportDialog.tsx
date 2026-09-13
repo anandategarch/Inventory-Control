@@ -102,7 +102,7 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleCloseDialog(); else onOpenChange(v); }}>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="max-w-[600px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <CloudDownload className="h-5 w-5" />

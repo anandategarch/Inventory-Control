@@ -506,7 +506,7 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
         </CardTitle>
 
         {/* Search row + metric selector */}
-        <div className="flex flex-col sm:flex-row sm:items-center gap-2 mt-2">
+        <div className="flex flex-row items-center gap-2 mt-2">
           <ItemTrendSearchBar
             query={query}
             setQuery={setQuery}
@@ -524,7 +524,7 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
           />
 
           {/* Metric selector (toggle buttons — matches HistoricalZScoreCard style) */}
-          <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-muted/40 self-start sm:self-auto">
+          <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-muted/40 self-auto">
             {METRICS.map((m) => (
               <button
                 key={m.value}

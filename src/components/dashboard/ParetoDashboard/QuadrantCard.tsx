@@ -47,8 +47,8 @@ export function QuadrantCard({ title, icon, data, color, tooltip }: { title: str
                   <TableHead className="text-[10px] font-semibold uppercase tracking-wider h-7 p-1">Nama</TableHead>
                   <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-7 p-1">QTY</TableHead>
                   <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-7 p-1">Nominal</TableHead>
-                  <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-7 p-1 hidden xl:table-cell">Hist Avg</TableHead>
-                  <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-7 p-1 hidden xl:table-cell">Z</TableHead>
+                  <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-7 p-1">Hist Avg</TableHead>
+                  <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-7 p-1">Z</TableHead>
                   <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-7 p-1 w-10">%</TableHead>
                   <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider h-7 p-1 w-10">Cum</TableHead>
                 </TableRow>
@@ -67,10 +67,10 @@ export function QuadrantCard({ title, icon, data, color, tooltip }: { title: str
                     </TableCell>
                     <TableCell className={`text-right text-xs tabular-nums p-1 ${numberColor(d.qtyDeviasi)}`}>{fmtNum(d.qtyDeviasi)}</TableCell>
                     <TableCell className={`text-right text-xs tabular-nums font-medium p-1 ${numberColor(d.nominalDeviasi)}`}>{fmtIDR(d.nominalDeviasi)}</TableCell>
-                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground p-1 hidden xl:table-cell" title={d.histN ? `${d.histN} periode historis (all months)` : ''}>
+                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground p-1" title={d.histN ? `${d.histN} periode historis (all months)` : ''}>
                       {d.histAvg != null ? fmtIDR(d.histAvg) : '—'}
                     </TableCell>
-                    <TableCell className={`text-right text-xs tabular-nums font-medium p-1 hidden xl:table-cell ${
+                    <TableCell className={`text-right text-xs tabular-nums font-medium p-1 ${
                       d.zScore == null ? 'text-muted-foreground' : Math.abs(d.zScore) > 2 ? 'text-red-600 dark:text-red-400 font-bold' : Math.abs(d.zScore) > 1 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'
                     }`} title={d.zScore != null ? `Z-score: ${fmtDecimal(d.zScore, 2)} (${d.histN} periode)` : ''}>
                       {d.zScore != null ? (d.zScore > 0 ? '+' : '') + fmtDecimal(d.zScore, 1) : '—'}

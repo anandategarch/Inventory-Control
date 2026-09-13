@@ -51,7 +51,7 @@ export const ItemTab = memo(function ItemTab({ data }: ItemTabProps) {
         />
         {/* FIX (UI-05): min-w-0 on grid wrapper prevents overflow.
             H-11 (#4a): 3→2 columns after the TopOutlets card removal. */}
-        <div className="grid lg:grid-cols-2 gap-4 min-w-0">
+        <div className="grid grid-cols-2 gap-4 min-w-0">
           <ErrorBoundary label="Top Items">
             <TopItemsByNominal data={data} />
             <TopItemsByDevBom data={data} />

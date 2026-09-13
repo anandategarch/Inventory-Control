@@ -117,7 +117,7 @@ export default function AreaItemHeatmapSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-2xl p-0 flex flex-col">
+      <SheetContent side="right" className="w-full max-w-2xl p-0 flex flex-col">
         <SheetHeader className="px-4 py-3 border-b bg-muted/30">
           <SheetTitle className="text-sm flex items-center gap-2 flex-wrap">
             <HeatMapIcon className="h-4 w-4 text-amber-600" />

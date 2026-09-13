@@ -258,7 +258,7 @@ export default function DashboardPage() {
           viewport. Tailwind 4 supports `@container` natively without
           plugin/config — breakpoints @xl/main (576px) etc. map to the
           main element's bounding box, not the window. */}
-      <main id="main-content" aria-label="Dashboard Inventory Control" className="@container/main flex-1 px-3 sm:px-6 pt-2 pb-4 space-y-4 max-w-[1600px] w-full mx-auto min-w-0">
+      <main id="main-content" aria-label="Dashboard Inventory Control" className="@container/main flex-1 px-6 pt-2 pb-4 space-y-4 max-w-[1600px] w-full mx-auto min-w-0">
         {statusError ? (
           // FIX (H-14/T2): /api/status failure used to render an infinite fake
           // loading screen (error field was never read; retry is disabled and
@@ -275,9 +275,9 @@ export default function DashboardPage() {
         ) : analysis.error ? (
           <ErrorState message={analysis.error.message} />
         ) : analysis.data ? (
-          <div className="space-y-8 md:space-y-10 min-w-0">
+          <div className="space-y-10 min-w-0">
             {/* VH-1: inter-layer rhythm — narrative layers above, deep-analysis
-                band below, separated by space-y-8 md:space-y-10 (spec §5.3:
+                band below, separated by space-y-10 (spec §5.3:
                 layer gap ≥ 2× the 16px card gap). */}
             <DashboardNarrative data={analysis.data} onRefresh={handleRefresh} />
 
@@ -285,11 +285,11 @@ export default function DashboardPage() {
             {/* Spec §3 principle 2 + §5.3: the ONLY "band" zone — the
                 full-bleed bg-muted/25 + border-t-2 signals the switch from
                 reading (narrative above) to working (deep analysis below).
-                -mx-3/px-3 sm:-mx-6/px-6 breaks out of main's horizontal
+                -mx-6/px-6 breaks out of main's horizontal
                 padding so the band spans the content column edge-to-edge. */}
             <section id="l6-deep" aria-labelledby="l6-header" className="scroll-mt-40">
               <LayerHeader number="05" title="DEEP ANALYSIS" id="l6-header" description="Butuh menggali lebih dalam? Eksplorasi penuh per area, resto, item, peer, pareto, historis, dan heatmap." />
-              <div className="-mx-3 px-3 sm:-mx-6 sm:px-6 border-t-2 border-border bg-muted/25 mt-4 pt-2 pb-4">
+              <div className="-mx-6 px-6 border-t-2 border-border bg-muted/25 mt-4 pt-2 pb-4">
                 {/* PERF-FE (PAKET A): forceMount + data-[state=inactive]:hidden
                     = keep-alive tabs. Previously Radix unmounted every tab on
                     switch → the whole subtree (charts, tables, local state like
@@ -320,7 +320,7 @@ export default function DashboardPage() {
                     under the header's z-40 — layered sticky, no sticky-ception
                     beyond these two. bg-background/85 + backdrop-blur keeps
                     scrolled content readable behind the strip. */}
-                <TabsList className="w-full justify-start overflow-x-auto h-auto flex-nowrap bg-background/85 backdrop-blur p-1 gap-1 rounded-xl border border-border/60 shadow-sm shadow-black/5 dark:shadow-black/20 sticky top-[var(--dashboard-header-h,104px)] z-30">
+                <TabsList className="w-full justify-start h-auto bg-background/85 backdrop-blur p-1 gap-1 rounded-xl border border-border/60 shadow-sm shadow-black/5 dark:shadow-black/20 sticky top-[var(--dashboard-header-h,104px)] z-30">
                     <TabsTrigger value="area" className={tabTriggerClass}>
                       <MapPin className="h-3.5 w-3.5" /> Area
                     </TabsTrigger>

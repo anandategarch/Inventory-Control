@@ -218,7 +218,7 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[760px] max-h-[85vh] flex flex-col">
+      <DialogContent className="max-w-[760px] max-h-[85vh] flex flex-col">
         <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <FileSpreadsheet className="h-5 w-5" />
@@ -241,7 +241,7 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
         ) : (
           <div className="flex-1 overflow-hidden flex flex-col gap-4 min-h-0">
             {/* Quick actions */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 shrink-0">
+            <div className="grid grid-cols-2 gap-3 shrink-0">
               {/* Hapus per bulan */}
               <div className="rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-2">
                 <div className="flex items-center gap-2 text-xs font-medium text-amber-700 dark:text-amber-300">

@@ -35,7 +35,7 @@ export const AreaTab = memo(function AreaTab({ data }: AreaTabProps) {
     <div className="space-y-4 min-w-0">
       {/* Section: Area Comparison + Outlet Health Ranking */}
       {/* FIX (UI-15): removed redundant sm:grid-cols-1 (default behavior). */}
-      <section className="grid lg:grid-cols-2 gap-4 min-w-0">
+      <section className="grid grid-cols-2 gap-4 min-w-0">
         {/* FIX (BUG-HUNT A1): grid items must carry min-w-0 — without it the
             item min-width resolves to the table's min-content (~731px with
             realistic data) and blows the 375px viewport out to ~745px. */}

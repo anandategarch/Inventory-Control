@@ -108,7 +108,7 @@ export function DashboardHeader({
   return (
     <header ref={headerRef} className="sticky top-0 z-40 border-b border-amber-500/60 bg-gradient-to-b from-background/95 to-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 shadow-sm shadow-black/[0.03] dark:shadow-black/20 min-w-0">
       {/* Tier 1: Brand + actions */}
-      <div className="px-3 sm:px-6 py-1.5 flex items-center justify-between gap-2 max-w-[1600px] mx-auto">
+      <div className="px-6 py-1.5 flex items-center justify-between gap-2 max-w-[1600px] mx-auto">
         <div className="flex items-center gap-2.5 min-w-0">
           {/* Logo — compact 28px (was 40px) */}
           <div className="relative flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 dark:from-amber-400 dark:to-orange-500 text-white shadow-sm shadow-amber-500/20 ring-1 ring-amber-500/20 shrink-0">
@@ -119,7 +119,7 @@ export function DashboardHeader({
               Inventory Control
             </h1>
             {status?.stats && (
-              <Badge variant="outline" className="text-[11px] h-6 hidden sm:inline-flex gap-1 px-1.5 tabular-nums text-muted-foreground shrink-0">
+              <Badge variant="outline" className="text-[11px] h-6 inline-flex gap-1 px-1.5 tabular-nums text-muted-foreground shrink-0">
                 {status.stats.totalOutlets} outlet
               </Badge>
             )}
@@ -129,7 +129,7 @@ export function DashboardHeader({
           {analysisFetching && analysisData && (
             <Badge variant="outline" className="text-[11px] h-6 gap-1.5 rounded-full px-2.5 border-amber-300/70 dark:border-amber-800/70 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30">
               <Loader2 className="h-3 w-3 animate-spin" />
-              <span className="hidden sm:inline">Memperbarui...</span>
+              <span className="inline">Memperbarui...</span>
             </Badge>
           )}
           {analysisData && dataUpdatedAt > 0 && (
@@ -141,7 +141,7 @@ export function DashboardHeader({
               // the client fetch resolves (dataUpdatedAt===0 during prerender
               // → no hydration mismatch possible).
               title={`Data analisis terakhir diperbarui: ${new Date(dataUpdatedAt).toLocaleString('id-ID')}`}
-              className="text-[11px] h-6 hidden lg:inline-flex gap-1.5 rounded-full px-2.5 text-muted-foreground tabular-nums shrink-0"
+              className="text-[11px] h-6 inline-flex gap-1.5 rounded-full px-2.5 text-muted-foreground tabular-nums shrink-0"
             >
               <Clock3 className="h-3 w-3" />
               Diperbarui {new Date(dataUpdatedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
@@ -158,7 +158,7 @@ export function DashboardHeader({
               title={analysisData.stale
                 ? 'Data dari cache kedaluwarsa — versi terbaru sedang dihitung ulang di latar belakang'
                 : undefined}
-              className={`text-[11px] h-6 hidden lg:inline-flex gap-1.5 rounded-full px-2.5 ${analysisData.stale
+              className={`text-[11px] h-6 inline-flex gap-1.5 rounded-full px-2.5 ${analysisData.stale
                 ? 'border-amber-300/70 dark:border-amber-800/70 text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30'
                 : 'text-muted-foreground'}`}
             >
@@ -176,9 +176,9 @@ export function DashboardHeader({
               aria-label="Export laporan Word"
             >
               {isExporting ? (
-                <><Loader2 className="h-3.5 w-3.5 animate-spin" /> <span className="hidden sm:inline">Exporting...</span></>
+                <><Loader2 className="h-3.5 w-3.5 animate-spin" /> <span className="inline">Exporting...</span></>
               ) : (
-                <><FileDown className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Export</span></>
+                <><FileDown className="h-3.5 w-3.5" /> <span className="inline">Export</span></>
               )}
             </Button>
           )}
@@ -246,7 +246,7 @@ export function DashboardHeader({
           tabular-nums"). Rendered only when a period is resolved and data
           exists; changing the filter updates it without scrolling. */}
       {showPeriodLabel && (
-        <div className="px-3 sm:px-6 max-w-[1600px] mx-auto">
+        <div className="px-6 max-w-[1600px] mx-auto">
           <p className="text-xs font-medium text-muted-foreground tracking-wide tabular-nums">
             {periodParts.join(' · ')}
           </p>
@@ -256,7 +256,7 @@ export function DashboardHeader({
       {/* Tier 2: FilterBar (bare, no Card wrapper) — only shown when data exists.
           VH-4: id="l1-filter" completes the §6.6 anchor set (l1-filter … l6-deep). */}
       {hasData && (
-        <div id="l1-filter" className="px-3 sm:px-6 pb-1.5 max-w-[1600px] mx-auto overflow-x-auto">
+        <div id="l1-filter" className="px-6 pb-1.5 max-w-[1600px] mx-auto">
           <FilterBar />
         </div>
       )}

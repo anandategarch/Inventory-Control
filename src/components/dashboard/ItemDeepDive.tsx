@@ -104,7 +104,7 @@ export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: Analysi
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent className="sm:max-w-[800px] max-h-[80vh] flex flex-col overflow-hidden" showCloseButton={false}>
+      <DialogContent className="max-w-[800px] max-h-[80vh] flex flex-col overflow-hidden" showCloseButton={false}>
         <DialogHeader className="shrink-0">
           <div className="flex items-center justify-between">
             <div className="min-w-0">
