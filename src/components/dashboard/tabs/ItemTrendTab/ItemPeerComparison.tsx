@@ -36,6 +36,10 @@
 //  caller computes its own pre-computed values (different
 //  formulas per consumer) and passes them to the presentational
 //  cards.
+//
+//  REFACTOR-1-b: the pure compute helpers (computeEfficiencyScore,
+//  rankColor) moved to './item-peer-compute' (pure move, no
+//  behavior change).
 // ============================================================
 
 import { memo, useMemo } from 'react';
@@ -57,6 +61,8 @@ import {
   computeAnomalyFlags,
 } from '@/components/dashboard/shared/peer-comparison-cards';
 import type { GapRow, RankItem, ScatterPoint } from '@/components/dashboard/shared/peer-comparison-cards';
+// REFACTOR-1-b — pure compute helpers moved out of this file.
+import { computeEfficiencyScore, rankColor } from './item-peer-compute';
 
 // ------------------------------------------------------------
 //  Types — defined LOCALLY (do NOT import from the backend API
@@ -133,43 +139,6 @@ export interface ItemPeerComparisonProps {
    *  typically wires this to `setFocusOutlet(code)` which switches
    *  to the Resto Analysis tab with the clicked outlet focused. */
   onOutletClick?: (_outletCode: string) => void;
-}
-
-// ------------------------------------------------------------
-//  Efficiency score — composite 0-100 based on target vs peer avg.
-//  Penalty: |devBom| above peer avg (50pts), |nominalDeviasi| above peer
-//  avg (50pts). Higher = better.
-//  FIX (BUG-2-03): use ABS values for comparison — devBom is SIGNED (neg=LOSS,
-//  pos=SURPLUS); comparing signed values would penalize SURPLUS targets (wrong
-//  direction — SURPLUS is good, not bad).
-// ------------------------------------------------------------
-
-function computeEfficiencyScore(target: ItemPeerRow, peerAvg: ItemPeerAverages): number {
-  const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);
-  // FIX (BUG-2-03): compare ABSOLUTE magnitudes, not signed values.
-  const targetAbsDevBom = target.devBom != null ? Math.abs(target.devBom) : 0;
-  const peerAbsDevBom = Math.abs(peerAvg.devBom);
-  const devBomPenalty = target.devBom != null
-    ? Math.min(50, Math.max(0, safeDiv(targetAbsDevBom - peerAbsDevBom, peerAbsDevBom) * 25))
-    : 0;
-  const nominalPenalty = Math.min(
-    50,
-    Math.max(0, safeDiv(target.absNominalDeviasi - peerAvg.absNominalDeviasi, peerAvg.absNominalDeviasi) * 25),
-  );
-  const raw = 100 - (devBomPenalty + nominalPenalty);
-  return Math.max(0, Math.min(100, raw));
-}
-
-// ------------------------------------------------------------
-//  Rank color helper (matches Peer Tab style + the worst!=1 guard
-//  for the Item Tab's small peer sets).
-// ------------------------------------------------------------
-
-function rankColor(r: number, t: number): string {
-  if (r === 1) return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400';
-  if (r === t && t > 1) return 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400';
-  if (r <= t / 2) return 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400';
-  return 'bg-muted text-muted-foreground';
 }
 
 // ------------------------------------------------------------

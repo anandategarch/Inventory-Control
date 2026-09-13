@@ -67,11 +67,11 @@ import {
   Card, CardContent, CardHeader, CardTitle,
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Info, Loader2, Package, TrendingUp, Award, AlertTriangle } from 'lucide-react';
+import { Info, Loader2, Package, TrendingUp, AlertTriangle } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { useItemTrend, type ItemTrendMetric, type ItemTrendPeriod } from '@/hooks/useAnalysis';
-import type { AnalysisData, DeviasiRankItem } from '@/hooks/useAnalysis';
+import type { AnalysisData } from '@/hooks/useAnalysis';
 import { fmtDecimal } from '@/lib/format';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { Callout } from '@/components/ui/callout';
@@ -103,6 +103,10 @@ import { FlipRanking } from './FlipRanking';
 import { ItemPeerComparison } from './ItemPeerComparison';
 // Phase 3 — compact rank trend chart (inverted Y-axis, sits below main chart).
 import { ItemTrendRankChart } from './ItemTrendRankChart';
+// REFACTOR-1-b — further folder split (pure move from this file, no behavior
+// change): Phase 1 rank badge row + Phase A+B flip summary card.
+import { RankBadgeRow } from './RankBadgeRow';
+import { FlipSummaryCard } from './FlipSummaryCard';
 
 // Re-export sub-components + types so callers importing from
 // '@/components/dashboard/tabs/ItemTrendTab' can access them.
@@ -141,176 +145,6 @@ const ItemTrendLineChart = dynamic(() => import('../ItemTrendLineChart').then(m 
     </div>
   ),
 });
-
-// ============================================================
-//  Phase 1 — Rank badge (national rank for selected item)
-//  --------------------------------------------------------
-//  Looks up the selected item in `analysisData.topDeviasiRank`
-//  (national top-50 per item-outlet pair). Shows:
-//    [Rank #N Nasional (Deviasi)] [Rank #M (BOM)] [K outlet terdampak]
-//  When the item is not in the top-50, shows a muted "Rank > 50 Nasional" badge.
-//
-//  Color thresholds:
-//    rank 1-5   → red (severe)
-//    rank 6-20  → amber (warning)
-//    rank > 20  → muted (elevated but not critical)
-// ============================================================
-
-function rankBadgeClass(rank: number | null): string {
-  if (rank == null || rank > 50) return 'text-muted-foreground border-border bg-muted/40';
-  if (rank <= 5) return 'text-red-700 dark:text-red-400 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30';
-  if (rank <= 20) return 'text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30';
-  return 'text-muted-foreground border-border bg-muted/40';
-}
-
-interface RankBadgeRowProps {
-  itemName: string;
-  analysisData?: AnalysisData;
-}
-
-function RankBadgeRow({ itemName, analysisData }: RankBadgeRowProps) {
-  const matches: DeviasiRankItem[] = useMemo(() => {
-    if (!analysisData?.topDeviasiRank) return [];
-    return analysisData.topDeviasiRank.filter(it => it.itemName === itemName);
-  }, [analysisData, itemName]);
-
-  // Best (lowest) rank for the item across all its outlets in top-50.
-  // FIX (BUG-1-01): rankBom is now `number | null` — use type predicate to
-  // filter nulls so Math.min gets a clean number[].
-  const rankNominal = matches.length > 0
-    ? Math.min(...matches.map(m => m.rankNominal))
-    : null;
-  const rankBomCandidates = matches
-    .map(m => m.rankBom)
-    .filter((r): r is number => r != null && r > 0);
-  const rankBom = rankBomCandidates.length > 0
-    ? Math.min(...rankBomCandidates)
-    : null;
-
-  return (
-    <div className="flex items-center gap-2 flex-wrap text-xs mt-1">
-      <Badge
-        variant="outline"
-        className={`text-[11px] h-5 px-1.5 gap-1 ${rankBadgeClass(rankNominal)}`}
-        title={`Rank nasional by |nominal deviasi| (top 50). Best rank across ${matches.length} outlet terdampak.`}
-      >
-        <Award className="h-3 w-3" />
-        {rankNominal != null ? `Rank #${rankNominal} Nasional (Deviasi)` : 'Rank > 50 Nasional'}
-      </Badge>
-      <Badge
-        variant="outline"
-        className={`text-[11px] h-5 px-1.5 ${rankBadgeClass(rankBom)}`}
-        title="Rank nasional by |QTY BOM| (top 50)"
-      >
-        {rankBom != null ? `Rank #${rankBom} (BOM)` : 'Rank BOM > 50'}
-      </Badge>
-      <Badge variant="secondary" className="text-[11px] h-5 px-1.5 tabular-nums">
-        {matches.length} outlet terdampak (top 50)
-      </Badge>
-    </div>
-  );
-}
-
-// ============================================================
-//  Phase A+B (FLIP-FE) — Flip Summary Card
-//  --------------------------------------------------------
-//  Compact card summarizing the item's flip pattern across all
-//  same-week pairs (W4 Jul vs W4 Agu, W4 Agu vs W4 Sep, …).
-//
-//  Layout:
-//    ┌────────────────────────────────────────────────┐
-//    │ 🔀 Flip Pattern Analysis                       │
-//    │ {N} same-week pairs:                           │
-//    │ 🟢 {Sempurna} Sempurna · 🟡 {Dominan} Dominan │
-//    │ · ⚪ {Konsisten} Konsisten                     │
-//    │ Avg Disparity: {X}% · Risk: 🟡 {LEVEL}         │
-//    └────────────────────────────────────────────────┘
-//
-//  Color coding:
-//    risk=high     → red border + red "HIGH" badge
-//    risk=moderate → amber border + amber "MODERATE" badge
-//    risk=low      → emerald border + emerald "LOW" badge
-// ============================================================
-
-function flipRiskClass(level: ItemFlipScore['riskLevel']): string {
-  switch (level) {
-    case 'high':
-      return 'border-red-300 dark:border-red-800 bg-red-50/60 dark:bg-red-950/20 text-red-700 dark:text-red-300';
-    case 'moderate':
-      return 'border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 text-amber-700 dark:text-amber-300';
-    case 'low':
-    default:
-      return 'border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300';
-  }
-}
-
-function flipRiskBadgeClass(level: ItemFlipScore['riskLevel']): string {
-  switch (level) {
-    case 'high':
-      return 'text-red-700 dark:text-red-300 border-red-300 dark:border-red-800 bg-red-100 dark:bg-red-950/40';
-    case 'moderate':
-      return 'text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800 bg-amber-100 dark:bg-amber-950/40';
-    case 'low':
-    default:
-      return 'text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800 bg-emerald-100 dark:bg-emerald-950/40';
-  }
-}
-
-interface FlipSummaryCardProps {
-  score: ItemFlipScore;
-}
-
-function FlipSummaryCard({ score }: FlipSummaryCardProps) {
-  const avgPct = Math.round(score.avgDisparity * 100);
-  const riskClass = flipRiskClass(score.riskLevel);
-  const riskBadgeClass = flipRiskBadgeClass(score.riskLevel);
-  const riskLabel = score.riskLevel.toUpperCase();
-  // Hide parts that have zero counts to keep the summary tight.
-  const parts: Array<{ emoji: string; label: string; count: number; cls: string }> = [
-    { emoji: '🟢', label: 'Sempurna', count: score.sempurnaCount, cls: 'text-emerald-700 dark:text-emerald-400' },
-    { emoji: '🟡', label: 'Dominan', count: score.dominanCount, cls: 'text-amber-700 dark:text-amber-400' },
-    { emoji: '🔴', label: 'Parsial', count: score.parsialCount, cls: 'text-red-700 dark:text-red-400' },
-    { emoji: '⚪', label: 'Konsisten', count: score.konsistenCount, cls: 'text-muted-foreground' },
-  ].filter(p => p.count > 0);
-
-  return (
-    <div className={`mt-2 rounded-lg border px-3 py-2 ${riskClass}`} data-testid="flip-summary-card">
-      <div className="flex items-center gap-1.5 text-xs font-semibold">
-        <span aria-hidden>🔀</span>
-        <span>Flip Pattern Analysis</span>
-      </div>
-      <div className="mt-1 flex items-center gap-1.5 flex-wrap text-[11px] leading-tight">
-        <span className="font-medium tabular-nums">{score.totalPairs}</span>
-        <span className="text-muted-foreground">pasangan minggu sama:</span>
-        {parts.length === 0 ? (
-          <span className="text-muted-foreground">—</span>
-        ) : (
-          parts.map((p, i) => (
-            <span key={p.label} className="flex items-center gap-1">
-              {i > 0 && <span className="text-muted-foreground/60">·</span>}
-              <span aria-hidden>{p.emoji}</span>
-              <span className="tabular-nums">{p.count}</span>
-              <span className={p.cls}>{p.label}</span>
-            </span>
-          ))
-        )}
-      </div>
-      <div className="mt-1 flex items-center gap-2 flex-wrap text-[11px]">
-        <span className="text-muted-foreground">
-          Disparitas Rata-rata: <span className="font-medium tabular-nums text-foreground">{avgPct}%</span>
-        </span>
-        <span className="text-muted-foreground/60">·</span>
-        <span className="text-muted-foreground">Risiko:</span>
-        <Badge variant="outline" className={`text-[10px] h-5 px-1.5 font-semibold ${riskBadgeClass}`}>
-          {riskLabel}
-        </Badge>
-        {score.riskScore > 0 && (
-          <span className="text-muted-foreground/70 tabular-nums">({score.riskScore}/100)</span>
-        )}
-      </div>
-    </div>
-  );
-}
 
 // ============================================================
 //  ItemTrendTab — main component (orchestrator)

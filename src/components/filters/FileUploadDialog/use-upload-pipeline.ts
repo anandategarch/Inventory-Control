@@ -1,22 +1,29 @@
 'use client';
 
+// ============================================================
+//  use-upload-pipeline — the 3-phase upload state machine behind
+//  FileUploadDialog. Moved verbatim from FileUploadDialog.tsx
+//  (REFACTOR-1-c pure split — zero behavior change):
+//    PHASE 1+2: upload chunks (parallel, 3 concurrent) + detect
+//               weeks — stops at the confirmation panel
+//    PHASE 3:   import weeks ("Lanjut Import" button)
+//  The hook owns ALL pipeline state/actions + progress/error
+//  handling; the UI components only read state and call actions.
+//  The /api/ingest-upload + /api/ingest-process request/response
+//  contracts are byte-for-byte identical to the pre-split file.
+// ============================================================
+
 import { useState, useRef, useCallback, useMemo } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, X, Pencil, ArrowRight, Wand2, Keyboard } from 'lucide-react';
+import type { Dispatch, SetStateAction, ChangeEventHandler, DragEventHandler } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { invalidateAllData } from '@/lib/query-invalidation';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 // FIX (AUDIT8-ROLLBACK-1, Item 7): extract shared upload helpers to a sibling
 // module so MONTH_NAMES stays in sync with the server-side MONTH_MAP (was the
 // cause of AUDIT-RENAME-9 — client ✓ then server 400 due to month-list drift).
-import { validateManualFileName, renameModeDefault } from './upload-utils';
+import { validateManualFileName, renameModeDefault } from '../upload-utils';
 
-interface WeekResult {
+export interface WeekResult {
   weekLabel: string;
   status: 'IMPORTED' | 'SKIPPED' | 'ERROR';
   rowCount: number;
@@ -26,7 +33,7 @@ interface WeekResult {
   durationMs: number;
 }
 
-interface UploadResult {
+export interface UploadResult {
   fileName: string;
   monthLabel: string;
   monthKey: string;
@@ -41,13 +48,8 @@ interface UploadResult {
   message?: string;
 }
 
-interface FileUploadDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}
-
 // Detect result shape (kept loose since backend may add fields)
-interface DetectResult {
+export interface DetectResult {
   fileName: string;
   manualMode: boolean;
   monthLabel: string;
@@ -59,11 +61,47 @@ interface DetectResult {
   message?: string;
 }
 
-// Client-side manual filename validation now lives in ./upload-utils
+// Client-side manual filename validation now lives in ../upload-utils
 // (FIX AUDIT8-ROLLBACK-1, Item 7 — was duplicated here, drifting from server).
 // Re-exporting would be unused; consumers import directly from upload-utils.
 
-export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) {
+/** Clear, explicitly-typed surface of {@link useUploadPipeline}. */
+export interface UploadPipeline {
+  // State
+  file: File | null;
+  uploading: boolean;
+  importing: boolean;
+  progress: number;
+  statusLog: string[];
+  result: UploadResult | null;
+  error: string | null;
+  // Rename mode state
+  renameMode: 'auto' | 'manual';
+  setRenameMode: Dispatch<SetStateAction<'auto' | 'manual'>>;
+  manualFileName: string;
+  setManualFileName: Dispatch<SetStateAction<string>>;
+  manualValidation: { ok: boolean; cleaned?: string; error?: string };
+  // Number locale for CSV parsing — default 'auto' (local files could be either)
+  numberLocale: 'auto' | 'id' | 'us';
+  setNumberLocale: Dispatch<SetStateAction<'auto' | 'id' | 'us'>>;
+  // Detect result + confirmation gate
+  detectData: DetectResult | null;
+  fileInputRef: React.RefObject<HTMLInputElement | null>;
+  // Actions
+  reset: () => void;
+  handleClose: () => void;
+  handleFileSelect: ChangeEventHandler<HTMLInputElement>;
+  handleDrop: DragEventHandler;
+  handleUploadAndDetect: () => void;
+  handleRunImport: () => void;
+  handleEditName: () => void;
+  clearFile: () => void;
+  // Derived
+  isBusy: boolean;
+  showConfirm: boolean;
+}
+
+export function useUploadPipeline({ onOpenChange }: { onOpenChange: (open: boolean) => void }): UploadPipeline {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);       // upload + detect phase
   const [importing, setImporting] = useState(false);       // import loop phase
@@ -501,373 +539,43 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
     setStatusLog(prev => [...prev, '✏️ Mode rename manual aktif. Perbaiki nama lalu upload ulang.']);
   };
 
+  // "Ganti file" from the drop zone: drop the selected file + its
+  // pre-filled manual name (same two setState calls the old inline
+  // button handler performed).
+  const clearFile = () => {
+    setFile(null);
+    setManualFileName('');
+  };
+
   const isBusy = uploading || importing;
   const showConfirm = !!detectData && !result;
 
-  return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-[600px]">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Upload className="h-5 w-5" />
-            Import File Excel
-          </DialogTitle>
-          <DialogDescription>
-            Upload file Excel dari komputer. Sistem otomatis deteksi week yang belum ada.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-4">
-          {/* File Drop Zone — hidden once confirmation or result is shown */}
-          {!result && !showConfirm && (
-            <div
-              className="border-2 border-dashed border-muted-foreground/30 rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
-              onClick={() => !isBusy && fileInputRef.current?.click()}
-              onDrop={handleDrop}
-              onDragOver={(e) => e.preventDefault()}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".xlsx,.csv"
-                onChange={handleFileSelect}
-                className="hidden"
-              />
-              {file ? (
-                <div className="flex flex-col items-center gap-2">
-                  <FileSpreadsheet className="h-12 w-12 text-emerald-600" />
-                  <p className="font-semibold">{file.name}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {(file.size / 1024 / 1024).toFixed(1)}MB
-                  </p>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="mt-2"
-                    disabled={isBusy}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setFile(null);
-                      setManualFileName('');
-                    }}
-                  >
-                    <X className="h-4 w-4" /> Ganti file
-                  </Button>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center gap-2">
-                  <Upload className="h-12 w-12 text-muted-foreground" />
-                  <p className="font-semibold">Klik atau drag file ke sini</p>
-                  <p className="text-sm text-muted-foreground">
-                    Format: .xlsx, .csv (maks 50MB)
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Nama file wajib format: &quot;17.MEI 2026.xlsx&quot; atau &quot;JULI 2026.xlsx&quot;
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Rename Mode Section — only show when file is selected and not yet confirmed/imported */}
-          {file && !result && !showConfirm && (
-            <div className="border rounded-lg p-3 space-y-3 bg-muted/30">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <Pencil className="h-4 w-4" />
-                Nama File untuk Import
-              </div>
-
-              {/* Mode toggle */}
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={() => setRenameMode('auto')}
-                  className={`text-left p-2.5 rounded-lg border text-sm transition-colors ${
-                    renameMode === 'auto'
-                      ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
-                      : 'border-muted hover:border-muted-foreground/40'
-                  } ${isBusy ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  <div className="flex items-center gap-1.5 font-medium">
-                    <Wand2 className="h-3.5 w-3.5" />
-                    Auto-Detect
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Sistem extract bulan dari nama file / data Excel
-                  </p>
-                </button>
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={() => setRenameMode('manual')}
-                  className={`text-left p-2.5 rounded-lg border text-sm transition-colors ${
-                    renameMode === 'manual'
-                      ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
-                      : 'border-muted hover:border-muted-foreground/40'
-                  } ${isBusy ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  <div className="flex items-center gap-1.5 font-medium">
-                    <Keyboard className="h-3.5 w-3.5" />
-                    Rename Manual
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Ketik nama sendiri (format: BULAN TAHUN.xlsx)
-                  </p>
-                </button>
-              </div>
-
-              {/* Manual input */}
-              {renameMode === 'manual' && (
-                <div className="space-y-1.5">
-                  <Label htmlFor="manual-filename" className="text-xs">
-                    Nama file manual
-                  </Label>
-                  <Input
-                    id="manual-filename"
-                    value={manualFileName}
-                    onChange={(e) => setManualFileName(e.target.value)}
-                    placeholder="MEI 2026.xlsx"
-                    disabled={isBusy}
-                    className="font-mono text-sm"
-                    autoComplete="off"
-                  />
-                  {manualFileName && (
-                    <p className={`text-xs ${manualValidation.ok ? 'text-emerald-600' : 'text-amber-600'}`}>
-                      {manualValidation.ok
-                        ? `✓ Akan disimpan sebagai: ${manualValidation.cleaned}`
-                        : `⚠ ${manualValidation.error}`}
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {renameMode === 'auto' && (
-                <p className="text-xs text-muted-foreground">
-                  ℹ️ Jika nama file adalah placeholder (mis. &quot;Loading Google Sheet&quot;), sistem otomatis extract bulan dari data Excel. Jika gagal, switch ke &quot;Rename Manual&quot;.
-                </p>
-              )}
-
-              {/* Number format selector — for CSV file parsing */}
-              <div className="space-y-1.5 pt-1 border-t">
-                <Label htmlFor="upload-number-locale" className="text-xs font-semibold">
-                  Format Angka (untuk CSV)
-                </Label>
-                <Select value={numberLocale} onValueChange={(v) => setNumberLocale(v as 'auto' | 'id' | 'us')} disabled={isBusy}>
-                  <SelectTrigger id="upload-number-locale" className="h-8 text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="auto" className="text-sm">Auto-detect (heuristic)</SelectItem>
-                    <SelectItem value="id" className="text-sm">Indonesia: 1.234,56 (titik=ribuan)</SelectItem>
-                    <SelectItem value="us" className="text-sm">US: 1,234.56 (koma=ribuan)</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-[11px] text-muted-foreground">
-                  File .xlsx tidak terpengaruh (Excel sudah parse angka). Hanya relevan untuk .csv — pilih sesuai format angka di file.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Confirmation Panel — shown after detect, before import */}
-          {showConfirm && detectData && (
-            <div className="border-2 border-primary/30 rounded-lg p-4 space-y-3 bg-primary/5">
-              <div className="flex items-center gap-2 text-sm font-semibold text-primary">
-                <CheckCircle2 className="h-4 w-4" />
-                Konfirmasi Import
-              </div>
-
-              <div className="space-y-2 text-sm">
-                <div className="flex items-start justify-between gap-2">
-                  <span className="text-muted-foreground shrink-0">📁 Nama file:</span>
-                  <span className="font-mono font-semibold text-right break-all">{detectData.fileName}</span>
-                </div>
-                {detectData.manualMode && (
-                  <p className="text-xs text-blue-600 dark:text-blue-400">✏️ Nama di-set manual</p>
-                )}
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-muted-foreground">📅 Bulan:</span>
-                  <span className="font-semibold">{detectData.monthLabel}</span>
-                </div>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-muted-foreground">📊 Week di file:</span>
-                  <span className="font-semibold">{detectData.weeksInFile.join(', ') || '-'}</span>
-                </div>
-                {detectData.existingWeeks.length > 0 && (
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">ℹ️ Sudah ada:</span>
-                    <span className="text-blue-600 dark:text-blue-400 font-medium">{detectData.existingWeeks.join(', ')}</span>
-                  </div>
-                )}
-                <div className="flex items-center justify-between gap-2 pt-1 border-t">
-                  <span className="text-muted-foreground">📦 Akan diimport:</span>
-                  <span className="font-bold text-emerald-600 dark:text-emerald-400">{detectData.weeksToImport.join(', ')}</span>
-                </div>
-              </div>
-
-              <div className="flex gap-2 pt-1">
-                <Button variant="outline" size="sm" onClick={handleEditName} className="gap-1.5">
-                  <Pencil className="h-3.5 w-3.5" /> Edit Nama
-                </Button>
-                <Button size="sm" onClick={handleRunImport} disabled={importing} className="gap-1.5 flex-1">
-                  {importing ? (
-                    <>
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Mengimport...
-                    </>
-                  ) : (
-                    <>
-                      Lanjut Import <ArrowRight className="h-3.5 w-3.5" />
-                    </>
-                  )}
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* Error */}
-          {error && (
-            <div className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
-              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
-
-          {/* Progress */}
-          {isBusy && (
-            <div className="space-y-2">
-              <Progress value={progress} className="h-2" />
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span>{uploading ? 'Memproses... (bisa 1-5 menit untuk file besar)' : 'Mengimport week...'}</span>
-              </div>
-            </div>
-          )}
-
-          {/* Status Log */}
-          {statusLog.length > 0 && (
-            <div className="bg-muted/50 rounded-lg p-3 max-h-[300px] overflow-y-auto">
-              <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">
-                Status Log
-              </p>
-              <div className="space-y-1 font-mono text-xs">
-                {statusLog.map((line, i) => (
-                  <p key={i} className="leading-relaxed">{line}</p>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Result Summary */}
-          {result && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400">
-                <CheckCircle2 className="h-5 w-5" />
-                <span className="font-semibold">
-                  Import selesai: {result.totalInserted.toLocaleString()} rows
-                </span>
-              </div>
-
-              {/* Week breakdown */}
-              <div className="grid grid-cols-2 gap-2">
-                {result.importedWeeks.map((w) => (
-                  <div
-                    key={w.weekLabel}
-                    className={`p-2 rounded-lg border text-sm ${
-                      w.status === 'IMPORTED'
-                        ? 'border-emerald-200 bg-emerald-50 dark:bg-emerald-950/20'
-                        : w.status === 'ERROR'
-                        ? 'border-red-200 bg-red-50 dark:bg-red-950/20'
-                        : 'border-muted'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold">{w.weekLabel}</span>
-                      {w.status === 'IMPORTED' && <CheckCircle2 className="h-4 w-4 text-emerald-600" />}
-                      {w.status === 'ERROR' && <AlertCircle className="h-4 w-4 text-red-600" />}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {w.status === 'IMPORTED'
-                        ? `${w.rowCount.toLocaleString()} rows`
-                        : w.status === 'ERROR'
-                        ? w.error || 'Error'
-                        : 'Skipped'}
-                    </p>
-                  </div>
-                ))}
-              </div>
-
-              {result.existingWeeks.length > 0 && (
-                <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/20 text-blue-700 dark:text-blue-400 text-sm">
-                  ℹ️ Week sudah ada (skipped): {result.existingWeeks.join(', ')}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Info */}
-          {!file && !result && !showConfirm && (
-            <div className="text-xs text-muted-foreground space-y-1">
-              <p>📋 <strong>Cara kerja:</strong></p>
-              <p>1. Pilih file Excel (.xlsx) dari komputer</p>
-              <p>2. Pilih mode: Auto-Detect (otomatis) atau Rename Manual</p>
-              <p>3. Upload + sistem deteksi week yang belum ada</p>
-              <p>4. Konfirmasi nama file &amp; week sebelum import</p>
-              <p>5. Import hanya week yang belum ada (partial commit per week)</p>
-            </div>
-          )}
-        </div>
-
-        <DialogFooter>
-          {result ? (
-            <Button onClick={handleClose} className="w-full">
-              Selesai
-            </Button>
-          ) : showConfirm ? (
-            <>
-              <Button variant="ghost" onClick={handleClose} disabled={importing}>
-                Batal
-              </Button>
-              <Button onClick={handleRunImport} disabled={importing} className="gap-2">
-                {importing ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Mengimport...
-                  </>
-                ) : (
-                  <>
-                    Lanjut Import <ArrowRight className="h-4 w-4" />
-                  </>
-                )}
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button variant="ghost" onClick={handleClose} disabled={isBusy}>
-                Batal
-              </Button>
-              <Button
-                onClick={handleUploadAndDetect}
-                disabled={!file || isBusy || (renameMode === 'manual' && !manualValidation.ok)}
-                className="gap-2"
-              >
-                {uploading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Memproses...
-                  </>
-                ) : (
-                  <>
-                    <Upload className="h-4 w-4" />
-                    Upload &amp; Deteksi
-                  </>
-                )}
-              </Button>
-            </>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
+  return {
+    file,
+    uploading,
+    importing,
+    progress,
+    statusLog,
+    result,
+    error,
+    renameMode,
+    setRenameMode,
+    manualFileName,
+    setManualFileName,
+    manualValidation,
+    numberLocale,
+    setNumberLocale,
+    detectData,
+    fileInputRef,
+    reset,
+    handleClose,
+    handleFileSelect,
+    handleDrop,
+    handleUploadAndDetect,
+    handleRunImport,
+    handleEditName,
+    clearFile,
+    isBusy,
+    showConfirm,
+  };
 }
-

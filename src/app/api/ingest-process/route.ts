@@ -1,113 +1,44 @@
 // ============================================================
 //  /api/ingest-process — Process uploaded Excel file
-//  Reassembles file from DB chunks, then:
-//  1. mode='detect' → parse Excel, detect weeks, return list
-//  2. mode='import' → import ONE specific week (partial commit)
-//  3. DELETE → cleanup chunks + temp file
+//  --------------------------------------------------------
+//  Thin dispatcher (REFACTOR-1-a pure-move split of the former
+//  963-line monolith):
+//    - POST   → shared request preamble (rate limit, Zod, manual
+//               rename, fileHash/ext sanitization, placeholder
+//               detection) → dispatch to ./services/{detect,import,
+//               import-all}-mode.ts
+//    - DELETE → ./services/delete-mode.ts (cleanup chunks)
+//  File reassembly helpers live in ./services/file-reassembly.ts.
 // ============================================================
-import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { statusCache } from '@/lib/cache';
-import { invalidateAnalysisCache } from '@/lib/aggregation-cache';
+import { logger } from '@/lib/logger';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
-import { clearMonthResolverCache } from '@/lib/month-resolver';
-import { parseMonthFromFilename, parseExcelFile } from '@/lib/excel';
+import { parseMonthFromFilename } from '@/lib/excel';
 import { validateManualFileName } from '@/lib/filename';
-import { CFG_RECON_SETTINGS } from '@/config/settings';
-import { summarizeDQ } from '@/engine/validator';
-import { processRowsForImport } from '@/lib/ingestion';
-import { acquireDbAdvisoryLock } from '@/lib/ingestion/ingestion-lock';
-import { validateBody, ingestProcessBodySchema, ingestProcessDeleteBodySchema } from '@/lib/validation';
+import { validateBody, ingestProcessBodySchema } from '@/lib/validation';
 import path from 'path';
-import fs from 'fs/promises';
-import { existsSync } from 'fs';
-import { errorResponse } from '@/lib/error-response';
+import { validateFileMetadata, SAFE_EXT_ALLOWLIST } from './services/file-reassembly';
+import { handleDetect } from './services/detect-mode';
+import { handleImport } from './services/import-mode';
+import { handleImportAll } from './services/import-all-mode';
+import { handleDelete } from './services/delete-mode';
+import type { IngestProcessContext } from './services/shared';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300; // Max for Vercel — import can take 1-2 min for large weeks
 
-// FIX-A-1 (BUG-5-1): Sanitize fileHash + ext to prevent path traversal in reassembleFile.
-// fileHash must be a hex string (SHA-256 / SHA-512 hex) — no '..', '/', ':', etc.
-// ext must be in the upload allowlist. Reject otherwise with 400 before any disk I/O.
-const SAFE_FILEHASH_RE = /^[a-f0-9]{8,128}$/i;
-const SAFE_EXT_ALLOWLIST = new Set(['.xlsx', '.xls', '.csv']);
-
-function validateFileMetadata(fileHash: unknown, ext: unknown): { ok: true; fileHash: string; ext: string } | { ok: false; error: string } {
-  if (typeof fileHash !== 'string' || !SAFE_FILEHASH_RE.test(fileHash)) {
-    return { ok: false, error: 'Invalid fileHash: must be hex-only (a-f0-9), 8-128 chars.' };
-  }
-  // ext is optional in detect/import payload — fall back to extension parsed from fileName.
-  // If provided, it must be in the allowlist.
-  let extStr: string;
-  if (ext === undefined || ext === null || ext === '') {
-    extStr = ''; // caller resolves from fileName via path.extname
-  } else if (typeof ext === 'string') {
-    extStr = ext.toLowerCase();
-    if (!SAFE_EXT_ALLOWLIST.has(extStr)) {
-      return { ok: false, error: `Invalid ext: ${extStr}. Allowed: ${[...SAFE_EXT_ALLOWLIST].join(', ')}.` };
-    }
-  } else {
-    return { ok: false, error: 'Invalid ext: must be a string.' };
-  }
-  return { ok: true, fileHash, ext: extStr };
-}
-
-// Reassemble file from DB chunks
-async function reassembleFile(fileHash: string, ext: string): Promise<string> {
-  const chunks = await db.fileChunk.findMany({
-    where: { fileHash },
-    orderBy: { chunkIndex: 'asc' },
-    select: { chunkIndex: true, data: true, totalChunks: true },
-  });
-
-  if (chunks.length === 0) {
-    throw new Error('No chunks found in DB. Upload ulang file.');
-  }
-
-  // P2-11 fix: validate chunk count matches expected total
-  const expectedTotal = chunks[0]?.totalChunks || 0;
-  if (expectedTotal > 0 && chunks.length !== expectedTotal) {
-    throw new Error(`Chunk count mismatch: expected ${expectedTotal}, got ${chunks.length}. Upload corrupt atau tidak lengkap.`);
-  }
-
-  // Concatenate chunks
-  const buffers = chunks.map(c => c.data);
-  const combined = Buffer.concat(buffers);
-
-  // Write to /tmp (this is a SINGLE invocation, so /tmp works here)
-  const tmpDir = '/tmp/ingest-process';
-  if (!existsSync(tmpDir)) {
-    await fs.mkdir(tmpDir, { recursive: true });
-  }
-  const filePath = path.join(tmpDir, `${fileHash}${ext}`);
-  await fs.writeFile(filePath, combined);
-
-  return filePath;
-}
-
-// PERF-UPLOAD-5: /tmp file reuse between detect → import(-all).
-// `detect` leaves the reassembled file at a content-addressed path
-// (/tmp/ingest-process/{fileHash}{ext}) for exactly this purpose. The import
-// call previously re-downloaded EVERY chunk from Postgres and re-wrote the
-// byte-identical file — up to 50MB transferred + reassembled again, seconds
-// of pure waste on every upload. Reuse the temp file when present AND
-// size-matched (advisory check — `fileSize` comes from the server-verified
-// last-chunk sum, FIX-A-3, so a mismatch means a truncated stale temp file
-// from an interrupted invocation → fall back to full reassembly). On a cold
-// serverless instance there is no temp file → transparent fallback to the
-// old chunk-assembly path. fileHash is SHA-256 of content, so a present
-// file at this path is byte-identical to what reassembly would produce.
-async function reuseTempFile(fileHash: string, ext: string, expectedSize: number): Promise<string | null> {
-  const filePath = path.join('/tmp/ingest-process', `${fileHash}${ext}`);
-  try {
-    const st = await fs.stat(filePath);
-    if (expectedSize > 0 && st.size !== expectedSize) return null;
-    return filePath;
-  } catch {
-    return null; // not present (cold instance / different invocation) → reassemble
-  }
-}
+// FIX: Sanitize fileName — if it's a Google Sheets placeholder like "Loading…",
+// "Loading Google Sheet", or contains those words, we need to extract the real
+// month from the Excel data (BULAN/BULAN 2 fields) after parsing.
+const PLACEHOLDER_PATTERNS = [
+  /loading/i,
+  /google\s*(sheet|spreadsheet|試算表|drive)/i,
+  /untitled/i,
+];
+const isPlaceholderName = (name: string): boolean => {
+  const base = name.replace(/\.(xlsx|csv)$/i, '').trim();
+  return PLACEHOLDER_PATTERNS.some(p => p.test(base));
+};
 
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
@@ -185,738 +116,55 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // FIX: Sanitize fileName — if it's a Google Sheets placeholder like "Loading…",
-    // "Loading Google Sheet", or contains those words, we need to extract the real
-    // month from the Excel data (BULAN/BULAN 2 fields) after parsing.
-    const PLACEHOLDER_PATTERNS = [
-      /loading/i,
-      /google\s*(sheet|spreadsheet|試算表|drive)/i,
-      /untitled/i,
-    ];
-    const isPlaceholderName = (name: string): boolean => {
-      const base = name.replace(/\.(xlsx|csv)$/i, '').trim();
-      return PLACEHOLDER_PATTERNS.some(p => p.test(base));
-    };
-
     let fileName = effectiveRawFileName;
     // Strip Google Sheets suffixes (only relevant in auto mode; manual name already cleaned)
     if (!manualMode) {
       fileName = fileName.replace(/\s*-\s*Google\s+(Sheets|試算表|Spreadsheet|Drive).*$/i, '').trim();
     }
 
-    // Helper: extract monthLabel from Excel row data (BULAN / BULAN 2 fields)
-    // BULAN field typically contains "171.MEI 26" or "17.MEI 2026"
-    // BULAN 2 field typically contains "17.MEI"
-    const extractMonthFromRows = (rows: Array<Record<string, unknown>>): string | null => {
-      for (const row of rows) {
-        const bulan = String(row.bulan ?? row.BULAN ?? '').trim();
-        const bulan2 = String(row.bulan2 ?? row['BULAN 2'] ?? row.bulan_2 ?? '').trim();
-        // Try BULAN first (has year info)
-        // DA-01 FIX: Use current year instead of hardcoded "2026" — prevents
-        // cross-year data corruption in 2027+ when BULAN2 contains only month name.
-        const currentYear = new Date().getFullYear();
-        for (const candidate of [bulan, bulan2, `${bulan2} ${currentYear}`]) {
-          if (candidate) {
-            const parsed = parseMonthFromFilename(candidate);
-            if (parsed) return parsed.monthLabel;
-          }
-        }
-      }
-      return null;
-    };
-
-    // Check if filename is a placeholder — if so, we'll fix it after parsing Excel
+    // Check if filename is a placeholder — if so, the mode handlers will fix it
+    // after parsing Excel (extractMonthFromRows in ./services/shared).
     const fileNameIsPlaceholder = isPlaceholderName(fileName);
 
     // Try to parse month from filename. If placeholder, this will likely fail —
-    // we'll re-parse from Excel data after parseExcelFile.
+    // the mode handlers re-parse from Excel data after parseExcelFile.
     let monthInfo = parseMonthFromFilename(fileName);
     // (fileExt already validated above via validateFileMetadata — do NOT recompute from raw `ext`.)
 
+    // Shared context consumed by all three mode handlers.
+    const ctx: IngestProcessContext = {
+      startedAt,
+      body,
+      rawFileName,
+      fileName,
+      monthInfo,
+      manualMode,
+      safeFileHash,
+      fileExt,
+      fileSize,
+      locale,
+      fileNameIsPlaceholder,
+    };
+
     // ============================================================
-    // MODE 1: DETECT — reassemble, parse Excel, return weeks list
+    // MODE 1: DETECT — see ./services/detect-mode.ts
     // ============================================================
     if (mode === 'detect') {
-      // Reassemble from DB chunks — uses safeFileHash (validated above) to prevent path traversal.
-      // PERF-UPLOAD-5: reuse a leftover /tmp file from a previous invocation when
-      // possible (re-upload of an identical file); fall back to chunk reassembly.
-      const filePath =
-        (await reuseTempFile(safeFileHash, fileExt, parseInt(String(fileSize || 0), 10))) ??
-        (await reassembleFile(safeFileHash, fileExt));
-
-      // Verify size — FIX-A-1 note: client-provided fileSize is advisory only (used to
-      // detect chunk corruption). The real size enforcement happens at upload time
-      // (see /api/ingest-upload FIX-A-3) where totalBytes is computed server-side.
-      const actualSize = (await fs.stat(filePath)).size;
-      const expectedSize = parseInt(String(fileSize || 0));
-      if (expectedSize > 0 && actualSize !== expectedSize) {
-        await fs.unlink(filePath).catch(() => {});
-        await db.fileChunk.deleteMany({ where: { fileHash: safeFileHash } }).catch(() => {});
-        return NextResponse.json(
-          { success: false, error: `File size mismatch: expected ${expectedSize}, got ${actualSize}. Chunks mungkin corrupt. Upload ulang.` },
-          { status: 400 }
-        );
-      }
-
-      // Parse Excel
-      const parsed = await parseExcelFile(filePath);
-
-      // FIX: If filename is placeholder, extract month from row data.
-      // SKIP this auto-extract when user provided manualFileName — they explicitly
-      // chose the name, so we respect it (monthInfo already parsed from manual name).
-      if (!manualMode && (fileNameIsPlaceholder || !monthInfo)) {
-        const allRows: Array<Record<string, unknown>> = [];
-        for (const sheet of parsed.sheets) {
-          allRows.push(...sheet.rows);
-        }
-        const extractedMonth = extractMonthFromRows(allRows);
-        if (extractedMonth) {
-          fileName = `${extractedMonth}.xlsx`;
-          monthInfo = parseMonthFromFilename(fileName);
-          logger.info(`[ingest-process] placeholder filename "${rawFileName}" → extracted month from data → "${fileName}"`);
-        }
-      }
-
-      if (!monthInfo) {
-        await fs.unlink(filePath).catch(() => {});
-        await db.fileChunk.deleteMany({ where: { fileHash: safeFileHash } }).catch(() => {});
-        return NextResponse.json(
-          { success: false, error: `Nama file tidak sesuai format: "${fileName}". Contoh: "17.MEI 2026.xlsx". Tidak bisa extract month dari data juga. Tip: gunakan opsi "Rename Manual" saat upload.` },
-          { status: 400 }
-        );
-      }
-
-      const weeksInFileSet = new Set<string>();
-      const rowCountPerWeek: Record<string, number> = {};
-      for (const sheet of parsed.sheets) {
-        for (const row of sheet.rows) {
-          const wk = String(row.weekLabel ?? '').trim().toUpperCase();
-          if (wk) {
-            weeksInFileSet.add(wk);
-            rowCountPerWeek[wk] = (rowCountPerWeek[wk] || 0) + 1;
-          }
-        }
-      }
-      const weeksInFile = [...weeksInFileSet].sort();
-
-      if (weeksInFile.length === 0) {
-        await fs.unlink(filePath).catch(() => {});
-        await db.fileChunk.deleteMany({ where: { fileHash: safeFileHash } }).catch(() => {});
-        return NextResponse.json(
-          { success: false, error: 'Tidak ada week label (WEEK 1/2/3/4) di file.' },
-          { status: 400 }
-        );
-      }
-
-      // Check DB: which weeks already exist?
-      // FIX (DEEP-AUDIT-FLOW-6, DEEP-AUDIT-ENGINE-7): query by monthKey, NOT monthLabel.
-      // monthLabel is case-sensitive (e.g., "Juli 2026" vs "JULI 2026"), so a mixed-case DB
-      // would falsely report zero existing files → weeksToImport would include already-existing
-      // weeks → P2002 unique constraint violation on import. monthKey is always "YYYY-MM"
-      // (digits + dash) so case is irrelevant.
-      const existingFiles = await db.sourceFile.findMany({
-        where: { monthKey: monthInfo.monthKey },
-        select: { id: true },
-      });
-      const existingWeeksSet = new Set<string>();
-      for (const sf of existingFiles) {
-        const weeks = await db.week.findMany({
-          where: { sourceFileId: sf.id },
-          select: { weekLabel: true },
-        });
-        for (const w of weeks) existingWeeksSet.add(w.weekLabel);
-      }
-      const existingWeeks = [...existingWeeksSet].sort();
-      const weeksToImport = weeksInFile.filter(w => !existingWeeksSet.has(w));
-
-      // Don't delete temp file yet — import mode will need it
-      // Don't delete chunks yet — import mode may need to reassemble if on different instance
-
-      return NextResponse.json({
-        success: true,
-        mode: 'detect',
-        fileName, // FIX: return corrected filename so UI shows it
-        manualMode, // let frontend know whether name came from user override
-        monthLabel: monthInfo.monthLabel,
-        monthKey: monthInfo.monthKey,
-        weeksInFile,
-        existingWeeks,
-        weeksToImport,
-        rowCountPerWeek,
-        message: weeksToImport.length === 0
-          ? `Semua week (${weeksInFile.join(', ')}) sudah ada untuk ${monthInfo.monthLabel}.`
-          : `Siap import ${weeksToImport.length} week: ${weeksToImport.join(', ')}`,
-      });
+      return handleDetect(ctx);
     }
 
     // ============================================================
-    // MODE 2: IMPORT — reassemble, import ONE specific week
+    // MODE 2: IMPORT (one week) — see ./services/import-mode.ts
     // ============================================================
     if (mode === 'import') {
-      const weekLabel = body.weekLabel as string;
-      if (!weekLabel) {
-        return NextResponse.json(
-          { success: false, error: 'weekLabel required for import mode' },
-          { status: 400 }
-        );
-      }
-
-      logger.info(`[ingest-process] import ${weekLabel} for ${fileName} (hash: ${safeFileHash})`);
-
-      // Reassemble from DB chunks — uses safeFileHash (validated above) to prevent path traversal.
-      let filePath: string;
-      try {
-        // PERF-UPLOAD-5: detect (same or previous invocation) already left the
-        // reassembled file at the content-addressed /tmp path — reuse it and
-        // skip re-downloading every chunk from Postgres (up to 50MB).
-        const reused = await reuseTempFile(safeFileHash, fileExt, parseInt(String(fileSize || 0), 10));
-        filePath = reused ?? (await reassembleFile(safeFileHash, fileExt));
-        logger.info(`[ingest-process] ${reused ? 'reused temp file' : 'reassembled'}: ${filePath}`);
-      } catch (e: unknown) {
-        logger.error("[ingest-process] reassemble failed", { error: e });
-        return NextResponse.json(
-          { success: false, error: process.env.NODE_ENV === "development" ? `Gagal reassemble file: ${e instanceof Error ? e.message : String(e)}` : "Gagal reassemble file" },
-          { status: 500 }
-        );
-      }
-
-      // Parse Excel
-      let parsed;
-      try {
-        parsed = await parseExcelFile(filePath);
-        logger.info(`[ingest-process] parsed ${parsed.sheets.length} sheets`);
-      } catch (e: unknown) {
-        logger.error("[ingest-process] parse failed", { error: e });
-        await fs.unlink(filePath).catch(() => {});
-        return NextResponse.json(
-          { success: false, error: process.env.NODE_ENV === "development" ? `Gagal parse Excel: ${e instanceof Error ? e.message : String(e)}` : "Gagal parse Excel" },
-          { status: 500 }
-        );
-      }
-
-      // FIX: If filename is placeholder, extract month from row data.
-      // SKIP auto-extract in manual mode (user explicitly chose the name).
-      if (!manualMode && (fileNameIsPlaceholder || !monthInfo)) {
-        const allRows: Array<Record<string, unknown>> = [];
-        for (const sheet of parsed.sheets) {
-          allRows.push(...sheet.rows);
-        }
-        const extractedMonth = extractMonthFromRows(allRows);
-        if (extractedMonth) {
-          fileName = `${extractedMonth}.xlsx`;
-          monthInfo = parseMonthFromFilename(fileName);
-          logger.info(`[ingest-process] import mode: placeholder filename "${rawFileName}" → extracted month from data → "${fileName}"`);
-        }
-      }
-
-      if (!monthInfo) {
-        await fs.unlink(filePath).catch(() => {});
-        return NextResponse.json(
-          { success: false, error: `Nama file tidak sesuai format: "${fileName}". Tidak bisa extract month dari data juga. Tip: gunakan opsi "Rename Manual" saat upload.` },
-          { status: 400 }
-        );
-      }
-
-      // Collect rows for this week
-      const weekRows: Record<string, unknown>[] = [];
-      for (const sheet of parsed.sheets) {
-        for (const row of sheet.rows) {
-          const wk = String(row.weekLabel ?? '').trim().toUpperCase();
-          if (wk === weekLabel) weekRows.push(row);
-        }
-      }
-
-      // Clean up temp file (parsed data is in memory now)
-      await fs.unlink(filePath).catch(() => {});
-
-      if (weekRows.length === 0) {
-        return NextResponse.json({
-          success: true,
-          mode: 'import',
-          weekLabel,
-          status: 'SKIPPED',
-          rowCount: 0,
-          message: `No rows found for ${weekLabel}`,
-          durationMs: Date.now() - startedAt,
-        });
-      }
-
-      // Create SourceFile record — upsert to handle re-uploads (fileName is @unique)
-      const sourceFile = await db.sourceFile.upsert({
-        where: { fileName: `${fileName} [${weekLabel}]` },
-        update: {
-          filePath: '',
-          monthLabel: monthInfo.monthLabel,
-          monthKey: monthInfo.monthKey,
-          fileHash: `${safeFileHash}-${weekLabel}`,
-          rowCount: 0,
-          dqStatus: 'OK',
-        },
-        create: {
-          fileName: `${fileName} [${weekLabel}]`,
-          filePath: '',
-          monthLabel: monthInfo.monthLabel,
-          monthKey: monthInfo.monthKey,
-          fileHash: `${safeFileHash}-${weekLabel}`,
-          rowCount: 0,
-          dqStatus: 'OK',
-        },
-      });
-
-      // FIX (AUDIT-BUG-1): resolve existing Week by (monthKey, weekLabel) — a previous
-      // import under a different fileName must NOT create a second Week for the same
-      // period (doubles every aggregate). Replace the old week's data instead.
-      // FIX (AUDIT-BUG-5): the findFirst itself moved INSIDE the transaction (after
-      // the advisory lock) — see the comment there.
-
-      // Cumulative periods from config (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
-      // FIX (AUDIT-BUG-1): the Week upsert itself moved INSIDE the transaction below —
-      // it must run AFTER the cross-file purge, otherwise the new
-      // @@unique([monthKey, weekLabel]) constraint rejects the create with P2002
-      // while the old cross-file week still exists.
-      const p = CFG_RECON_SETTINGS.WEEK_PERIODS[weekLabel] || { start: 1, end: Math.min(parseInt(weekLabel.replace(/\D/g,'')) * 7, 31) };
-
-      // FIX (BUG2-INGEST-3): Wrap deleteMany + processRowsForImport in a single
-      // transaction so that if createMany fails (DB error, timeout, OOM), the
-      // deleteMany is rolled back. Previously, if createMany failed after
-      // deleteMany succeeded, the week had 0 records → data loss. The
-      // `.catch(() => {})` on deleteMany was also silently swallowing delete
-      // errors (which could then cause unique-constraint violations on insert).
-      // Now the transaction handles atomicity — if deleteMany fails, the
-      // transaction aborts and processRowsForImport is not called.
-      //
-      // 240s timeout matches the maxDuration (300s) with headroom for parse
-      // and post-import steps. Large weeks (~35K rows) can take 1-2 min.
-      const seenKeys = new Set<string>();
-      const outletDbMap = new Map<string, number>();
-      const itemDbMap = new Map<string, { id: number; satuan: string | null }>();
-      // Capture monthLabel before the transaction — `monthInfo` is a `let` (reassigned
-      // during placeholder-filename resolution above), so TypeScript narrowing from
-      // the `if (!monthInfo) return` guard doesn't carry into the closure below.
-      const monthLabelForTx = monthInfo.monthLabel;
-      // FIX (AUDIT-BUG-1): capture monthKey too — the Week upsert now runs inside
-      // the transaction closure (see above).
-      const monthKeyForTx = monthInfo.monthKey;
-
-      const result = await db.$transaction(
-        async (tx) => {
-          // FIX (AUDIT-BUG-5): FIRST statement — transaction-scoped PostgreSQL advisory
-          // lock keyed on monthKey (SAME key space as processIngestion, so full-file
-          // /api/ingest imports and per-week /api/ingest-process imports of the same
-          // month serialize against each other, ACROSS serverless instances — the
-          // old in-process Set lock never covered this route). xact-scoped → released
-          // automatically at COMMIT/ROLLBACK, even on crash.
-          await acquireDbAdvisoryLock(tx, monthKeyForTx);
-
-          // FIX (AUDIT-BUG-1 + AUDIT-BUG-5): resolve the existing Week INSIDE the
-          // transaction, AFTER the advisory lock. Resolving it before the lock used
-          // a stale snapshot when a concurrent import of the same month committed
-          // while we waited for the lock → tx.week.delete below would target an
-          // already-deleted week (P2025 abort) or leave the old week in place.
-          const existingWeek = await tx.week.findFirst({
-            where: { monthKey: monthKeyForTx, weekLabel },
-            select: { id: true, sourceFileId: true },
-          });
-
-          if (existingWeek && existingWeek.sourceFileId !== sourceFile.id) {
-            // FIX (AUDIT-BUG-1): a DIFFERENT file owns the old Week for this
-            // (monthKey, weekLabel) — purge it so the new file becomes the
-            // single source of truth for this (month, week). The old code only
-            // deleted the NEW file's week records, leaving BOTH weeks in place
-            // (Week.weekKey "unique" existed only in a comment) → every
-            // period-filtered aggregate double-counted.
-            await tx.inventoryRecord.deleteMany({ where: { weekId: existingWeek.id } });
-            // Old file's precomputed sales MODE for this weekLabel (a SourceFile
-            // belongs to ONE month, so (sourceFileId, weekLabel) pins exactly this
-            // period). Outlets covered by the new import are re-inserted by
-            // computeOutletPeriodSales inside processRowsForImport (ON CONFLICT
-            // latest-wins); deleting here prevents stale rows for outlets the new
-            // import no longer contains.
-            await tx.outletPeriodSales.deleteMany({
-              where: { sourceFileId: existingWeek.sourceFileId, weekLabel },
-            });
-            await tx.week.delete({ where: { id: existingWeek.id } });
-            // Delete the old SourceFile if it has no weeks left (fully superseded
-            // file) — its DQIssues cascade-delete with it.
-            const remainingWeeks = await tx.week.count({ where: { sourceFileId: existingWeek.sourceFileId } });
-            if (remainingWeeks === 0) {
-              await tx.dQIssue.deleteMany({ where: { sourceFileId: existingWeek.sourceFileId } });
-              await tx.sourceFile.delete({ where: { id: existingWeek.sourceFileId } });
-            }
-          }
-
-          // Create Week record — upsert to handle re-uploads (same-file re-import:
-          // the purge above was skipped because existingWeek.sourceFileId ===
-          // sourceFile.id, so this upsert finds no conflicting week).
-          // FIX (AUDIT-BUG-1): runs AFTER the cross-file purge (see comment above
-          // the transaction) and rolls back with the import on failure.
-          // FIX: CUMULATIVE periods from config (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
-          const weekRec = await tx.week.upsert({
-            where: { sourceFileId_weekLabel: { sourceFileId: sourceFile.id, weekLabel } },
-            update: {
-              weekKey: `${monthKeyForTx}-${weekLabel.replace(/\s+/g, '')}`,
-              monthKey: monthKeyForTx, periodStart: p.start, periodEnd: p.end,
-            },
-            create: {
-              sourceFileId: sourceFile.id, weekLabel,
-              weekKey: `${monthKeyForTx}-${weekLabel.replace(/\s+/g, '')}`,
-              monthKey: monthKeyForTx, periodStart: p.start, periodEnd: p.end,
-            },
-          });
-
-          await tx.inventoryRecord.deleteMany({
-            where: { sourceFileId: sourceFile.id, weekId: weekRec.id },
-          });
-          return processRowsForImport(
-            weekRows,
-            sourceFile.id,
-            weekRec.id,
-            fileName,
-            monthLabelForTx,
-            0,
-            outletDbMap,
-            itemDbMap,
-            seenKeys,
-            true, // fastMode: skip DQ validation — pure import for speed
-            locale, // numberLocale: 'auto' | 'id' | 'us' for CSV separator parsing
-            tx, // pass transaction client so createMany uses the same transaction
-          );
-        },
-        { timeout: 240_000, maxWait: 10_000 },
-      );
-
-      const inserted = result.inserted;
-
-      // Update source file — always update rowCount (even in fast mode).
-      // ImportSpeed: in fast mode, dqIssues is empty → summarizeDQ returns OK / 0 / 0.
-      const dq = summarizeDQ(result.dqIssues);
-      await db.sourceFile.update({
-        where: { id: sourceFile.id },
-        data: {
-          rowCount: inserted,
-          dqStatus: dq.status,
-          dqErrorCount: dq.severityCounts.ERROR,
-          dqWarningCount: dq.severityCounts.WARNING,
-        },
-      });
-
-      // Insert DQ issues — in fast mode, dqIssues is empty so this is a no-op,
-      // but the guard makes the intent explicit and avoids the createMany call.
-      if (result.dqIssues.length > 0) {
-        const dqRecords = result.dqIssues.map((i) => ({
-          sourceFileId: sourceFile.id, severity: i.severity, code: i.code,
-          message: i.message, rawValue: i.rawValue ?? null, rowNumber: i.rowNumber ?? null,
-        }));
-        for (let i = 0; i < dqRecords.length; i += 500) {
-          await db.dQIssue.createMany({ data: dqRecords.slice(i, i + 500) });
-        }
-      }
-
-      // FIX (DEEP-AUDIT-API-1, DEEP-AUDIT-FLOW-1): clear BOTH caches after import.
-      // analysisCache was already cleared; statusCache must also be cleared because
-      // /api/status returns month/file/row counts in its dropdown payload — without
-      // this, the dashboard month dropdown stays stale for up to 5 min after upload.
-      statusCache.clear();
-      // FIX H1 (AUDIT-5/8): invalidate DB-level AggregationCache after week import.
-      // Without this, /api/analysis serves stale data for up to 5 min (TTL).
-      // PERF-CACHE-05: await invalidation (was fire-and-forget) — guarantees the
-      // client's next read after the mutation returns sees fresh data.
-      await invalidateAnalysisCache();
-      // FIX-DEEP-1C: clear monthResolver cache so subsequent requests see the new
-      // monthLabel added by this import. Without this, getMonthResolver() would
-      // keep returning the pre-import resolver and the new month's case might
-      // not be in the resolver's `exact` set → resolveMonthLabel would fall back
-      // to the (possibly different-case) input label → potential mismatch.
-      clearMonthResolverCache();
-
-      // FIX (BUG2-INGEST-2): Clean up FileChunk rows for this fileHash after
-      // successful import. Previously, only `import-all` mode cleaned up chunks
-      // (see line ~726 below). The `import` mode reassembles the file from DB
-      // chunks, parses it, imports the week, and deletes the temp file — but
-      // NEVER deleted the FileChunk rows. Each chunk is up to 5MB, so a 50MB
-      // file left 50MB of orphaned Bytes data in the DB. Over time, this
-      // bloats the database. The frontend (FileUploadDialog) always uses
-      // `import-all`, so this is a latent bug for programmatic API callers.
-      // Now both modes clean up chunks after successful import.
-      await db.fileChunk.deleteMany({ where: { fileHash: safeFileHash } }).catch(() => {});
-
-      return NextResponse.json({
-        success: true,
-        mode: 'import',
-        weekLabel,
-        status: 'IMPORTED',
-        rowCount: inserted,
-        dqErrors: dq.severityCounts.ERROR,
-        dqWarnings: dq.severityCounts.WARNING,
-        durationMs: Date.now() - startedAt,
-      });
+      return handleImport(ctx);
     }
 
     // ============================================================
-    // MODE 3: IMPORT-ALL — reassemble + parse ONCE, import ALL weeks in one request
-    // FIX: previously each week was imported via separate 'import' call, causing
-    // reassemble + parse for EACH week (3x for 3 weeks = 3x slow). This mode
-    // does it all in one request → 3x faster, no 504 timeout.
+    // MODE 3: IMPORT-ALL — see ./services/import-all-mode.ts
     // ============================================================
     if (mode === 'import-all') {
-      const weeksToImport: string[] = body.weeksToImport || [];
-      if (weeksToImport.length === 0) {
-        return NextResponse.json(
-          { success: false, error: 'weeksToImport array required for import-all mode' },
-          { status: 400 }
-        );
-      }
-
-      logger.info(`[ingest-process] import-all ${weeksToImport.length} weeks for ${fileName}`);
-
-      // Reassemble ONCE
-      let filePath: string;
-      try {
-        // PERF-UPLOAD-5: detect (same or previous invocation) already left the
-        // reassembled file at the content-addressed /tmp path — reuse it and
-        // skip re-downloading every chunk from Postgres (up to 50MB).
-        const reused = await reuseTempFile(safeFileHash, fileExt, parseInt(String(fileSize || 0), 10));
-        filePath = reused ?? (await reassembleFile(safeFileHash, fileExt));
-        logger.info(`[ingest-process] ${reused ? 'reused temp file' : 'reassembled'}: ${filePath}`);
-      } catch (e: unknown) {
-        const err = e as Error;
-        logger.error("[ingest-process] reassemble failed", { error: err });
-        return NextResponse.json(
-          { success: false, error: `Gagal reassemble file: ${err?.message}` },
-          { status: 500 }
-        );
-      }
-
-      // Parse ONCE
-      let parsed;
-      try {
-        parsed = await parseExcelFile(filePath);
-        logger.info(`[ingest-process] parsed ${parsed.sheets.length} sheets`);
-      } catch (e: unknown) {
-        const err = e as Error;
-        logger.error("[ingest-process] parse failed", { error: err });
-        await fs.unlink(filePath).catch(() => {});
-        return NextResponse.json(
-          { success: false, error: `Gagal parse Excel: ${err?.message}` },
-          { status: 500 }
-        );
-      }
-
-      // Extract month if needed
-      if (!manualMode && (fileNameIsPlaceholder || !monthInfo)) {
-        const allRows: Array<Record<string, unknown>> = [];
-        for (const sheet of parsed.sheets) {
-          allRows.push(...sheet.rows);
-        }
-        const extractedMonth = extractMonthFromRows(allRows);
-        if (extractedMonth) {
-          fileName = `${extractedMonth}.xlsx`;
-          monthInfo = parseMonthFromFilename(fileName);
-        }
-      }
-
-      if (!monthInfo) {
-        await fs.unlink(filePath).catch(() => {});
-        return NextResponse.json(
-          { success: false, error: `Nama file tidak sesuai format: "${fileName}"` },
-          { status: 400 }
-        );
-      }
-
-      // Clean up temp file (parsed data is in memory)
-      await fs.unlink(filePath).catch(() => {});
-
-      // Group rows by week
-      const rowsByWeek = new Map<string, Record<string, unknown>[]>();
-      for (const sheet of parsed.sheets) {
-        for (const row of sheet.rows) {
-          const wk = String(row.weekLabel ?? '').trim().toUpperCase();
-          if (weeksToImport.includes(wk)) {
-            if (!rowsByWeek.has(wk)) rowsByWeek.set(wk, []);
-            rowsByWeek.get(wk)!.push(row);
-          }
-        }
-      }
-
-      // Shared maps across weeks (outlets/items created in week 1 reused in week 2)
-      const seenKeys = new Set<string>();
-      const outletDbMap = new Map<string, number>();
-      const itemDbMap = new Map<string, { id: number; satuan: string | null }>();
-      const importedWeeks: Array<{
-        weekLabel: string; status: string; rowCount: number;
-        dqErrors: number; dqWarnings: number; durationMs: number;
-      }> = [];
-      let totalInserted = 0;
-
-      for (const weekLabel of weeksToImport) {
-        const weekRows = rowsByWeek.get(weekLabel) || [];
-        const weekStart = Date.now();
-
-        if (weekRows.length === 0) {
-          importedWeeks.push({
-            weekLabel, status: 'SKIPPED', rowCount: 0,
-            dqErrors: 0, dqWarnings: 0, durationMs: Date.now() - weekStart,
-          });
-          continue;
-        }
-
-        // Create SourceFile per week — upsert to handle re-uploads (fileName is @unique)
-        const sourceFile = await db.sourceFile.upsert({
-          where: { fileName: `${fileName} [${weekLabel}]` },
-          update: {
-            filePath: '',
-            monthLabel: monthInfo.monthLabel,
-            monthKey: monthInfo.monthKey,
-            fileHash: `${safeFileHash}-${weekLabel}`,
-            rowCount: 0,
-            dqStatus: 'OK',
-          },
-          create: {
-            fileName: `${fileName} [${weekLabel}]`,
-            filePath: '',
-            monthLabel: monthInfo.monthLabel,
-            monthKey: monthInfo.monthKey,
-            fileHash: `${safeFileHash}-${weekLabel}`,
-            rowCount: 0,
-            dqStatus: 'OK',
-          },
-        });
-
-        // FIX (AUDIT-BUG-1): resolve existing Week by (monthKey, weekLabel) — a
-        // previous import under a different fileName must NOT create a second
-        // Week for the same period (doubles every aggregate). Replace the old
-        // week's data instead.
-        // FIX (AUDIT-BUG-5): the findFirst itself moved INSIDE the transaction
-        // (after the advisory lock) — see the comment there.
-
-        // Cumulative periods from config (W1=1-7, W2=1-14, W3=1-21, W4=1-25)
-        // FIX (AUDIT-BUG-1): the Week upsert itself moved INSIDE the transaction
-        // below — it must run AFTER the cross-file purge, otherwise the new
-        // @@unique([monthKey, weekLabel]) constraint rejects the create with
-        // P2002 while the old cross-file week still exists.
-        const p = CFG_RECON_SETTINGS.WEEK_PERIODS[weekLabel] || { start: 1, end: Math.min(parseInt(weekLabel.replace(/\D/g, '')) * 7, 31) };
-
-        // FIX (BUG2-INGEST-3): Wrap deleteMany + processRowsForImport in a single
-        // transaction so that if createMany fails, the deleteMany is rolled back.
-        // Same rationale as `import` mode above. Without this, a
-        // createMany failure mid-week would leave the week with 0 records.
-        // Capture monthLabel before the transaction — `monthInfo` is a `let`, so TS
-        // narrowing from the `if (!monthInfo) return` guard doesn't carry into closures.
-        const monthLabelForTx = monthInfo.monthLabel;
-        // FIX (AUDIT-BUG-1): capture monthKey too — the Week upsert now runs
-        // inside the transaction closure (see above).
-        const monthKeyForTx = monthInfo.monthKey;
-        const result = await db.$transaction(
-          async (tx) => {
-            // FIX (AUDIT-BUG-5): FIRST statement — transaction-scoped PostgreSQL
-            // advisory lock keyed on monthKey (same key space as `import` mode and
-            // processIngestion — all writers of a month serialize, cross-instance).
-            // xact-scoped → released automatically at COMMIT/ROLLBACK, even on crash.
-            await acquireDbAdvisoryLock(tx, monthKeyForTx);
-
-            // FIX (AUDIT-BUG-1 + AUDIT-BUG-5): resolve the existing Week INSIDE the
-            // transaction, AFTER the advisory lock (stale-snapshot fix — same
-            // rationale as `import` mode above).
-            const existingWeek = await tx.week.findFirst({
-              where: { monthKey: monthKeyForTx, weekLabel },
-              select: { id: true, sourceFileId: true },
-            });
-
-            if (existingWeek && existingWeek.sourceFileId !== sourceFile.id) {
-              // FIX (AUDIT-BUG-1): a DIFFERENT file owns the old Week for this
-              // (monthKey, weekLabel) — purge it so the new file becomes the
-              // single source of truth for this (month, week). The old code only
-              // deleted the NEW file's week records, leaving BOTH weeks in place
-              // (Week.weekKey "unique" existed only in a comment) → every
-              // period-filtered aggregate double-counted.
-              await tx.inventoryRecord.deleteMany({ where: { weekId: existingWeek.id } });
-              // Old file's precomputed sales MODE for this weekLabel (a
-              // SourceFile belongs to ONE month, so (sourceFileId, weekLabel)
-              // pins exactly this period). Outlets covered by the new import
-              // are re-inserted by computeOutletPeriodSales inside
-              // processRowsForImport (ON CONFLICT latest-wins).
-              await tx.outletPeriodSales.deleteMany({
-                where: { sourceFileId: existingWeek.sourceFileId, weekLabel },
-              });
-              await tx.week.delete({ where: { id: existingWeek.id } });
-              // Delete the old SourceFile if it has no weeks left (fully
-              // superseded file) — its DQIssues cascade-delete with it.
-              const remainingWeeks = await tx.week.count({ where: { sourceFileId: existingWeek.sourceFileId } });
-              if (remainingWeeks === 0) {
-                await tx.dQIssue.deleteMany({ where: { sourceFileId: existingWeek.sourceFileId } });
-                await tx.sourceFile.delete({ where: { id: existingWeek.sourceFileId } });
-              }
-            }
-
-            // Create Week record — upsert to handle re-uploads (same-file
-            // re-import: the purge above was skipped because
-            // existingWeek.sourceFileId === sourceFile.id).
-            // FIX (AUDIT-BUG-1): runs AFTER the cross-file purge (see comment
-            // above the transaction) and rolls back with the import on failure.
-            const weekRec = await tx.week.upsert({
-              where: { sourceFileId_weekLabel: { sourceFileId: sourceFile.id, weekLabel } },
-              update: {
-                weekKey: `${monthKeyForTx}-${weekLabel.replace(/\s+/g, '')}`,
-                monthKey: monthKeyForTx, periodStart: p.start, periodEnd: p.end,
-              },
-              create: {
-                sourceFileId: sourceFile.id, weekLabel,
-                weekKey: `${monthKeyForTx}-${weekLabel.replace(/\s+/g, '')}`,
-                monthKey: monthKeyForTx, periodStart: p.start, periodEnd: p.end,
-              },
-            });
-
-            await tx.inventoryRecord.deleteMany({
-              where: { sourceFileId: sourceFile.id, weekId: weekRec.id },
-            });
-            return processRowsForImport(
-              weekRows, sourceFile.id, weekRec.id, fileName,
-              monthLabelForTx, 0, outletDbMap, itemDbMap, seenKeys,
-              true, locale, tx,
-            );
-          },
-          { timeout: 240_000, maxWait: 10_000 },
-        );
-
-        const dq = summarizeDQ(result.dqIssues);
-        await db.sourceFile.update({
-          where: { id: sourceFile.id },
-          data: {
-            rowCount: result.inserted,
-            dqStatus: dq.status,
-            dqErrorCount: dq.severityCounts.ERROR,
-            dqWarningCount: dq.severityCounts.WARNING,
-          },
-        });
-
-        totalInserted += result.inserted;
-        importedWeeks.push({
-          weekLabel, status: 'IMPORTED', rowCount: result.inserted,
-          dqErrors: dq.severityCounts.ERROR, dqWarnings: dq.severityCounts.WARNING,
-          durationMs: Date.now() - weekStart,
-        });
-
-        logger.info(`[ingest-process] ${weekLabel}: ${result.inserted} rows (${((Date.now() - weekStart) / 1000).toFixed(1)}s)`);
-      }
-
-      // Clear caches
-      statusCache.clear();
-      // FIX H1 (AUDIT-5/8): invalidate DB-level AggregationCache after import-all.
-      // PERF-CACHE-05: await invalidation (was fire-and-forget) — guarantees the
-      // client's next read after the mutation returns sees fresh data.
-      await invalidateAnalysisCache();
-      clearMonthResolverCache();
-
-      // Cleanup chunks
-      await db.fileChunk.deleteMany({ where: { fileHash: safeFileHash } }).catch(() => {});
-
-      return NextResponse.json({
-        success: true,
-        mode: 'import-all',
-        totalInserted,
-        importedWeeks,
-        durationMs: Date.now() - startedAt,
-      });
+      return handleImportAll(ctx);
     }
 
     return NextResponse.json(
@@ -933,31 +181,7 @@ export async function POST(req: NextRequest) {
 }
 
 // Cleanup — delete chunks from DB after all weeks processed
+// (handler in ./services/delete-mode.ts)
 export async function DELETE(req: NextRequest) {
-  try {
-    // P2-12 fix: rate limit DELETE to prevent abuse
-    const ip = getClientIP(req);
-    const rl = rateLimit(`ingest-process-delete:${ip}`, 10, 60_000); // 10 per min
-    if (!rl.allowed) {
-      return NextResponse.json({ success: false, error: 'Rate limit.' }, { status: 429 });
-    }
-    const body = await req.json();
-    // FIX (AUDIT8-ROLLBACK-1, Item 10): Zod body validation for DELETE.
-    // Previously the DELETE handler destructured `fileHash` directly from the
-    // raw JSON body with no shape check — an attacker could pass arbitrary
-    // shapes (objects, arrays, very long strings) that Prisma would then
-    // attempt to use in a `where: { fileHash }` clause. Now validated against
-    // ingestProcessDeleteBodySchema (hex string, 8-128 chars, optional).
-    const validation = validateBody(ingestProcessDeleteBodySchema, body);
-    if (!validation.success) {
-      return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
-    }
-    const { fileHash } = validation.data;
-    if (fileHash) {
-      await db.fileChunk.deleteMany({ where: { fileHash } });
-    }
-    return NextResponse.json({ success: true });
-  } catch (e: unknown) {
-    return errorResponse(e, "ingest-process");
-  }
+  return handleDelete(req);
 }
