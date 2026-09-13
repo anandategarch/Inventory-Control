@@ -16,13 +16,15 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from './shared';
+import { sameWeekPeriodPin } from './historical-baseline';
+import { computeSampleStatsFromSums } from '@/lib/metrics/sample-stats';
+import type { HistoricalStats } from '@/lib/metrics/historical';
 
-export interface MetricStats {
-  mean: number;
-  stdDev: number;
-  n: number;
-}
-
+// AUDIT A2 / MERGE-2-a: shape unified with metrics' HistoricalStats —
+// MetricStats is now a TYPE ALIAS (no third { mean, stdDev, n } shape).
+// Existing imports of MetricStats keep working unchanged (structurally
+// identical interface).
+export type MetricStats = HistoricalStats;
 export interface MultiMetricHistoricalStats {
   devBom: MetricStats;
   qtyDeviasi: MetricStats;
@@ -31,10 +33,9 @@ export interface MultiMetricHistoricalStats {
   trial: MetricStats;
 }
 
-function computeStats(n: number, mean: number, sumSq: number): MetricStats {
-  const variance = n > 1 ? Math.max(0, (sumSq - n * mean * mean) / (n - 1)) : 0;
-  return { mean: mean || 0, stdDev: Math.sqrt(variance), n };
-}
+// AUDIT A2 / MERGE-2-a: computeStats moved to the shared module
+// @/lib/metrics/sample-stats (computeSampleStatsFromSums) — it was
+// duplicated in item-trend.ts with identical Bessel-corrected semantics.
 
 export async function queryHistoricalStatsMultiMetric(
   historicalPeriods: Array<{ monthLabel: string; weekLabel: string }>,
@@ -44,8 +45,13 @@ export async function queryHistoricalStatsMultiMetric(
 
   const f = buildSqlFilters(filters);
 
+  // Same-week historical window (AUDIT A2 / MERGE-2-a): each (monthLabel,
+  // weekLabel) pin renders via the shared fragment ./historical-baseline.ts
+  // (sameWeekPeriodPin). The CALLER owns the window semantics — fetch-records.ts
+  // builds the period list with the SAME weekLabel and months before the
+  // running period (no future-month leakage).
   const periodConditions = historicalPeriods.map((p) =>
-    Prisma.sql`(ir."monthLabel" = ${p.monthLabel} AND ir."weekLabel" = ${p.weekLabel})`
+    sameWeekPeriodPin('ir', p.monthLabel, p.weekLabel)
   );
   const periodFilter = Prisma.join(periodConditions, ' OR ');
 
@@ -113,11 +119,11 @@ export async function queryHistoricalStatsMultiMetric(
   const map = new Map<string, MultiMetricHistoricalStats>();
   for (const r of rows) {
     map.set(`${r.outletId}|${r.itemId}`, {
-      devBom: computeStats(Number(r.devBomN), Number(r.devBomMean), Number(r.devBomSumSq)),
-      qtyDeviasi: computeStats(Number(r.qtyDeviasiN), Number(r.qtyDeviasiMean), Number(r.qtyDeviasiSumSq)),
-      waste: computeStats(Number(r.wasteN), Number(r.wasteMean), Number(r.wasteSumSq)),
-      susut: computeStats(Number(r.susutN), Number(r.susutMean), Number(r.susutSumSq)),
-      trial: computeStats(Number(r.trialN), Number(r.trialMean), Number(r.trialSumSq)),
+      devBom: computeSampleStatsFromSums(Number(r.devBomN), Number(r.devBomMean), Number(r.devBomSumSq)),
+      qtyDeviasi: computeSampleStatsFromSums(Number(r.qtyDeviasiN), Number(r.qtyDeviasiMean), Number(r.qtyDeviasiSumSq)),
+      waste: computeSampleStatsFromSums(Number(r.wasteN), Number(r.wasteMean), Number(r.wasteSumSq)),
+      susut: computeSampleStatsFromSums(Number(r.susutN), Number(r.susutMean), Number(r.susutSumSq)),
+      trial: computeSampleStatsFromSums(Number(r.trialN), Number(r.trialMean), Number(r.trialSumSq)),
     });
   }
   return map;

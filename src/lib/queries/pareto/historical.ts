@@ -11,6 +11,7 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../shared';
+import { sameWeekHistoricalWindow } from '../historical-baseline';
 
 export async function queryParetoHistorical(
   week: string,
@@ -57,9 +58,18 @@ export async function queryParetoHistorical(
   // FIX (BUG2-PARETO-1): JOIN SourceFile + filter sf."monthKey" < currentMonthKey
   // to exclude FUTURE months. The old code only excluded `monthLabel != ${month}`,
   // which included future months if they exist in DB.
-  const futureFilter = currentMonthKey
-    ? Prisma.sql`AND sf."monthKey" < ${currentMonthKey}`
-    : Prisma.sql`AND ir."monthLabel" != ${month}`;
+  // AUDIT A2 / MERGE-2-a: the week pin + month exclusion now render via the
+  // shared fragment (../historical-baseline.ts sameWeekHistoricalWindow) —
+  // `ir."weekLabel" = week AND sf."monthKey" < currentMonthKey`, falling
+  // back to the `ir."monthLabel" != month` label form when no monthKey
+  // resolves (identical rendered SQL to the previous inline predicates).
+  const sameWeekWindow = sameWeekHistoricalWindow({
+    recordAlias: 'ir',
+    sourceFileAlias: 'sf',
+    week,
+    currentMonthKey,
+    currentMonthLabel: month,
+  });
   const joinSourceFile = Prisma.sql`JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id`;
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ name: string; histAvg: number; histStdDev: number; histN: number }>>`
     WITH weekly_dev AS (
@@ -71,8 +81,7 @@ export async function queryParetoHistorical(
       ${joinOutlet}
       ${joinPIC}
       ${joinSourceFile}
-      WHERE ir."weekLabel" = ${week}
-        ${futureFilter}
+      WHERE ${sameWeekWindow}
         AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
         ${f}
       GROUP BY ${groupExpr}, ir."monthLabel", ir."weekLabel"

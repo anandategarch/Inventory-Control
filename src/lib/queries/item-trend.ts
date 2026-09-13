@@ -23,7 +23,7 @@
 //    - Zero     = current equals historical mean
 //
 //  Minimum sample size: 4 OTHER same-week periods
-//  (HISTORICAL_MIN_WEEKS — PRD §5.2). When the baseline has fewer
+//  (HISTORICAL_MIN_WEEKS_DEFAULT — PRD §5.2). When the baseline has fewer
 //  than 4 periods OR stdDev = 0, zScore is null (insufficient data).
 //
 //  Implementation notes:
@@ -40,9 +40,15 @@
 //    MAX(sf."monthKey") since the GROUP BY is on (monthLabel,
 //    weekLabel) and all rows for the same monthLabel share one
 //    SourceFile.monthKey.
+//  - Baseline window (AUDIT A2 / MERGE-2-a): computed in JS, NOT via
+//    the shared SQL fragments in ../historical-baseline.ts — this query
+//    returns ALL periods and the same-week grouping + self-exclusion
+//    happen post-query (byWeek map below). There is no SQL window
+//    predicate to share; see that module's header.
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from './shared';
+import { computeSampleStats, HISTORICAL_MIN_WEEKS_DEFAULT } from '@/lib/metrics/sample-stats';
 
 export type ItemTrendMetric = 'qtyDeviasi' | 'qtyWaste' | 'qtySusut' | 'qtyTrial';
 
@@ -91,8 +97,12 @@ export interface ItemTrendResult {
   metric: ItemTrendMetric;
 }
 
-/** PRD §5.2: require n >= HISTORICAL_MIN_WEEKS (default 4) baseline weeks. */
-const HISTORICAL_MIN_WEEKS = 4;
+// AUDIT A2 / MERGE-2-a: HISTORICAL_MIN_WEEKS moved to the shared module
+// @/lib/metrics/sample-stats as HISTORICAL_MIN_WEEKS_DEFAULT (same value 4).
+// This query layer intentionally uses the CONSTANT, not the Settings runtime
+// value — only the analysis pipeline (post-process-historical via
+// getRuntimeThresholds()) applies the runtime override; this route does not
+// read Settings (ZEITGEIST unchanged by MERGE-2-a).
 
 // Map metric → column accessor for Z-Score computation. All four metrics
 // use ABS magnitude per PRD §5.2 (the value is already ABS in the aggregate).
@@ -105,16 +115,9 @@ function getMetricValue(p: ItemTrendPeriod, metric: ItemTrendMetric): number {
   }
 }
 
-/** Compute mean + sample std dev (N-1, Bessel's correction) for an array of values. */
-function computeSampleStats(values: number[]): { mean: number; stdDev: number; n: number } {
-  const n = values.length;
-  if (n === 0) return { mean: 0, stdDev: 0, n: 0 };
-  const mean = values.reduce((a, b) => a + b, 0) / n;
-  const variance = n > 1
-    ? Math.max(0, values.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1))
-    : 0;
-  return { mean, stdDev: Math.sqrt(variance), n };
-}
+// AUDIT A2 / MERGE-2-a: computeSampleStats moved to the shared module
+// @/lib/metrics/sample-stats — it was duplicated in queries/historical.ts
+// (computeStats, SUM-SQ form) with identical Bessel-corrected semantics.
 
 /**
  * Query the per-item, per-period trend timeline.
@@ -238,7 +241,7 @@ export async function queryItemTrendTimeline(
     p.historicalStdDev = stats.stdDev;
     p.sampleSize = stats.n;
 
-    if (stats.n >= HISTORICAL_MIN_WEEKS && stats.stdDev > 0) {
+    if (stats.n >= HISTORICAL_MIN_WEEKS_DEFAULT && stats.stdDev > 0) {
       const currentAbs = Math.abs(getMetricValue(p, metric));
       p.zScore = (currentAbs - stats.mean) / stats.stdDev;
     } else {
