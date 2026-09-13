@@ -4,9 +4,10 @@
 //  Returns peer outlets for a specific item scoped to ONE
 //  period (month + week). Peers are OTHER outlets that carry
 //  the same item AND have ABS(qtyBom) within ±50% of the
-//  target outlet's ABS(qtyBom) — same "bucket average" peer
-//  selection logic as queryTopItemsByDeviasiRank's bucket_avg
-//  CTE (see ./top-items/by-deviasi-rank.ts).
+//  target outlet's ABS(qtyBom) — the SHARED bucket predicate
+//  (./peer-bucket.ts, audit A1) also used by
+//  queryTopItemsByDeviasiRank's bucket_avg CTE
+//  (see ./top-items/by-deviasi-rank.ts).
 //
 //  Target outlet:
 //    - If `outletCode` is provided → that outlet is the target.
@@ -35,6 +36,7 @@
 //    consistent with the rest of the items/* query family.
 // ============================================================
 import { Prisma } from '@prisma/client';
+import { peerBomBucketPredicate } from './peer-bucket';
 import {
   buildSqlFilters,
   DIRECTION_FROM_SUM_SQL,
@@ -285,8 +287,9 @@ export async function queryItemPeerComparison(
     -- ----------------------------------------------------------
     --  Final SELECT: target row (isTarget=true) + peer rows
     --  (isTarget=false). Peers are OTHER outlets whose ABS(qtyBom)
-    --  falls within ±50% of target's ABS(qtyBom) — same bucket
-    --  logic as bucket_avg CTE in by-deviasi-rank.ts.
+    --  falls within ±50% of target's ABS(qtyBom) — the SHARED
+    --  peer-bucket predicate (./peer-bucket.ts, audit A1) also used
+    --  by the bucket_avg CTE in by-deviasi-rank.ts.
     --
     --  CROSS JOIN target (max 1 row via LIMIT 1) — when target is
     --  empty (item not found / outletCode mismatched), CROSS JOIN
@@ -316,8 +319,7 @@ export async function queryItemPeerComparison(
         c."outletCode" != t."outletCode"
         AND ABS(c."qtyBom") > 0
         AND ABS(t."qtyBom") > 0
-        AND ABS(c."qtyBom") BETWEEN ABS(t."qtyBom") * 0.5
-                                AND ABS(t."qtyBom") * 1.5
+        AND ${peerBomBucketPredicate('t', 'c')}
       )
     ORDER BY
       CASE WHEN c."outletCode" = t."outletCode" THEN 0 ELSE 1 END,

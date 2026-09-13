@@ -27,6 +27,7 @@
 // ============================================================
 import { withStatementTimeout, type SqlFilterOpts } from '../../shared';
 import { buildDeviasiRankBaseCte } from './shared-cte';
+import { peerBomBucketPredicate } from '../peer-bucket';
 
 // ============================================================
 //  Top Items by Deviasi Rank — national item ranking
@@ -118,7 +119,7 @@ export async function queryTopItemsByDeviasiRank(
         ON ipo2."itemName" = ti."itemName"
         AND ABS(ti."qtyBom") > 0  -- FIX CALC-7: skip BOM=0 items
         AND ABS(ipo2."qtyBom") > 0
-        AND ABS(ipo2."qtyBom") BETWEEN ABS(ti."qtyBom") * 0.5 AND ABS(ti."qtyBom") * 1.5
+        AND ${peerBomBucketPredicate('ti', 'ipo2')}
       GROUP BY ti."itemName", ti."outletCode"
     )
     SELECT
@@ -239,7 +240,7 @@ export async function queryTopItemsByDeviasiRankForOutlet(
         ON ipo2."itemName" = ti."itemName"
         AND ABS(ti."qtyBom") > 0
         AND ABS(ipo2."qtyBom") > 0
-        AND ABS(ipo2."qtyBom") BETWEEN ABS(ti."qtyBom") * 0.5 AND ABS(ti."qtyBom") * 1.5
+        AND ${peerBomBucketPredicate('ti', 'ipo2')}
       GROUP BY ti."itemName", ti."outletCode"
     )
     SELECT

@@ -220,7 +220,7 @@ Caching is **multi-tiered**. Each tier addresses a different latency/cost tradeo
 13. `/api/flip-ranking/drilldown` (Phase C)
 14. `/api/item-anomali-outlets` (MINORITY-direction drill-down)
 15. `/api/peer-comparison` (P3-HYG-3; extra: mode+limit)
-16. `/api/peer-comparison/items` (P3-HYG-3; compute di-ekstrak ke `computePeerComparisonItems`; extra: mode+topItems)
+16. `/api/peer-comparison/items` (P3-HYG-3; compute di `queryPeerComparisonItems` — `src/lib/queries/outlets/peer-comparison-items.ts` sejak MERGE-1-a; extra: mode+topItems)
 17. `/api/peer-comparison/trend` (P3-HYG-3; peer eksplisit + auto-compute dalam satu computeFn; extra: peers)
 18. `/api/compliance` (PAKET E — 9 lensa dari 1 scan)
 19. `/api/chronic-outlets` (PAKET E — month-grain; cache reusable antar minggu)

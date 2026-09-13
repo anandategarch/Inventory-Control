@@ -12,6 +12,9 @@ export * from './items/global-search';
 // (duplicate of the Pareto tab's byOutlet quadrant card) and the never-rendered
 // topOutletsBySales payload section.
 export * from './outlets/peer-comparison';
+// MERGE-1-a (audit A1): item-level peer comparison pipeline moved out of
+// /api/peer-comparison/items/route.ts (SQL colocation convention).
+export * from './outlets/peer-comparison-items';
 export * from './outlets/resto-recommendations';
 // ANA-1-D: outlet recurrence/persistence history (additive `history` field
 // for /api/recommendations — no interaction with the existing queries).
