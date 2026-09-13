@@ -9,6 +9,9 @@ import {
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import type { AnalysisData, BomCorrelationFinding, BomCorrelationCounts } from '@/hooks/useAnalysis';
 import { fmtNum, fmtPct, growthColorClass } from '@/lib/format';
+import { clickableRowProps } from '@/lib/a11y';
+import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 import { GitCompare, AlertTriangle, CheckCircle2 } from 'lucide-react';
 
 // ============================================================
@@ -76,6 +79,10 @@ function BomCorrelationCardInner({ data }: { data: AnalysisData }) {
   const s = data.executiveSummary;
   const findings: BomCorrelationFinding[] = data.bomCorrelationFindings ?? [];
   const counts = data.bomCorrelationCounts;
+  // NAVLINK-1 (B1): finding row click opens the raw-records drawer for the
+  // exact (outlet × item) pair behind the rule fire. Guarded — payloads cached
+  // before the outletCode field existed render plain (non-clickable) rows.
+  const setDrilldown = useDashboard(useShallow((st) => st.setDrilldown));
 
   // FIX BUG-BOM-UI-09: guard qtyBom (optional chaining on each summary field).
   const bomGrowth = s?.qtyBom?.growth ?? null;
@@ -267,7 +274,11 @@ function BomCorrelationCardInner({ data }: { data: AnalysisData }) {
                   {findings.map((f) => (
                     <TableRow
                       key={`${f.outletId}-${f.itemId}-${f.ruleCode}-${f.akunPenyesuaian ?? ''}`}
-                      className="hover:bg-muted/40 transition-colors border-b"
+                      {...(f.outletCode
+                        ? clickableRowProps(() => setDrilldown({ outletCode: f.outletCode ?? null, itemName: f.itemName }))
+                        : {})}
+                      className={`${f.outletCode ? 'cursor-pointer ' : ''}hover:bg-muted/40 transition-colors border-b`}
+                      title={f.outletCode ? 'Klik untuk lihat record mentah resto × item ini' : undefined}
                     >
                       <TableCell className="text-[11px] px-3 py-2 font-medium whitespace-normal" title={f.outletName}>
                         <div className="truncate">{f.outletName}</div>

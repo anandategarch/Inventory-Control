@@ -20,6 +20,8 @@ import { Loader2, RotateCcw, Coins } from 'lucide-react';
 import { BarList } from '@/components/dashboard/shared/BarList';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import { fmtIDR } from '@/lib/format';
+import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 
 /** One outlet row of /api/benchmark-opportunity's topOutlets. */
 export interface BenchmarkOpportunityOutlet {
@@ -58,6 +60,10 @@ export const BenchmarkOpportunityCard = memo(function BenchmarkOpportunityCard({
   error,
   onRetry,
 }: BenchmarkOpportunityCardProps) {
+  // NAVLINK-1 (B1): clicking a bar opens that outlet's Resto deep dive —
+  // setFocusOutlet switches to the resto tab with the outlet pre-selected
+  // (same pattern as OutletHealthRanking / RestoRecommendationCard rows).
+  const setFocusOutlet = useDashboard(useShallow((s) => s.setFocusOutlet));
   // Top 5 for the compact bar list (API returns top 8 — spec: card shows 5).
   // Label = outlet name + area; the full label rides BarList's built-in
   // title tooltip so truncated names stay hover-readable.
@@ -125,18 +131,20 @@ export const BenchmarkOpportunityCard = memo(function BenchmarkOpportunityCard({
             >
               {fmtIDR(data.totalOpportunityRp)}
             </p>
-            {/* Top 5 outlets by opportunityRp — bar length = Rp. */}
+            {/* Top 5 outlets by opportunityRp — bar length = Rp.
+                NAVLINK-1 (B1): row click → Resto deep dive (focusOutlet). */}
             <BarList
               data={topBars}
               valueFormatter={fmtIDR}
               color="amber"
               sortOrder="descending"
               showAnimation
+              onValueChange={(b) => { if (typeof b.key === 'string') setFocusOutlet(b.key); }}
             />
             <p className="text-[10px] text-muted-foreground pt-1 border-t">
               <span className="font-semibold uppercase tracking-[0.12em] text-foreground/70">TERUKUR</span>
               {' '}· dibanding median resto satu area ·{' '}
-              <span className="tabular-nums">{data.areaCount}</span> area
+              <span className="tabular-nums">{data.areaCount}</span> area · klik resto untuk buka analisa nya
             </p>
           </div>
         )}

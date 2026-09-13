@@ -59,6 +59,9 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ChevronDown, ChevronRight, RefreshCw, TrendingUp } from 'lucide-react';
 import { fmtNum, fmtPct, growthColor } from '@/lib/format';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
+import { clickableRowProps } from '@/lib/a11y';
+import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import type { TopGrowthContributor, TopGrowthRow } from '@/lib/queries/growth-drivers';
 
@@ -247,9 +250,23 @@ function ContributorHeader() {
   );
 }
 
-const ContributorLine = memo(function ContributorLine({ c }: { c: TopGrowthContributor }) {
+const ContributorLine = memo(function ContributorLine({
+  c,
+  onClick,
+}: {
+  c: TopGrowthContributor;
+  /** NAVLINK-1 (B1): when set, the line is a keyboard-accessible link-out
+   *  (barang → Trend Item tab, resto → Resto tab via focusOutlet). */
+  onClick?: () => void;
+}) {
   return (
-    <div className="flex items-center gap-2 py-1 text-[11px] tabular-nums">
+    <div
+      {...(onClick ? clickableRowProps(onClick) : {})}
+      className={`flex items-center gap-2 rounded-md py-1 text-[11px] tabular-nums outline-none transition-colors ${
+        onClick ? 'cursor-pointer hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/60' : ''
+      }`}
+      title={onClick ? 'Klik untuk membuka analisa lengkap' : undefined}
+    >
       <span className="w-1.5 shrink-0 self-stretch rounded-full bg-border/70" aria-hidden="true" />
       <span className="flex min-w-0 flex-1 items-center gap-1.5">
         <span className="min-w-0 truncate text-muted-foreground" title={c.name}>{c.name}</span>
@@ -286,6 +303,42 @@ export const TopGrowthCard = memo(function TopGrowthCard({
   // time keeps the list scannable; switching grain resets it (row names from
   // the other grain must never inherit the open state).
   const [expanded, setExpanded] = useState<string | null>(null);
+
+  // NAVLINK-1 (B1): cross-feature navigation — same store actions the other
+  // cards use (pattern: RankingNasionalCard's Navigation Bridge). Barang
+  // names link to the Item tab's trend view (item name IS the identity);
+  // resto rows/contributors link to the Resto tab via focusOutlet(code).
+  const { setFocusOutlet, setTrendSelectedItem, setActiveTab } = useDashboard(useShallow((s) => ({
+    setFocusOutlet: s.setFocusOutlet,
+    setTrendSelectedItem: s.setTrendSelectedItem,
+    setActiveTab: s.setActiveTab,
+  })));
+
+  const handleContributorClick = useCallback(
+    (c: TopGrowthContributor) => {
+      if (grain === 'outlet') {
+        // Contributor is a barang → Trend Item view (exact item-name identity).
+        setTrendSelectedItem(c.name);
+        setActiveTab('item');
+      } else if (c.code) {
+        // Contributor is a resto with its outlet code → Resto deep dive.
+        setFocusOutlet(c.code);
+      }
+    },
+    [grain, setFocusOutlet, setTrendSelectedItem, setActiveTab],
+  );
+
+  const handleRowLink = useCallback(
+    (r: TopGrowthRow) => {
+      if (grain === 'item') {
+        setTrendSelectedItem(r.name);
+        setActiveTab('item');
+      } else if (r.code) {
+        setFocusOutlet(r.code);
+      }
+    },
+    [grain, setFocusOutlet, setTrendSelectedItem, setActiveTab],
+  );
 
   // Pin field identities first (P3-HYG-7a lesson) so the useMemo below
   // isn't defeated by fresh fallback arrays on every render.
@@ -448,13 +501,38 @@ export const TopGrowthCard = memo(function TopGrowthCard({
                         {r.contributors.length > 0 ? (
                           <>
                             <ContributorHeader />
-                            {r.contributors.map((c) => <ContributorLine key={c.name} c={c} />)}
+                            {r.contributors.map((c) => (
+                              <ContributorLine
+                                key={c.name}
+                                c={c}
+                                onClick={
+                                  // NAVLINK-1 (B1): barang always links (item-name
+                                  // identity); resto links only when its code rode
+                                  // the payload (old caches → undefined → no link).
+                                  grain === 'outlet' || c.code
+                                    ? () => handleContributorClick(c)
+                                    : undefined
+                                }
+                              />
+                            ))}
                           </>
                         ) : (
                           <p className="py-1 text-[11px] italic text-muted-foreground/60">
                             Tidak ada {childNoun} dengan pergerakan deviasi di {grainNoun} ini.
                           </p>
                         )}
+                        {/* NAVLINK-1 (B1): row-level link-out — the expanded row's
+                            OWN entity, not just its contributors. Item row →
+                            Trend Item; outlet row → Resto deep dive (needs code). */}
+                        {grain === 'item' || r.code ? (
+                          <button
+                            type="button"
+                            onClick={() => handleRowLink(r)}
+                            className="mt-1 inline-flex items-center gap-1 rounded-sm text-[10px] font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                          >
+                            {grain === 'item' ? 'Trend item ini →' : 'Buka resto ini →'}
+                          </button>
+                        ) : null}
                         <p className="pb-1 text-[10px] italic text-muted-foreground/55">
                           Δ kuantiti = pergerakan volume (satuan); Δ nominal = pergerakan nilai (Rp). Kuantiti tetap
                           dengan nominal bergerak = efek harga.

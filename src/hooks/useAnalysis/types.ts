@@ -212,6 +212,9 @@ export interface HistoricalAnalysisResult {
 export interface BomCorrelationFinding {
   outletId: number;
   outletName: string;
+  /** NAVLINK-1 (B1): outlet code for the drill-down link — optional for
+   *  payloads cached before the field existed (old cache → no link rendered). */
+  outletCode?: string | null;
   itemId: number;
   itemName: string;
   akunPenyesuaian: string | null;

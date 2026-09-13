@@ -12,7 +12,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, AlertTriangle } from 'lucide-react';
+import { Loader2, AlertTriangle, TrendingUp } from 'lucide-react';
+import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 import type { ItemHistoryResponse, ItemHistoryTimelineRow } from './types';
 import {
   fmtIDR, fmtNum, fmtPct,
@@ -24,6 +26,18 @@ import { fmtDecimal } from '@/lib/format';
 export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: {
   outletCode: string; itemName: string; month: string; week: string; onClose: () => void;
 }) {
+  // NAVLINK-1 (B1): "Lihat Trend Item" bridges this per-outlet item view to
+  // the national per-item Trend view — same setTrendSelectedItem + setActiveTab
+  // Navigation Bridge RankingNasionalCard uses.
+  const { setTrendSelectedItem, setActiveTab } = useDashboard(useShallow((s) => ({
+    setTrendSelectedItem: s.setTrendSelectedItem,
+    setActiveTab: s.setActiveTab,
+  })));
+  const handleOpenTrend = () => {
+    setTrendSelectedItem(itemName);
+    setActiveTab('item');
+    onClose();
+  };
   const { data, isLoading, error } = useQuery<ItemHistoryResponse>({
     queryKey: ['item-history', outletCode, itemName, month, week],
     queryFn: async () => {
@@ -166,6 +180,18 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
                 </p>
               </CardContent>
             </Card>
+
+            {/* NAVLINK-1 (B1): cross-feature bridge — open this item's national
+                multi-period trend view (tab Item). Closes the modal first so
+                the trend view is what the user lands on. */}
+            <button
+              type="button"
+              onClick={handleOpenTrend}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md border bg-background px-3 py-2 text-xs font-medium shadow-sm transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            >
+              <TrendingUp className="h-3.5 w-3.5" />
+              Lihat Trend Item (semua periode, nasional)
+            </button>
           </div>
         )}
       </DialogContent>

@@ -58,10 +58,24 @@ export interface TopGrowthContributor {
    * satuan, since the qty being ranked IS that item's qty.
    */
   unit: string | null;
+  /**
+   * NAVLINK-1 (B1): outlet CODE — only set when the contributor IS a resto
+   * (byItem drill-down). Lets the frontend link the contributor to the Resto
+   * tab via setFocusOutlet(code). Undefined/null for barang contributors
+   * and for payloads cached before this field existed (optional = back-compat).
+   */
+  code?: string | null;
 }
 
 export interface TopGrowthRow {
   name: string;
+  /**
+   * NAVLINK-1 (B1): outlet CODE — only set for byOutlet rows (row = resto).
+   * Lets the frontend link the row to the Resto tab via setFocusOutlet(code).
+   * Undefined for byItem rows (item name IS the identity there) and for
+   * payloads cached before this field existed (optional = back-compat).
+   */
+  code?: string | null;
   /** SUM(nominalDeviasi) current period (signed, Rp). */
   curr: number;
   /** SUM(nominalDeviasi) compare period (signed, Rp). */

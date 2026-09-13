@@ -27,6 +27,9 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { fmtIDR, fmtNum } from '@/lib/format';
+import { clickableRowProps } from '@/lib/a11y';
+import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 import { Grid3x3 as HeatMapIcon } from 'lucide-react';
 
 export interface CellDetailRow {
@@ -66,6 +69,10 @@ export interface AreaItemHeatmapSheetProps {
 export default function AreaItemHeatmapSheet({
   open, onOpenChange, areaName, itemName, monthLabel, currentWeek, filters,
 }: AreaItemHeatmapSheetProps) {
+  // NAVLINK-1 (B1): outlet row click closes the sheet and opens the raw
+  // records drawer for the cell's item at that outlet — completing the
+  // area → resto → item investigation chain.
+  const setDrilldown = useDashboard(useShallow((s) => s.setDrilldown));
   const params = useMemo(() => {
     const p = new URLSearchParams();
     if (monthLabel) p.set('month', monthLabel);
@@ -183,7 +190,15 @@ export default function AreaItemHeatmapSheet({
                       const devBomPct = r.qtyBom > 0 ? r.qtyDeviasi / r.qtyBom : 0;
                       const isLoss = r.nominalLossSurplusSigned < 0;
                       return (
-                        <tr key={`${r.outletCode}-${r.akunPenyesuaian}-${idx}`} className="border-b hover:bg-muted/30">
+                        <tr
+                          key={`${r.outletCode}-${r.akunPenyesuaian}-${idx}`}
+                          {...clickableRowProps(() => {
+                            setDrilldown({ outletCode: r.outletCode, itemName });
+                            onOpenChange(false);
+                          })}
+                          className="border-b hover:bg-muted/30 cursor-pointer"
+                          title="Klik untuk lihat record mentah resto × item ini"
+                        >
                           <td className="py-1.5 px-1.5">
                             <div className="font-medium truncate max-w-[120px]" title={r.outletName}>{r.outletName}</div>
                             <div className="text-[9px] text-muted-foreground">{r.outletCode}</div>

@@ -44,6 +44,8 @@ import type { HistoricalAnalysisResult } from './post-process-historical';
 export interface BomCorrelationFinding {
   outletId: number;
   outletName: string;
+  /** NAVLINK-1 (B1): outlet code — enables the frontend drill-down link (setDrilldown). */
+  outletCode: string | null;
   itemId: number;
   itemName: string;
   akunPenyesuaian: string | null;

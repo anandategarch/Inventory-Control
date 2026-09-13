@@ -24,6 +24,8 @@ interface BomDetailRow {
   itemId: number;
   akunPenyesuaian: string | null;
   outletName: string;
+  // NAVLINK-1 (B1): outlet code for the drill-down link (o.code).
+  outletCode: string | null;
   itemName: string;
   bomGrowth: number | null;
   wasteGrowth: number | null;
@@ -91,6 +93,7 @@ export async function fetchBomCorrelationDetails(
     SELECT
       c."outletId", c."itemId", c."akunPenyesuaian",
       o.name AS "outletName",
+      o.code AS "outletCode",
       i.name AS "itemName",
       CASE WHEN p."prevQtyBom" IS NOT NULL AND p."prevQtyBom" != 0
         THEN (ABS(c."qtyBom") - ABS(p."prevQtyBom")) / ABS(p."prevQtyBom")
@@ -134,6 +137,7 @@ export async function fetchBomCorrelationDetails(
       itemId: Number(r.itemId),
       akunPenyesuaian: r.akunPenyesuaian,
       outletName: r.outletName,
+      outletCode: r.outletCode,
       itemName: r.itemName,
       bomGrowth: r.bomGrowth == null ? null : Number(r.bomGrowth),
       wasteGrowth: r.wasteGrowth == null ? null : Number(r.wasteGrowth),
@@ -204,6 +208,7 @@ export async function buildBomCorrelationFindings(
     return {
       outletId: flag.outletId,
       outletName: detail?.outletName ?? String(flag.outletId),
+      outletCode: detail?.outletCode ?? null,
       itemId: flag.itemId,
       itemName: detail?.itemName ?? String(flag.itemId),
       akunPenyesuaian: flag.akunPenyesuaian,

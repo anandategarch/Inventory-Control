@@ -9,8 +9,10 @@ import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import type { HistoricalAnalysisMeta } from '@/hooks/useAnalysis/types';
 import { fmtIDR, fmtPctAbs, fmtDecimal } from '@/lib/format';
-import { sortableHeaderProps } from '@/lib/a11y';
+import { clickableRowProps, sortableHeaderProps } from '@/lib/a11y';
 import { zScoreColor } from '@/lib/zScoreHelpers';
+import { useDashboard } from '@/hooks/useDashboard';
+import { useShallow } from 'zustand/shallow';
 import { ArrowUpDown, ArrowUp, ArrowDown, History, Info, ChevronDown, AlertTriangle, Database, CheckCircle2 } from 'lucide-react';
 import { useState, useMemo, memo, useCallback } from 'react';
 
@@ -196,6 +198,10 @@ function HistoricalEmptyState({ meta, week }: { meta?: HistoricalAnalysisMeta; w
 }
 
 export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }: { data: AnalysisData }) {
+  // NAVLINK-1 (B1): row click opens the raw-records drawer for the exact
+  // (outlet × item) pair behind the z-score — same setDrilldown pattern as
+  // TopItems / InsightsPanel rows.
+  const setDrilldown = useDashboard(useShallow((s) => s.setDrilldown));
   // FIX BUG 1: Filter out items with |Dev/BOM| > 500% — these are data anomalies
   // where BOM ≈ 0 (division by near-zero produces extreme pctQtyDeviasiToBom).
   // Z-Scores of 680.99 are meaningless and pollute the table.
@@ -399,7 +405,12 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
                   const badge = zScoreBadge(activeZ);
                   const isLoss = item.currentQtyDeviasi < 0;
                   return (
-                    <TableRow key={`${item.itemName}-${item.outletCode}-${i}`} className="hover:bg-muted/40 transition-colors border-b">
+                    <TableRow
+                      key={`${item.itemName}-${item.outletCode}-${i}`}
+                      {...clickableRowProps(() => setDrilldown({ outletCode: item.outletCode, itemName: item.itemName }))}
+                      className="cursor-pointer hover:bg-muted/40 transition-colors border-b"
+                      title="Klik untuk lihat record mentah resto × item ini"
+                    >
                       <TableCell className="text-[11px] text-muted-foreground px-3 py-2 tabular-nums">{i + 1}</TableCell>
                       <TableCell className="text-[11px] px-3 py-2">
                         <div className="font-medium leading-tight whitespace-normal" title={item.itemName}>{item.itemName}</div>

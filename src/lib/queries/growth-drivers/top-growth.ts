@@ -115,6 +115,8 @@ async function aggregateDeviationMatrix(
   matrix: Map<string, Map<string, DeviationCell>>;
   /** item → satuan (first-seen; satuan is a per-item master value). */
   itemUnits: Map<string, string | null>;
+  /** outlet NAME → outlet CODE (NAVLINK-1/B1 — first-seen, navigation only). */
+  outletCodes: Map<string, string | null>;
 }> {
   const f = buildSqlFilters(filters);
 
@@ -135,7 +137,8 @@ async function aggregateDeviationMatrix(
   `;
 
   const cte = (m: string, w: string) => Prisma.sql`
-    SELECT o.name as "outletName", i.name as "itemName", ${unitExpr}, ${sums}
+    SELECT o.name as "outletName", i.name as "itemName", ${unitExpr}, ${sums},
+      MIN(o.code) as "outletCode"
     ${fromAndGroup}
     WHERE ir."monthLabel" = ${m} AND ir."weekLabel" = ${w}
       AND (ir."nominalDeviasi" IS NOT NULL OR ir."qtyDeviasi" IS NOT NULL)
@@ -144,9 +147,11 @@ async function aggregateDeviationMatrix(
   `;
   const currCte = cte(month, week);
   // Empty prev CTE when there is no compare period → every cell is "Baru".
+  // NAVLINK-1 (B1): the empty CTE's column list must match the real one
+  // (outletName, itemName, unit, nd, qd, outletCode) for the FULL OUTER JOIN.
   const prevCte = prevWeek && prevMonth
     ? cte(prevMonth, prevWeek)
-    : Prisma.sql`SELECT NULL::text as "outletName", NULL::text as "itemName", NULL::text as unit, 0::float as nd, 0::float as qd WHERE 1=0`;
+    : Prisma.sql`SELECT NULL::text as "outletName", NULL::text as "itemName", NULL::text as unit, 0::float as nd, 0::float as qd, NULL::text as "outletCode" WHERE 1=0`;
 
   // Same FULL OUTER JOIN pattern as aggregateSalesMode (AUDIT8-ROLLBACK-1
   // Item 8: wrapped in withStatementTimeout — 2 CTEs over InventoryRecord).
@@ -154,6 +159,9 @@ async function aggregateDeviationMatrix(
     outletName: string | null;
     itemName: string | null;
     unit: string | null;
+    // NAVLINK-1 (B1): MIN(o.code) per (outletName, itemName) group — additive,
+    // grouping/ranking unchanged.
+    outletCode: string | null;
     ndCurr: number | bigint | null;
     ndPrev: number | bigint | null;
     qdCurr: number | bigint | null;
@@ -165,6 +173,7 @@ async function aggregateDeviationMatrix(
       COALESCE(c."outletName", p."outletName") as "outletName",
       COALESCE(c."itemName", p."itemName") as "itemName",
       COALESCE(c.unit, p.unit) as unit,
+      COALESCE(c."outletCode", p."outletCode") as "outletCode",
       COALESCE(c.nd, 0) as "ndCurr",
       COALESCE(p.nd, 0) as "ndPrev",
       COALESCE(c.qd, 0) as "qdCurr",
@@ -178,8 +187,16 @@ async function aggregateDeviationMatrix(
   // (FULL OUTER JOIN null edge) are skipped, mirroring aggregateSalesMode.
   const matrix = new Map<string, Map<string, DeviationCell>>();
   const itemUnits = new Map<string, string | null>();
+  // NAVLINK-1 (B1): outlet NAME → outlet CODE (first-seen non-null wins).
+  // The SQL groups by o.name — for the (rare) duplicate-name case the codes
+  // of both outlets land on one row name; first-seen keeps the link stable.
+  // Used ONLY for UI navigation (setFocusOutlet), never for metrics.
+  const outletCodes = new Map<string, string | null>();
   for (const r of rows) {
     if (r.outletName == null || r.itemName == null) continue;
+    if (!outletCodes.has(r.outletName) && r.outletCode != null) {
+      outletCodes.set(r.outletName, r.outletCode);
+    }
     let items = matrix.get(r.outletName);
     if (!items) {
       items = new Map<string, DeviationCell>();
@@ -193,7 +210,7 @@ async function aggregateDeviationMatrix(
     });
     if (!itemUnits.has(r.itemName)) itemUnits.set(r.itemName, r.unit ?? null);
   }
-  return { matrix, itemUnits };
+  return { matrix, itemUnits, outletCodes };
 }
 
 /**
@@ -214,6 +231,9 @@ function topContributors(
   units: Map<string, string | null>,
   unitFromRow: boolean,
   rowName: string,
+  // NAVLINK-1 (B1): name → outlet code — only passed for byItem rows
+  // (contributors are resto); undefined for byOutlet rows (barang).
+  outletCodes?: Map<string, string | null>,
 ): TopGrowthContributor[] {
   if (cells.size === 0) return [];
   const rowUnit = units.get(rowName) ?? null;
@@ -227,6 +247,7 @@ function topContributors(
     nominalDelta: cell.ndCurr - cell.ndPrev,
     isNew: !cell.qdPrev && !cell.ndPrev,
     unit: unitFromRow ? rowUnit : (units.get(n) ?? null),
+    code: outletCodes ? (outletCodes.get(n) ?? null) : null,
   }));
   list.sort((a, b) => Math.abs(b.qtyDelta) - Math.abs(a.qtyDelta));
   return list.slice(0, TOP_GROWTH_CONTRIBUTOR_LIMIT);
@@ -245,6 +266,13 @@ function shapeTopGrowthRows(
   units: Map<string, string | null>,
   /** true → contributor unit keyed by the ROW's name (byItem); false → by the contributor's own name (byOutlet). */
   contributorUnitFromRow: boolean,
+  // NAVLINK-1 (B1): rowCode applies to the ROW itself (byOutlet — row is a
+  // resto); contributorCodes applies to CONTRIBUTORS (byItem — contributors
+  // are resto). Each grain passes only the map it needs.
+  opts?: {
+    rowCodes?: Map<string, string | null>;
+    contributorCodes?: Map<string, string | null>;
+  },
 ): TopGrowthRow[] {
   const rows: TopGrowthRow[] = [];
   for (const [name, { curr, prev }] of sums) {
@@ -257,8 +285,9 @@ function shapeTopGrowthRows(
       units,
       contributorUnitFromRow,
       name,
+      opts?.contributorCodes,
     );
-    rows.push({ name, curr, prev, delta, pct: calcGrowth(curr, prev), isNew, contributors });
+    rows.push({ name, code: opts?.rowCodes ? (opts.rowCodes.get(name) ?? null) : null, curr, prev, delta, pct: calcGrowth(curr, prev), isNew, contributors });
   }
   rows.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
   return rows.slice(0, TOP_GROWTH_LIMIT);
@@ -276,7 +305,7 @@ export async function queryTopGrowth(
   // totals at every grouping level — per-outlet and per-item NOMINAL
   // sums are derived in JS by additivity, and the cells feed BOTH
   // drill-down directions (qty + nominal per contributor).
-  const { matrix, itemUnits } = await aggregateDeviationMatrix(
+  const { matrix, itemUnits, outletCodes } = await aggregateDeviationMatrix(
     week,
     month,
     prevWeek,
@@ -312,11 +341,13 @@ export async function queryTopGrowth(
     // Per Resto — Δ nominal deviasi (Rp, signed). Drill-down: top barang
     // by Δ kuantiti deviasi inside the resto, each with Δ nominal too.
     // Contributor unit = each barang's own satuan.
-    byOutlet: shapeTopGrowthRows(outletSums, matrix, itemUnits, false),
+    // NAVLINK-1 (B1): rows carry their outlet code → "Buka resto" link.
+    byOutlet: shapeTopGrowthRows(outletSums, matrix, itemUnits, false, { rowCodes: outletCodes }),
     // Per Barang — Δ nominal deviasi (Rp, signed). Drill-down: top resto
     // driving that item's deviation — every contributor's unit = the row
     // item's satuan, since the qty being ranked IS that item's qty.
-    byItem: shapeTopGrowthRows(itemSums, outletsByItem, itemUnits, true),
+    // NAVLINK-1 (B1): contributors carry their outlet code → resto link-out.
+    byItem: shapeTopGrowthRows(itemSums, outletsByItem, itemUnits, true, { contributorCodes: outletCodes }),
     contributorLimit: TOP_GROWTH_CONTRIBUTOR_LIMIT,
     byOutletMetric: 'nominalDeviasi',
     byItemMetric: 'nominalDeviasi',
