@@ -119,6 +119,11 @@ export async function invalidateAnalysisCache(): Promise<void> {
   // H-10 (G1): added q-outlet-agg — the shared per-outlet aggregate scan fed by
   // BOTH queryOutletHealthRanking (analysis payload) and queryRestoRecommendations
   // (/api/recommendations). Same invalidation rule as the q-* above.
+  // ANA-1-E: added `benchmark-opportunity` ("Peluang Perbaikan (Rp)" vs
+  // area-median loss). CHANGE-1: added the 2 change-analysis routes
+  // ("Rata-rata Perubahan" — reads per-(outlet|item, month) same-week
+  // deviation sums up to the running month, so every mutation affects
+  // the Δ chain).
   const routes = [
     'analysis', 'pareto', 'recommendations',
     'export-report', 'heatmap', 'outlet-items', 'item-history', 'drilldown',
@@ -126,7 +131,7 @@ export async function invalidateAnalysisCache(): Promise<void> {
     'flip-ranking-drilldown', 'item-anomali-outlets',
     'peer-comparison', 'peer-comparison-items', 'peer-comparison-trend',
     'price-effect', 'item-search', 'heatmap-cell-detail',
-    'benchmark-opportunity',
+    'benchmark-opportunity', 'change-analysis', 'change-analysis-items',
     'q-rules', 'q-hist-rules', 'q-variance', 'q-kpis', 'q-topcat', 'q-trend',
     'q-outlet-agg',
     // H-11 (#3): the remaining export-shared queries — every heavy query the

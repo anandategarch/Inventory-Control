@@ -164,6 +164,18 @@ export const benchmarkOpportunityQuerySchema = z.object({
   kelompok: kelompokSchema,
 });
 
+// /api/change-analysis?month=&week=&kelompok=  (CHANGE-1 — lens "Perubahan")
+export const changeAnalysisQuerySchema = z.object({
+  month: monthLabelSchema,
+  week: weekLabelSchema,
+  kelompok: kelompokSchema,
+});
+
+// /api/change-analysis/items?month=&week=&kelompok=&outletCode=
+export const changeAnalysisItemsQuerySchema = changeAnalysisQuerySchema.extend({
+  outletCode: outletCodeSchema,
+});
+
 // /api/export-report?month=&week=&sections=&area=&kelompok=&outlet=&item=&pic=
 export const exportReportQuerySchema = z.object({
   month: monthLabelSchema,

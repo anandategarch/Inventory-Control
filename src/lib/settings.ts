@@ -149,6 +149,32 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
     dataType: 'number',
     defaultValue: '4',
   },
+  // CHANGE-1 ("Rata-rata Perubahan"): outlet movement vs its own average
+  // same-week movement — the lens "Perubahan" on the dashboard.
+  {
+    key: 'CHANGE_ANOMALY_RATIO',
+    label: 'Faktor Anomali Perubahan',
+    description: 'Perubahan deviasi periode berjalan dianggap ANOMALI jika ≥ faktor ini × rata-rata gerak resto itu sendiri (rata-rata perubahan antar periode, same-week). Mis. 2.0 = bergerak 2× dari kebiasaannya.',
+    category: 'BENCHMARK',
+    dataType: 'number',
+    defaultValue: '2.0',
+  },
+  {
+    key: 'CHANGE_MIN_PAIRS',
+    label: 'Min. Pasangan Perubahan',
+    description: 'Jumlah pasangan periode (same-week antar bulan) minimum sebelum rasio perubahan sebuah resto dinilai. Di bawah ini resto ditandai "riwayat kurang".',
+    category: 'BENCHMARK',
+    dataType: 'number',
+    defaultValue: '4',
+  },
+  {
+    key: 'CHANGE_MIN_NOMINAL',
+    label: 'Min. Nominal Gerak (IDR)',
+    description: 'Gerakan nominal minimum (Rp) agar perubahan dianggap signifikan — mencegah rasio besar dari gerakan receh (mis. 100000 = Rp 100rb).',
+    category: 'BENCHMARK',
+    dataType: 'number',
+    defaultValue: '100000',
+  },
 
   // ===== PRIORITY (scoring weight) =====
   {
@@ -482,6 +508,10 @@ export interface RuntimeThresholds {
   HISTORICAL_ZSCORE_WARN: number;
   HISTORICAL_ZSCORE_HIGH: number;
   HISTORICAL_MIN_WEEKS: number;
+  // CHANGE-1: change-analysis thresholds (lens "Perubahan").
+  CHANGE_ANOMALY_RATIO: number;
+  CHANGE_MIN_PAIRS: number;
+  CHANGE_MIN_NOMINAL: number;
   WEIGHT_DEV_BOM: number;
   WEIGHT_GROWTH: number;
   WEIGHT_RESIDUAL: number;
@@ -538,6 +568,10 @@ export async function getRuntimeThresholds(): Promise<RuntimeThresholds> {
     HISTORICAL_ZSCORE_WARN: num('HISTORICAL_ZSCORE_WARN', 1.5),
     HISTORICAL_ZSCORE_HIGH: num('HISTORICAL_ZSCORE_HIGH', 2.0),
     HISTORICAL_MIN_WEEKS: num('HISTORICAL_MIN_WEEKS', 4),
+    // CHANGE-1: change-analysis thresholds (defaults mirror CFG_THRESHOLDS).
+    CHANGE_ANOMALY_RATIO: num('CHANGE_ANOMALY_RATIO', 2.0),
+    CHANGE_MIN_PAIRS: num('CHANGE_MIN_PAIRS', 4),
+    CHANGE_MIN_NOMINAL: num('CHANGE_MIN_NOMINAL', 100_000),
     WEIGHT_DEV_BOM: num('WEIGHT_DEV_BOM', 30),
     WEIGHT_GROWTH: num('WEIGHT_GROWTH', 25),
     WEIGHT_RESIDUAL: num('WEIGHT_RESIDUAL', 20),

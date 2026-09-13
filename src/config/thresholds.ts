@@ -22,6 +22,13 @@ export const CFG_THRESHOLDS = {
   HISTORICAL_ZSCORE_HIGH: 2.0,
   HISTORICAL_MIN_WEEKS: 4,          // need at least 4 weeks of history
 
+  // Change analysis (CHANGE-1 — "Rata-rata Perubahan"): outlet movement vs
+  // its own average same-week movement. Mirrors RuntimeThresholds for type
+  // compatibility — the engine reads the RUNTIME values (settings.ts).
+  CHANGE_ANOMALY_RATIO: 2.0,        // swing ≥ 2× avg swing → ANOMALI
+  CHANGE_MIN_PAIRS: 4,              // need ≥ 4 baseline pairs before judging
+  CHANGE_MIN_NOMINAL: 100_000,      // Rp noise gate for ANOMALI / BARU_BERGERAK
+
   // Priority weights (operational score)
   WEIGHT_DEV_BOM: 30,
   WEIGHT_GROWTH: 25,

@@ -17,19 +17,24 @@
 //    - Peluang Rp: /api/benchmark-opportunity, LENS-GATED fetch (fires
 //      only when the lens is first activated — no new eager initial
 //      load; the full card lives on in the Peer tab, untouched).
+//    - Perubahan (CHANGE-1): /api/change-analysis, LENS-GATED fetch —
+//      outlets whose CURRENT deviation move strays from their own
+//      average move (same-week chain). Row click EXPANDS the item
+//      attribution inline (ChangeItemTable) instead of navigating;
+//      the Resto deep-dive bridge stays available inside the expansion.
 //
 //  UX-NAVLINK-1: no "lihat semua →" button — full versions stay
 //  reachable via the tab bar. Row click → setFocusOutlet (Resto deep
 //  dive — same Navigation Bridge as every other outlet row).
 // ============================================================
 
-import { memo, useMemo, useState } from 'react';
+import { Fragment, memo, useMemo, useState } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Building2, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
-import { fmtIDR, fmtPct } from '@/lib/format';
+import { fmtDecimal, fmtIDR, fmtNum, fmtPct } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
@@ -38,16 +43,17 @@ import type { RecommendationHistory } from '@/components/dashboard/priority-summ
 import { healthScoreBg, healthScoreColor } from '@/components/dashboard/advanced-analysis/health-badges';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import type { BenchmarkOpportunityResponse } from '@/components/dashboard/peer-comparison/benchmark-opportunity-card';
+import { ChangeItemTable, type ChangeAnalysisResponse, type ChangeOutletStat } from '@/components/dashboard/narrative/ChangeItemTable';
 import type { AnalysisData, OutletHealthRanking } from '@/hooks/useAnalysis';
 
-type Lens = 'prioritas' | 'kondisi' | 'peluang';
+type Lens = 'prioritas' | 'kondisi' | 'peluang' | 'perubahan';
 
 /** Compact panel shows 3 by default, at most 8 when expanded
  *  (progressive disclosure — same rule as ItemPriorityPanel). */
 const COMPACT_MAX = 8;
 
 const TOOLTIP_TEXT =
-  'Satu panel, tiga lensa untuk "resto mana yang perlu perhatian dulu?": Prioritas = skor 14 sinyal (loss, deviasi, anomali, dsb); Kondisi = health score dari campuran normal/warning/abnormal; Peluang Rp = loss yang bisa ditekan jika turun ke median areanya. Klik resto untuk buka analisa lengkapnya; versi penuh tiap lensa ada di tab Resto / Area / Peer.';
+  'Satu panel, empat lensa untuk "resto mana yang perlu perhatian dulu?": Prioritas = skor 14 sinyal (loss, deviasi, anomali, dsb); Kondisi = health score dari campuran normal/warning/abnormal; Peluang Rp = loss yang bisa ditekan jika turun ke median areanya; Perubahan = seberapa jauh gerakan deviasi periode ini menyimpang dari kebiasaan gerak resto itu sendiri (rasio = perubahan sekarang ÷ rata-rata perubahan antar periode, same-week). Klik resto untuk detail; versi penuh tiap lensa ada di tab Resto / Area / Peer.';
 
 /** Normalized display row (lens-agnostic) — keeps the three payload
  *  list types out of the render path and the mini-bar scale simple. */
@@ -65,6 +71,9 @@ interface CompactRow {
    *  RestoRecommendationCard rows so the compact panel loses no signal. */
   history?: RecommendationHistory;
   trendDeteriorating?: boolean;
+  /** Perubahan lens only (CHANGE-1) — status + LOSS↔SURPLUS flip marker. */
+  status?: ChangeOutletStat['status'];
+  isFlip?: boolean;
 }
 
 /** Tooltip for the recurrence chip (verbatim from the old card — ANA-1-D). */
@@ -111,10 +120,13 @@ export const OutletPriorityPanel = memo(function OutletPriorityPanel({ data }: {
 
   const [lens, setLens] = useState<Lens>('prioritas');
   const [expanded, setExpanded] = useState(false);
+  // CHANGE-1: the Perubahan lens expands ONE row's item attribution inline.
+  const [expandedOutlet, setExpandedOutlet] = useState<string | null>(null);
 
   const handleLensChange = (v: string) => {
-    setLens(v === 'kondisi' ? 'kondisi' : v === 'peluang' ? 'peluang' : 'prioritas');
+    setLens(v === 'kondisi' ? 'kondisi' : v === 'peluang' ? 'peluang' : v === 'perubahan' ? 'perubahan' : 'prioritas');
     setExpanded(false);
+    setExpandedOutlet(null);
   };
 
   // ------------------------------------------------------------
@@ -179,6 +191,35 @@ export const OutletPriorityPanel = memo(function OutletPriorityPanel({ data }: {
   );
 
   // ------------------------------------------------------------
+  //  Lens 4 — Perubahan (CHANGE-1, LENS-GATED fetch — same pattern
+  //  as Peluang Rp: fires only when the lens is first activated).
+  // ------------------------------------------------------------
+  const isPerubahan = lens === 'perubahan';
+  const { data: chgResp, isLoading: chgLoading, error: chgError, refetch: chgRefetch } = useQuery<ChangeAnalysisResponse>({
+    queryKey: ['change-analysis', monthLabel, currentWeek, kelompok],
+    queryFn: async () => {
+      if (!monthLabel || !currentWeek) throw new Error('Periode belum dipilih');
+      const p = new URLSearchParams();
+      p.set('month', monthLabel);
+      p.set('week', currentWeek);
+      if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
+      const res = await fetch(`/api/change-analysis?${p.toString()}`);
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) throw new Error('Server error');
+      return res.json() as Promise<ChangeAnalysisResponse>;
+    },
+    enabled: isPerubahan && Boolean(monthLabel && currentWeek),
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
+    placeholderData: keepPreviousData,
+  });
+  // DATA_KURANG rows stay out of the list — the footer counts them.
+  const changeOutlets = useMemo(
+    () => (chgResp?.outlets || []).filter((o) => o.status !== 'DATA_KURANG'),
+    [chgResp?.outlets],
+  );
+
+  // ------------------------------------------------------------
   //  Display rows per lens + shared mini-bar scale.
   // ------------------------------------------------------------
   const limit = expanded ? COMPACT_MAX : Math.min(defaultCount, COMPACT_MAX);
@@ -229,7 +270,7 @@ export const OutletPriorityPanel = memo(function OutletPriorityPanel({ data }: {
         subLabel: `${o.abnormal} abnormal · ${o.warning} warning · ${o.normal} normal`,
       }));
       foot = `${count} resto dengan deviasi non-nol · ranking lengkap di tab Area`;
-    } else {
+    } else if (lens === 'peluang') {
       count = opportunities.length;
       list = opportunities.slice(0, expanded ? COMPACT_MAX : limit).map((o) => ({
         key: o.outletCode,
@@ -245,11 +286,31 @@ export const OutletPriorityPanel = memo(function OutletPriorityPanel({ data }: {
       foot = oppResp?.totalOpportunityRp != null
         ? `Total peluang ${fmtIDR(oppResp.totalOpportunityRp)} · ${oppResp.areaCount ?? 0} area (median resto satu area)`
         : '';
+    } else {
+      // Perubahan (CHANGE-1) — ratio-ranked rows; BARU_BERGERAK rows get a
+      // full mini-bar (∞ ratio), finite ratios drive the scale.
+      count = changeOutlets.length;
+      const finiteMax = changeOutlets.reduce((m, o) => Math.max(m, o.ratioNominal ?? 0), 0);
+      list = changeOutlets.slice(0, expanded ? COMPACT_MAX : limit).map((o) => ({
+        key: o.outletCode,
+        outletCode: o.outletCode,
+        outletName: o.outletName,
+        area: o.area ?? '—',
+        magnitude: o.status === 'BARU_BERGERAK' ? (finiteMax > 0 ? finiteMax : 1) : (o.ratioNominal ?? 0),
+        valueLabel: o.status === 'BARU_BERGERAK' ? '∞' : o.ratioNominal != null ? `${fmtDecimal(o.ratioNominal, 1)}×` : '—',
+        valueCls: o.status === 'ANOMALI' ? 'text-red-600 dark:text-red-400' : o.status === 'BARU_BERGERAK' ? 'text-amber-600 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400',
+        barCls: o.status === 'ANOMALI' ? 'bg-red-500' : o.status === 'BARU_BERGERAK' ? 'bg-amber-500' : 'bg-zinc-400',
+        subLabel: `Biasanya ±${fmtIDR(o.avgSwingNominal)} → sekarang ${o.deltaNominal != null && o.deltaNominal > 0 ? '+' : ''}${fmtIDR(o.deltaNominal)} · Qty ±${fmtNum(o.avgSwingQty)} → ${o.deltaQty != null && o.deltaQty > 0 ? '+' : ''}${fmtNum(o.deltaQty)}`,
+        status: o.status,
+        isFlip: o.isFlip,
+      }));
+      const c = chgResp?.counts;
+      foot = `Top ${list.length} dari ${count} resto bergerak${c && c.anomali > 0 ? ` · ${c.anomali} anomali` : ''}${c && c.baruBergerak > 0 ? ` · ${c.baruBergerak} mulai bergerak` : ''}${c && c.dataKurang > 0 ? ` · ${c.dataKurang} riwayat kurang` : ''}`;
     }
 
     const max = Math.max(...list.map((r) => r.magnitude), 0);
     return { shown: list, maxValue: max, totalCount: count, footer: foot };
-  }, [lens, recommendations, healthRanking, opportunities, expanded, limit, totalDev, oppResp]);
+  }, [lens, recommendations, healthRanking, opportunities, changeOutlets, chgResp, expanded, limit, totalDev, oppResp]);
 
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
@@ -262,14 +323,15 @@ export const OutletPriorityPanel = memo(function OutletPriorityPanel({ data }: {
           <InfoTooltip content={TOOLTIP_TEXT} />
         </CardTitle>
         {/* VH-7 (§21): question-first subtitle. */}
-        <p className="text-xs text-muted-foreground ml-9"><span className="font-medium text-foreground/70">Resto mana yang perlu perhatian duluan?</span> — tiga lensa prioritas</p>
+        <p className="text-xs text-muted-foreground ml-9"><span className="font-medium text-foreground/70">Resto mana yang perlu perhatian duluan?</span> — empat lensa prioritas</p>
         {/* Lens toggle — same Tabs pattern as ItemPriorityPanel (D5-b). */}
         <div className="ml-9">
           <Tabs value={lens} onValueChange={handleLensChange}>
-            <TabsList className="grid h-8 w-full grid-cols-3">
+            <TabsList className="grid h-8 w-full grid-cols-4">
               <TabsTrigger value="prioritas" className="text-xs">Prioritas</TabsTrigger>
               <TabsTrigger value="kondisi" className="text-xs">Kondisi</TabsTrigger>
               <TabsTrigger value="peluang" className="text-xs">Peluang Rp</TabsTrigger>
+              <TabsTrigger value="perubahan" className="text-xs">Perubahan</TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
@@ -296,6 +358,17 @@ export const OutletPriorityPanel = memo(function OutletPriorityPanel({ data }: {
           </div>
         ) : lens === 'peluang' && oppResp && !oppResp.success ? (
           <p className="py-4 text-center text-xs text-red-600 dark:text-red-400">Error: {oppResp.error || 'Unknown'}</p>
+        ) : lens === 'perubahan' && chgLoading && shown.length === 0 ? (
+          Array.from({ length: 3 }).map((_, i) => <PulseRow key={i} />)
+        ) : lens === 'perubahan' && chgError ? (
+          <div className="py-4 text-center space-y-2">
+            <p className="text-xs text-red-600 dark:text-red-400">Gagal memuat analisa perubahan.</p>
+            <Button onClick={() => chgRefetch()} variant="outline" size="sm">
+              <RotateCcw className="h-3.5 w-3.5" /> Coba Lagi
+            </Button>
+          </div>
+        ) : lens === 'perubahan' && chgResp && !chgResp.success ? (
+          <p className="py-4 text-center text-xs text-red-600 dark:text-red-400">Error: {chgResp.error || 'Unknown'}</p>
         ) : shown.length === 0 ? (
           <p className="py-6 text-center text-xs text-muted-foreground">
             {lens === 'prioritas' && 'Tidak ada resto prioritas pada periode ini.'}
@@ -303,13 +376,20 @@ export const OutletPriorityPanel = memo(function OutletPriorityPanel({ data }: {
             {lens === 'peluang' && (oppResp && oppResp.totalOpportunityRp === 0
               ? 'Tidak ada peluang — semua resto sudah di bawah median areanya.'
               : 'Tidak ada data peluang pada periode ini.')}
+            {lens === 'perubahan' && (chgResp && chgResp.outlets.length === 0
+              ? 'Belum ada data perubahan pada periode ini.'
+              : `Semua resto masih riwayat kurang — butuh ≥ ${chgResp?.thresholds?.minPairs ?? 4} pasangan same-week.`)}
           </p>
         ) : shown.map((r, i) => (
+          <Fragment key={r.key}>
           <div
-            key={r.key}
             className="min-h-11 rounded-lg border bg-card p-3 cursor-pointer transition-colors hover:bg-muted/40 outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-            {...clickableRowProps(() => setFocusOutlet(r.outletCode))}
-            title="Klik untuk buka analisa resto ini"
+            {...clickableRowProps(() => {
+              if (lens === 'perubahan') setExpandedOutlet((c) => (c === r.outletCode ? null : r.outletCode));
+              else setFocusOutlet(r.outletCode);
+            })}
+            aria-expanded={lens === 'perubahan' ? expandedOutlet === r.outletCode : undefined}
+            title={lens === 'perubahan' ? 'Klik untuk lihat item penggerak resto ini' : 'Klik untuk buka analisa resto ini'}
           >
             <div className="flex items-center gap-3">
               {/* Rank badge — round; #1 inverted (matches ItemPriorityPanel). */}
@@ -352,6 +432,31 @@ export const OutletPriorityPanel = memo(function OutletPriorityPanel({ data }: {
                       ↗ Memburuk
                     </span>
                   )}
+                  {/* CHANGE-1 chips (Perubahan lens only). */}
+                  {r.status === 'ANOMALI' && (
+                    <span
+                      className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full border border-red-300 bg-red-50 px-1.5 py-px text-[10px] font-medium leading-4 text-red-600 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400"
+                      title="Bergerak jauh di atas kebiasaannya sendiri (rasio di atas ambang anomali)"
+                    >
+                      ANOMALI
+                    </span>
+                  )}
+                  {r.status === 'BARU_BERGERAK' && (
+                    <span
+                      className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full border border-amber-300 bg-amber-50 px-1.5 py-px text-[10px] font-medium leading-4 text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-400"
+                      title="Riwayat geraknya datar — periode ini mulai bergerak"
+                    >
+                      BARU GERAK
+                    </span>
+                  )}
+                  {r.isFlip && (
+                    <span
+                      className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full border border-zinc-300 bg-zinc-100 px-1.5 py-px text-[10px] font-medium leading-4 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
+                      title="Arah deviasi berbalik (LOSS ↔ SURPLUS) dari periode lalu"
+                    >
+                      ↺
+                    </span>
+                  )}
                 </div>
               </div>
               {/* Main number + lens-specific sub-caption. */}
@@ -359,12 +464,32 @@ export const OutletPriorityPanel = memo(function OutletPriorityPanel({ data }: {
                 <span className={`text-sm font-bold tabular-nums ${r.valueCls}`}>{r.valueLabel}</span>
                 <p className="text-[10px] text-muted-foreground tabular-nums truncate max-w-[150px]" title={r.subLabel}>{r.subLabel}</p>
               </div>
+              {/* CHANGE-1: expand affordance (Perubahan lens). */}
+              {lens === 'perubahan' && (
+                <span className="shrink-0 text-muted-foreground" aria-hidden>
+                  {expandedOutlet === r.outletCode
+                    ? <ChevronDown className="h-4 w-4" />
+                    : <ChevronRight className="h-4 w-4" />}
+                </span>
+              )}
             </div>
             {/* Proportional mini-bar — value relative to the top row. */}
             <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted" aria-hidden>
               <div className={`h-full ${r.barCls}`} style={{ width: `${maxValue > 0 ? Math.min(100, (r.magnitude / maxValue) * 100) : 0}%` }} />
             </div>
           </div>
+          {/* CHANGE-1: Perubahan lens — inline item attribution (expansion-gated fetch). */}
+          {lens === 'perubahan' && expandedOutlet === r.outletCode && (
+            <ChangeItemTable
+              outletCode={r.outletCode}
+              outletName={r.outletName}
+              monthLabel={monthLabel}
+              week={currentWeek}
+              kelompok={kelompok}
+              onOpenResto={() => setFocusOutlet(r.outletCode)}
+            />
+          )}
+          </Fragment>
         ))}
 
         {/* Expand / collapse — only when more rows exist beyond the current limit. */}
