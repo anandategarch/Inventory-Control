@@ -207,6 +207,11 @@ export interface GrowthMetrics {
   bomGrowth: number | null;
   qtyDeviasiGrowth: number | null;
   nominalDeviasiGrowth: number | null;
+  // USER-POLISH: Section 2 "Perubahan (Growth)" additions — single MoM step,
+  // same calcGrowth values the Section 1 rows render.
+  qtyWasteGrowth: number | null;
+  qtySusutGrowth: number | null;
+  qtyTrialGrowth: number | null;
   deviationToSalesRatio: number | null;
   deviationToBomRatio: number | null;
   multiPeriodComparison: Array<Record<string, unknown>>;

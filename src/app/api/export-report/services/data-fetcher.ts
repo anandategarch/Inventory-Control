@@ -467,6 +467,11 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   const growthMetrics = {
     salesGrowth: execSummary.sales.growth, bomGrowth: execSummary.qtyBom.growth,
     qtyDeviasiGrowth: execSummary.qtyDeviasi.growth, nominalDeviasiGrowth: nominalDeviasiGrowthMagnitude,
+    // USER-POLISH: waste/susut/trial growth surfaced for the export's Section 2
+    // (same calcGrowth-based MoM values the Section 1 rows already render).
+    qtyWasteGrowth: execSummary.qtyWaste.growth,
+    qtySusutGrowth: execSummary.qtySusut.growth,
+    qtyTrialGrowth: execSummary.qtyTrial.growth,
     deviationToSalesRatio: execSummary.sales.current > 0 ? execSummary.nominalDeviasi.current / execSummary.sales.current : null,
     deviationToBomRatio: execSummary.deviationToBom,
     multiPeriodComparison: [] as Array<Record<string, unknown>>,

@@ -178,8 +178,13 @@ interface ColumnOpts {
   align?: 'left' | 'right';
 }
 
-const PERIOD_COL_PREV: ColumnOpts = { headerFill: 'D97706', fill: 'FEF3C7' }; // amber — periode pembanding (prev)
-const PERIOD_COL_HIST: ColumnOpts = { headerFill: '047857', fill: 'D1FAE5' }; // emerald — rata-rata historis (Hist)
+// USER-POLISH (export colors): muted professional neutrals — was amber
+// (D97706/FEF3C7) + emerald (047857/D1FAE5), too loud for a finance doc.
+// Prev = warm stone gray, Hist = cool slate gray: quiet, distinct (warm vs
+// cool), and they recede behind the blue-dominant palette (PRIMARY headers
+// + light-blue zebra stay the only strong color).
+const PERIOD_COL_PREV: ColumnOpts = { headerFill: '8A8578', fill: 'F4F3EF' }; // stone — periode pembanding (prev)
+const PERIOD_COL_HIST: ColumnOpts = { headerFill: '75838C', fill: 'EEF1F2' }; // slate — rata-rata historis (Hist)
 
 function makeTable(headers: string[], rows: string[][], colOpts?: Array<ColumnOpts | undefined>): Table {
   const colAlign = (i: number): 'left' | 'right' => colOpts?.[i]?.align ?? (i > 0 ? 'right' : 'left');
@@ -293,11 +298,17 @@ export async function buildDocxReport(
   if (hasSection('growth')) {
     const g = data.growthComparison || {};
     children.push(heading('2. Perubahan (Growth)'));
+    // USER-POLISH: + QTY Waste / Susut / Trial growth — same calcGrowth-based
+    // values the Section 1 rows already show for these metrics (single MoM
+    // step, signed), now surfaced in the growth section itself.
     children.push(makeTable(['Metric', 'Value'], [
       ['Penjualan Growth', fmtPct(g.salesGrowth, true)],
       ['QTY BOM Growth', fmtPct(g.bomGrowth, true)],
       ['QTY Deviasi Growth', fmtPct(g.qtyDeviasiGrowth, true)],
       ['Nominal Deviasi Growth', fmtPct(g.nominalDeviasiGrowth, true)],
+      ['QTY Waste Growth', fmtPct(g.qtyWasteGrowth, true)],
+      ['QTY Susut Growth', fmtPct(g.qtySusutGrowth, true)],
+      ['QTY Trial Growth', fmtPct(g.qtyTrialGrowth, true)],
     ]));
     children.push(divider());
 
@@ -324,26 +335,21 @@ export async function buildDocxReport(
       // Rev 3: Sort by absNominalDeviasi (done in query), display signed nominalDeviasi
       { title: `3.1 Nominal Deviasi Terbesar (${currLabel})`, items: data.topItemsByNominal, cols: ['#', 'Item', 'Resto', `Nominal Deviasi ${currLabel}`], colOpts: undefined, map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.nominalDeviasi)] },
       // Rev 4: Sort by abs(devBom) (done in query), display signed devBom
-      { title: `3.2 % Deviasi To BOM Terbesar (${currLabel})`, items: data.topItemsByDevBom, cols: ['#', 'Item', 'Resto', `% Deviasi To BOM ${currLabel}`, '% Toleransi'], colOpts: undefined, map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtPct(it.devBom, false), it.tolerance != null ? fmtPct(it.tolerance, false) : '—'] },
+      // USER-POLISH: '% Toleransi' column removed per user request — the
+      // deviation magnitude is the story; tolerance is set per item elsewhere.
+      { title: `3.2 % Deviasi To BOM Terbesar (${currLabel})`, items: data.topItemsByDevBom, cols: ['#', 'Item', 'Resto', `% Deviasi To BOM ${currLabel}`], colOpts: undefined, map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtPct(it.devBom, false)] },
       // Rev 2: Add QTY Prev + QTY Hist Avg columns for Waste/Susut/Trial/LossSurplus
       { title: `3.3 QTY Waste Terbesar (${currLabel})`, items: data.topItemsByWaste, cols: ['#', 'Item', 'Satuan', 'Resto', `QTY Waste ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Waste ${currLabel}`], colOpts: TOP_CAT_COL_OPTS, map: (it, i) => [String(i + 1), it.itemName, it.satuan ?? '—', it.outletCode, fmtNum(it.qtyWaste), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyWaste, it.histAvgQty), fmtIDR(it.nominalWaste)] },
       { title: `3.4 QTY Susut Terbesar (${currLabel})`, items: data.topItemsBySusut, cols: ['#', 'Item', 'Satuan', 'Resto', `QTY Susut ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Susut ${currLabel}`], colOpts: TOP_CAT_COL_OPTS, map: (it, i) => [String(i + 1), it.itemName, it.satuan ?? '—', it.outletCode, fmtNum(it.qtySusut), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtySusut, it.histAvgQty), fmtIDR(it.nominalSusut)] },
       { title: `3.5 QTY Trial Terbesar (${currLabel})`, items: data.topItemsByTrial, cols: ['#', 'Item', 'Satuan', 'Resto', `QTY Trial ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Trial ${currLabel}`], colOpts: TOP_CAT_COL_OPTS, map: (it, i) => [String(i + 1), it.itemName, it.satuan ?? '—', it.outletCode, fmtNum(it.qtyTrial), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyTrial, it.histAvgQty), fmtIDR(it.nominalTrial)] },
       { title: `3.6 QTY Loss/Surplus Terbesar (${currLabel})`, items: data.topItemsByLossSurplus, cols: ['#', 'Item', 'Satuan', 'Resto', `QTY Loss/Surplus ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Loss/Surplus ${currLabel}`], colOpts: TOP_CAT_COL_OPTS, map: (it, i) => [String(i + 1), it.itemName, it.satuan ?? '—', it.outletCode, fmtNum(it.qtyLossSurplus), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyLossSurplus, it.histAvgQty), fmtIDR(it.nominalLossSurplus)] },
     ];
-    // H-2b (WI-2c): satu baris keterangan warna sebelum tabel 3.3 pertama yang
-    // memakai pewarnaan kolom periode (ditempatkan setelah judul sub-section).
-    let periodColorLegendAdded = false;
+    // H-2b (WI-2c): the one-line color legend ("Warna kolom: kuning = …")
+    // was removed per user request — the muted professional tints are
+    // self-evident and the headers already label each period group.
     for (const sec of topSections) {
       if (sec.items && sec.items.length > 0) {
         children.push(paragraph(sec.title, true));
-        if (!periodColorLegendAdded && sec.colOpts) {
-          periodColorLegendAdded = true;
-          children.push(new Paragraph({
-            children: [new TextRun({ text: 'Warna kolom: kuning = periode pembanding (prev), hijau = rata-rata historis (Hist).', italics: true, size: 16, color: COLOR.MUTED })],
-            spacing: { after: 80 },
-          }));
-        }
         children.push(makeTable(sec.cols, sec.items.map(sec.map), sec.colOpts));
         children.push(paragraph(''));
       }
