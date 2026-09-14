@@ -33,6 +33,8 @@
 // ============================================================
 import type { ExecutiveSummary } from '@/types/inventory';
 import type { queryVarianceAnalysis } from '@/lib/queries/health-ranking';
+import type { queryOutletHealthRanking } from '@/lib/queries/health-ranking';
+import type { queryAreaAnalysis } from '@/lib/queries/areas';
 
 // PERF-CACHE-06: helper used to short-circuit the cache wrapper for early-return
 // error paths (404 No records found). Throwing this error propagates through
@@ -174,11 +176,16 @@ export interface BreakdownEnriched {
 
 // trend row — derived at route.ts:600-603 from trendAggRows (queryTrendAgg).
 // `sortKey` is stripped by the destructure `({ sortKey, ...rest }) => rest`.
+// EXPAND-1: + lossNominal / surplusNominal (TrendAggRow already carries them —
+// they were dropped by the old mapping) for the Trend section's Loss/Surplus
+// columns. qtyBom kept optional for future use.
 export interface TrendRow {
   weekLabel: string;
   devBom: number;
   sales: number;
   nominal: number;
+  lossNominal: number;
+  surplusNominal: number;
 }
 
 // Growth metrics object (route.ts:586-592) — the Section 2 "Perubahan
@@ -199,8 +206,36 @@ export interface GrowthMetrics {
   deviationToBomRatio: number | null;
 }
 
+// EXPAND-1 — nominal (cost) composition + record counts, derived from the
+// same q-kpis row that feeds deviationBreakdown (DashboardKpisRow already
+// carries wasteCost/susutCost/trialCost/residualCost/totalCost/lossCount/
+// surplusCount). Zero-value when the kpis sections are all off.
+export interface DeviationCost {
+  wasteCost: number;
+  susutCost: number;
+  trialCost: number;
+  residualCost: number;
+  totalCost: number;
+  lossCount: number;
+  surplusCount: number;
+}
+
+// EXPAND-1 — Lampiran: Cakupan Data & Filter. outletCount/itemCount come from
+// ONE raw COUNT(DISTINCT) scan (null when the coverage section is off);
+// recordCount reuses the 404-check COUNT; periodCount/historicalPeriodCount
+// come from the already-loaded weeks metadata; generatedAt is captured at
+// fetch time (the route-level 5-min cache pins it to the cache-write moment).
+export interface CoverageInfo {
+  recordCount: number;
+  outletCount: number | null;
+  itemCount: number | null;
+  periodCount: number;
+  historicalPeriodCount: number;
+  generatedAt: string;
+}
+
 // ============================================================
-//  ReportData — the full data object built by fetchReportData
+// ReportData — the full data object built by fetchReportData
 //  --------------------------------------------------------
 //  Shape mirrors the `data` literal built at route.ts:651-667 verbatim,
 //  minus the dead fields removed by FIX (BUG-3-a P1) — see the file header.
@@ -211,6 +246,11 @@ export interface GrowthMetrics {
 //  zero-value placeholders (null kpis / empty arrays) — docx-builder's
 //  hasSection() gates rendering with the SAME `sections` list that gated
 //  the fetch, so a placeholder is never rendered.
+//
+//  EXPAND-1: + areaAnalysis (q-area — SAME shared cache id as the analysis
+//  pipeline's Area tab), outletRanking (queryOutletHealthRanking, which rides
+//  the shared q-outlet-agg cached scan), deviationCost (from the same q-kpis
+//  row as deviationBreakdown), coverage (Lampiran metadata).
 // ============================================================
 export interface ReportData {
   period: { monthLabel: string; weekLabel: string; comparisonWeek: string | null; comparisonMonth: string | null };
@@ -226,8 +266,12 @@ export interface ReportData {
   topItemsByTrial: TopCatItemTrial[];
   topItemsByLossSurplus: TopCatItemLossSurplus[];
   deviationBreakdown: BreakdownEnriched;
+  deviationCost: DeviationCost;
   varianceAnalysis: Awaited<ReturnType<typeof queryVarianceAnalysis>>;
   trend: TrendRow[];
+  areaAnalysis: Awaited<ReturnType<typeof queryAreaAnalysis>>;
+  outletRanking: Awaited<ReturnType<typeof queryOutletHealthRanking>>;
+  coverage: CoverageInfo | null;
   durationMs: number;
 }
 

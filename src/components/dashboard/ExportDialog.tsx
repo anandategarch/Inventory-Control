@@ -16,13 +16,19 @@ interface SectionOption {
 
 // H-5: '5. Analisis Korelasi BOM' removed per user request (same removal
 // series as Loss-to-Sales / Kepatuhan). Variance + Trend renumbered 6/7 → 5/6.
+// EXPAND-1: report grew 6 → 9 sections — + Analisis per Area, + Resto
+// Prioritas, + Lampiran Cakupan Data & Filter. Keep the keys in sync with
+// EXPORT_SECTION_KEYS (validation.ts) + the hasSection() keys in docx-builder.
 const SECTIONS: SectionOption[] = [
-  { key: 'exec', label: '1. Rangkuman', description: 'KPI: Deviasi, BOM, Waste, Susut, Trial, Residual, Dev/BOM', default: true },
-  { key: 'growth', label: '2. Perubahan (Growth)', description: 'Growth metrics: Sales, BOM, Deviasi, Nominal', default: true },
-  { key: 'topItems', label: '3. Item Prioritas (Top Items)', description: '6 rankings: Nominal, Dev/BOM, Waste, Susut, Trial, Loss/Surplus', default: true },
-  { key: 'breakdown', label: '4. Rincian Komposisi Selisih', description: 'Waste/Susut/Trial/Loss-Surplus composition with %', default: true },
-  { key: 'variance', label: '5. Perubahan Item (Selisih Terbesar)', description: 'Top 10 item dengan selisih nominal terbesar vs periode sebelumnya', default: true },
-  { key: 'trend', label: '6. Trend Antar Periode', description: 'Nominal Deviasi, % Dev/BOM, % Nominal to Sales per periode', default: true },
+  { key: 'exec', label: '1. Ringkuman Eksekutif', description: '16 KPI: Penjualan, Nominal Deviasi, QTY BOM/Deviasi/Waste/Susut/Trial/Loss-Surplus, Total LOSS/SURPLUS, rasio to Sales/BOM — dengan growth vs pembanding', default: true },
+  { key: 'growth', label: '2. Perubahan vs Periode Pembanding', description: 'Tabel nilai sekarang vs pembanding: selisih absolut, selisih pp (rasio), growth %', default: true },
+  { key: 'breakdown', label: '3. Rincian Komposisi Selisih', description: 'Komposisi QTY + Komposisi Nominal (Rp) + jumlah record LOSS/SURPLUS', default: true },
+  { key: 'area', label: '4. Analisis per Area', description: 'Per area: jumlah resto, penjualan, total nominal loss/surplus, % Dev/BOM, % loss to sales + baris TOTAL', default: true },
+  { key: 'outlets', label: '5. Resto Prioritas', description: '10 resto dengan nominal deviasi terbesar: area, QTY deviasi, % Dev/BOM, loss, penjualan', default: true },
+  { key: 'topItems', label: '6. Item Prioritas (Top Items)', description: '6 ranking: Nominal, Dev/BOM, Waste, Susut, Trial, Loss/Surplus — dengan QTY prev, rata-rata historis, vs Hist', default: true },
+  { key: 'variance', label: '7. Perubahan Item (vs Pembanding)', description: 'Memburuk + Membaik: item dengan selisih nominal terbesar vs periode pembanding', default: true },
+  { key: 'trend', label: '8. Trend Antar Periode', description: 'Nominal Deviasi, % Dev/BOM, Loss, Surplus, % Nominal to Sales per periode', default: true },
+  { key: 'coverage', label: '9. Lampiran: Cakupan Data & Filter', description: 'Periode, jumlah record/resto/item, periode historis, filter aktif, waktu dibuat', default: true },
 ];
 
 interface ExportDialogProps {

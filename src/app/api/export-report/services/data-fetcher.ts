@@ -80,13 +80,14 @@ import {
   queryTopItemsByAllCategories,
   queryHistoricalCategoryAvg,
 } from '@/lib/queries';
-import { queryVarianceAnalysis } from '@/lib/queries/health-ranking';
+import { queryVarianceAnalysis, queryOutletHealthRanking } from '@/lib/queries/health-ranking';
+import { queryAreaAnalysis } from '@/lib/queries/areas';
 import { cachedSharedQuery, cachedSharedQueryMap, histPeriodsKeyParts } from '@/lib/queries/query-cache';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import { buildInventoryWhere } from '@/lib/build-where';
 import { resolveComparePeriod } from '@/lib/period-resolver';
-import { withStatementTimeout } from '@/lib/queries/shared';
+import { withStatementTimeout, buildSqlFilters } from '@/lib/queries/shared';
 import { logger } from '@/lib/logger';
 import type { ExecSummaryRow } from '@/lib/queries/dashboard';
 import { EarlyHttpResponse } from '@/lib/early-http-response';
@@ -170,23 +171,31 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   //  Keep this list in sync with EXPORT_SECTION_KEYS (validation.ts),
   //  ExportDialog.tsx and the hasSection() keys in docx-builder.ts.
   // ============================================================
-  const ALL_EXPORT_SECTIONS = ['exec', 'growth', 'topItems', 'breakdown', 'variance', 'trend'] as const;
+  const ALL_EXPORT_SECTIONS = ['exec', 'growth', 'topItems', 'breakdown', 'area', 'outlets', 'variance', 'trend', 'coverage'] as const;
   const need = new Set<string>(sections ?? ALL_EXPORT_SECTIONS);
   // Section → data dependencies (verified against docx-builder.ts, not
   // assumed): exec renders executiveSummary (q-kpis + prev q-exec-summary);
   // growth renders growthComparison (derived from the SAME execSummary —
   // growth values + _prevMetrics need the prev-period row); breakdown
-  // renders deviationBreakdown (derived from the same q-kpis row);
-  // topItems renders the 6 top tables (q-top-nominal / q-top-devbom /
-  // q-topcat + prev q-topcat + 4× q-hist-catavg); variance → q-variance;
-  // trend → q-trend. The header/footer need metadata only (no SQL).
+  // renders deviationBreakdown + deviationCost (derived from the same q-kpis
+  // row); topItems renders the 6 top tables (q-top-nominal / q-top-devbom /
+  // q-topcat + prev q-topcat + 4× q-hist-catavg); area → q-area; outlets →
+  // q-outlet-agg (via queryOutletHealthRanking); variance → q-variance;
+  // trend → q-trend; coverage → ONE COUNT(DISTINCT) scan + the metadata the
+  // pipeline already loaded. The header/footer need metadata only (no SQL).
   const needExec = need.has('exec');
   const needGrowth = need.has('growth');
   const needTopItems = need.has('topItems');
   const needBreakdown = need.has('breakdown');
+  const needArea = need.has('area');
+  const needOutlets = need.has('outlets');
   const needVariance = need.has('variance');
   const needTrend = need.has('trend');
-  const needKpis = needExec || needGrowth || needBreakdown;
+  const needCoverage = need.has('coverage');
+  // EXPAND-1: 'area' also needs the q-kpis row — its TOTAL row renders the
+  // overall % Dev/BOM + Loss-to-Sales ratios (execSummary derivations), so
+  // the kpis fetch is gated on needArea too. Cheap: shared cached q-* row.
+  const needKpis = needExec || needGrowth || needBreakdown || needArea;
   const needPrevSummary = needExec || needGrowth;
 
   // PERF-CACHE-06: monthParam + week are `const` (narrowed to `string` by the
@@ -359,6 +368,8 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   const [kpis, prevSummary, topNominal, topDevBom, topCategories, prevTopCategories, trendAggRows,
     // Historical category averages (Rev 2)
     histWasteMap, histSusutMap, histTrialMap, histLossSurplusMap,
+    // EXPAND-1: area analysis + outlet ranking + coverage counts
+    areaAnalysisRows, outletRankingRows, coverageCounts,
   ] = await Promise.all([
     // PERF (TAHAP-2 / P2-9): kpis + trendAgg + category tops use the shared
     // per-query cache (same queryIds as the analysis pipeline).
@@ -459,6 +470,32 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
       { ...histPeriodsKeyParts(historicalPeriodsList), filters: filterOpts, extra: { metric: 'lossSurplus' } },
       () => queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'lossSurplus'),
     ) : Promise.resolve(new Map<string, { avgQty: number; avgNominal: number }>()),
+    // EXPAND-1 (section 'area'): q-area — SAME queryId + key as the analysis
+    // pipeline's Area tab (run-queries.ts:245-249), so "view dashboard →
+    // export" reads the warm row instead of rescanning the period.
+    needArea ? cachedSharedQuery(
+      'q-area',
+      { month, week, filters: filterOpts },
+      () => queryAreaAnalysis(week, month, filterOpts),
+    ) : Promise.resolve([]),
+    // EXPAND-1 (section 'outlets'): queryOutletHealthRanking rides the shared
+    // q-outlet-agg cached scan (superset also used by /api/recommendations +
+    // the analysis pipeline) — the threshold is passed explicitly so the
+    // cache key converges with those callers (both load the same runtime
+    // settings value).
+    needOutlets ? queryOutletHealthRanking(week, month, filterOpts, thresholds.HIGH_LOSS_NOMINAL_THRESHOLD)
+      : Promise.resolve([]),
+    // EXPAND-1 (section 'coverage'): ONE COUNT(DISTINCT) scan for the Lampiran
+    // outlet/item counts — the record count itself reuses the 404-check
+    // COUNT above (currRecordCount, always fetched). buildSqlFilters keeps
+    // the filter semantics identical to the rest of the pipeline (alias 'ir').
+    needCoverage ? withStatementTimeout((tx) => tx.$queryRaw<Array<{ outletCount: number | bigint; itemCount: number | bigint }>>`
+      SELECT CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
+             CAST(COUNT(DISTINCT ir."itemId") AS INTEGER) as "itemCount"
+      FROM "InventoryRecord" ir
+      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+        ${buildSqlFilters(filterOpts)}
+    `) : Promise.resolve(null),
   ]);
   const topWasteRows = topCategories.waste;
   const topSusutRows = topCategories.susut;
@@ -538,14 +575,46 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
 
   const trend = trendAggRows.map(r => {
     const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
-    return { weekLabel: `${r.weekLabel} ${r.monthLabel?.split(' ')[0].slice(0, 3)}`, sortKey: `${mk}|${String(parseInt(r.weekLabel?.replace(/\D/g, '')) || 0).padStart(2, '0')}`, devBom: r.devBom, sales: r.sales, nominal: r.nominal };
+    // EXPAND-1: carry lossNominal/surplusNominal through (TrendAggRow already
+    // returns them — the old mapping dropped them, so the Trend section had
+    // no Loss/Surplus columns).
+    return { weekLabel: `${r.weekLabel} ${r.monthLabel?.split(' ')[0].slice(0, 3)}`, sortKey: `${mk}|${String(parseInt(r.weekLabel?.replace(/\D/g, '')) || 0).padStart(2, '0')}`, devBom: r.devBom, sales: r.sales, nominal: r.nominal, lossNominal: r.lossNominal, surplusNominal: r.surplusNominal };
   }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).map(({ sortKey, ...rest }) => rest);
+
+  // EXPAND-1: nominal (cost) composition from the SAME q-kpis row that fed
+  // `breakdown` — zero-value when the kpis sections are all off (placeholder,
+  // never rendered: docx-builder gates on the same sections list).
+  const deviationCost = {
+    wasteCost: kpis?.wasteCost ?? 0,
+    susutCost: kpis?.susutCost ?? 0,
+    trialCost: kpis?.trialCost ?? 0,
+    residualCost: kpis?.residualCost ?? 0,
+    totalCost: kpis?.totalCost ?? 0,
+    lossCount: kpis?.lossCount ?? 0,
+    surplusCount: kpis?.surplusCount ?? 0,
+  };
+
+  // EXPAND-1: Lampiran coverage object — record count reuses the 404-check
+  // COUNT, period/historical counts come from the already-loaded weeks
+  // metadata, generatedAt is captured here (the route-level 5-min docx cache
+  // pins it to the cache-write moment — factual, deterministic per cache row).
+  const coverage = needCoverage ? {
+    recordCount: currRecordCount,
+    outletCount: coverageCounts ? Number(coverageCounts[0]?.outletCount ?? 0) : null,
+    itemCount: coverageCounts ? Number(coverageCounts[0]?.itemCount ?? 0) : null,
+    periodCount: allPeriods.length,
+    historicalPeriodCount: historicalPeriods.length,
+    generatedAt: new Date().toISOString(),
+  } : null;
 
   // (PERF H-8 QUICK WIN 1: the outletHealthRanking fetch was removed — its
   // DOCX section (restoPriority) no longer exists, so the query was pure
   // dead compute. topItemForCrossOutlet + queryGlobalItemSearch were removed
   // along with the GlobalItemSearchModal — the cross-outlet section was
   // already removed from the report per earlier user request.)
+  // EXPAND-1: outletRanking is BACK — but as a section-gated fetch ('outlets'
+  // key, new Resto Prioritas section) riding the shared cached q-outlet-agg
+  // scan instead of the old uncached bespoke query.
   const data: ReportData = {
     period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
     // FIX (BUG-KELOMPOK-GLOBAL): include kelompok in response filters
@@ -556,8 +625,12 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     topItemsByNominal: topNominal, topItemsByDevBom: topDevBom,
     topItemsByWaste: topWaste, topItemsBySusut: topSusut, topItemsByTrial: topTrial, topItemsByLossSurplus: topLossSurplus,
     deviationBreakdown: breakdownEnriched,
+    deviationCost,
     varianceAnalysis,
     trend,
+    areaAnalysis: areaAnalysisRows,
+    outletRanking: outletRankingRows,
+    coverage,
     durationMs: Date.now() - startedAt,
   };
 

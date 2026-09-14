@@ -9,17 +9,25 @@
 //    3. Table helpers — tableCell() + CellOpts + makeTable() + fmtVsHist()
 //    4. buildDocxReport(data, ctx) — assembles the full Word document:
 //         - Title + period header
-//         - Section 1: Executive Summary table (13 rows, growth column)
-//         - Section 2: Growth metrics (4-row table)
-//         - Section 3: Top Items by category (6 sub-tables, 3.1–3.6)
-//         - Section 4: Deviation Breakdown composition (5-row table)
-//         - Section 5: Variance Analysis (top-10 worsened items)
-//         - Section 6: Trend across periods
+//         - Section 1: Ringkuman Eksekutif (16-row KPI table, growth column)
+//         - Section 2: Perubahan vs Periode Pembanding (curr/prev/delta/growth)
+//         - Section 3: Rincian Komposisi Selisih (QTY + Nominal + record counts)
+//         - Section 4: Analisis per Area (EXPAND-1)
+//         - Section 5: Resto Prioritas top-10 (EXPAND-1)
+//         - Section 6: Top Items by category (6 sub-tables, 6.1–6.6)
+//         - Section 7: Perubahan Item — Memburuk + Membaik (EXPAND-1)
+//         - Section 8: Trend across periods (+ Loss/Surplus columns)
+//         - Section 9: Lampiran — Cakupan Data & Filter (EXPAND-1)
 //         - Footer
 //       Returns { bufferBase64, fileName } for the cache wrapper (P3-HYG-4).
 //       FIX (BUG-3-a P2): the data-fetcher now fetches ONLY what the
 //       selected ?sections= actually render — the section list above is the
 //       source of truth for that mapping (see data-fetcher.ts header).
+//
+//       EXPAND-1 (user request: "laporan export hanya 6 section — perluas
+//       menjadi informasi lengkap, detail, mudah dibaca; jangan ada kalimat
+//       generative AI"): 6 → 9 sections. Every new block renders pure SQL
+//       aggregates / factual metadata — no generated narrative text.
 //
 //       H-5: "5. Analisis Korelasi BOM" (aggregate alignment table + 5.1
 //       per-record rule-fire table) REMOVED per user request — same removal
@@ -160,6 +168,24 @@ function fmtVsHist(current: number | null, histAvg: number | null): string {
   return '= 0%';
 }
 
+// EXPAND-1: percentage-point delta for ratio rows ("+0.54 pp") — clearer
+// than a growth-of-a-percentage for % Dev/BOM-style metrics.
+function fmtPp(v: number | null | undefined): string {
+  if (v == null || isNaN(v) || !isFinite(v)) return '—';
+  const pp = v * 100;
+  const sign = pp > 0 ? '+' : '';
+  return `${sign}${pp.toFixed(2)} pp`;
+}
+
+// EXPAND-1: report generation timestamp, Asia/Jakarta (user timezone),
+// formatted id-ID ("17 Februari 2026 pukul 14.35.00"). Pure date math —
+// deterministic for a given ISO input.
+function fmtDateTimeWIB(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return `${d.toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'medium', timeZone: 'Asia/Jakarta' })} WIB`;
+}
+
 // ============================================================
 //  H-2b (WI-2) — per-column table options + period-group colors
 //  --------------------------------------------------------
@@ -256,20 +282,25 @@ export async function buildDocxReport(
     : '—';
   // Historical periods: show range "Jan-Jul 26" (earliest to latest)
   const histMonths = ctx.historicalPeriods.map(p => shortMonth(p.monthLabel)).filter(m => m !== '—');
+  // EXPAND-1 FIX (latent): the range used to render "JUN 26-JAN 26"
+  // (latest-earliest — inverted vs the "Jan-Jul 26" convention the comment
+  // below the helpers describes). historicalPeriods is sorted ascending, so
+  // [0] = earliest and [last] = latest.
   const histLabel = histMonths.length === 0
     ? 'Hist (—)'
     : histMonths.length === 1
       ? `Hist (${histMonths[0]})`
-      : `Hist (${histMonths[histMonths.length - 1]}-${histMonths[0]})`;
+      : `Hist (${histMonths[0]}-${histMonths[histMonths.length - 1]})`;
 
   // Title — simplified header per user request
   const restoName = data.filters.outletCode && data.filters.outletCode !== 'all' ? data.filters.outletCode : 'Semua Resto';
   const compareText = data.period.comparisonMonth
     ? ` vs ${prevLabel}`
     : '';
-  // History range label (e.g., "Jan-Jul 26") for header
+  // History range label (e.g., "Jan-Jul 26") for header — EXPAND-1 FIX:
+  // same inversion fix as histLabel above (earliest-latest).
   const histRange = histMonths.length >= 2
-    ? `${histMonths[histMonths.length - 1]}-${histMonths[0]}`
+    ? `${histMonths[0]}-${histMonths[histMonths.length - 1]}`
     : histMonths.length === 1
       ? histMonths[0]
       : currLabel;
@@ -288,47 +319,193 @@ export async function buildDocxReport(
 
   if (hasSection('exec')) {
     const s = data.executiveSummary;
-    children.push(heading('1. Rangkuman'));
+    const pm = s._prevMetrics;
+    // EXPAND-1: derived ratio helpers — % Nominal Deviasi to Sales (signed,
+    // same formula as growthComparison.deviationToSalesRatio) for both the
+    // current and the compare period (the prev values come from the same
+    // prev SQL row the ExecutiveSummary already carries).
+    const devToSalesCur = s.sales.current > 0 ? s.nominalDeviasi.current / s.sales.current : null;
+    const devToSalesPrev = (s.sales.previous != null && s.sales.previous > 0 && s.nominalDeviasi.previous != null)
+      ? s.nominalDeviasi.previous / s.sales.previous
+      : null;
+    children.push(heading('1. Ringkuman Eksekutif'));
+    // EXPAND-1: table grew 10 → 16 rows — Penjualan, % Nominal to Sales,
+    // Total LOSS/SURPLUS + % Loss/Surplus to Sales re-added (user asked for a
+    // complete, detailed report). All values are the same q-kpis / q-exec-
+    // summary aggregates the dashboard renders — no derived narrative.
     children.push(makeTable(['Metrik', currLabel, 'Perubahan', prevLabel], [
+      ['Penjualan', fmtIDR(s.sales.current), s.sales.growth != null ? fmtPct(s.sales.growth, true) : '—', fmtIDR(s.sales.previous)],
       ['Nominal Deviasi', fmtIDR(s.nominalDeviasi.current), s.nominalDeviasi.growth != null ? fmtPct(s.nominalDeviasi.growth, true) : '—', fmtIDR(s.nominalDeviasi.previous)],
+      ['% Nominal Deviasi to Sales', fmtPct(devToSalesCur, false), devToSalesCur != null && devToSalesPrev != null ? fmtPct(calcGrowth(devToSalesCur, devToSalesPrev), true) : '—', fmtPct(devToSalesPrev, false)],
       ['QTY BOM', fmtNum(s.qtyBom.current), s.qtyBom.growth != null ? fmtPct(s.qtyBom.growth, true) : '—', fmtNum(s.qtyBom.previous)],
       ['QTY Deviasi', fmtNum(s.qtyDeviasi.current), s.qtyDeviasi.growth != null ? fmtPct(s.qtyDeviasi.growth, true) : '—', fmtNum(s.qtyDeviasi.previous)],
+      ['% Deviasi To BOM', fmtPct(s.deviationToBom, false), pm?.deviationToBom != null ? fmtPct(calcGrowth(s.deviationToBom, pm.deviationToBom), true) : '—', pm?.deviationToBom != null ? fmtPct(pm.deviationToBom, false) : '—'],
       ['QTY Waste', fmtNum(s.qtyWaste.current), s.qtyWaste.growth != null ? fmtPct(s.qtyWaste.growth, true) : '—', fmtNum(s.qtyWaste.previous)],
       ['QTY Susut', fmtNum(s.qtySusut.current), s.qtySusut.growth != null ? fmtPct(s.qtySusut.growth, true) : '—', fmtNum(s.qtySusut.previous)],
       ['QTY Trial', fmtNum(s.qtyTrial.current), s.qtyTrial.growth != null ? fmtPct(s.qtyTrial.growth, true) : '—', fmtNum(s.qtyTrial.previous)],
       ['QTY Loss/Surplus', fmtNum(s.qtyLossSurplus.current), s.qtyLossSurplus.growth != null ? fmtPct(s.qtyLossSurplus.growth, true) : '—', fmtNum(s.qtyLossSurplus.previous)],
-      ['% Deviasi To BOM', fmtPct(s.deviationToBom, false), s._prevMetrics?.deviationToBom != null ? fmtPct(calcGrowth(s.deviationToBom, s._prevMetrics.deviationToBom), true) : '—', s._prevMetrics?.deviationToBom != null ? fmtPct(s._prevMetrics.deviationToBom, false) : '—'],
-      // H-2b (WI-3b): 'Loss To Sales' / 'Total LOSS' / 'Total SURPLUS' rows removed per user request.
-      ['Loss/Surplus Qty', fmtNum(s.residualLossQty), s._prevMetrics?.residualLossQty != null ? fmtPct(calcGrowth(s.residualLossQty, s._prevMetrics.residualLossQty), true) : '—', s._prevMetrics?.residualLossQty != null ? fmtNum(s._prevMetrics.residualLossQty) : '—'],
-      ['Loss/Surplus %', fmtPct(s.residualLossPct, false), s._prevMetrics?.residualLossPct != null ? fmtPct(calcGrowth(s.residualLossPct, s._prevMetrics.residualLossPct), true) : '—', s._prevMetrics?.residualLossPct != null ? fmtPct(s._prevMetrics.residualLossPct, false) : '—'],
+      ['Loss/Surplus Qty', fmtNum(s.residualLossQty), pm?.residualLossQty != null ? fmtPct(calcGrowth(s.residualLossQty, pm.residualLossQty), true) : '—', pm?.residualLossQty != null ? fmtNum(pm.residualLossQty) : '—'],
+      ['Loss/Surplus %', fmtPct(s.residualLossPct, false), pm?.residualLossPct != null ? fmtPct(calcGrowth(s.residualLossPct, pm.residualLossPct), true) : '—', pm?.residualLossPct != null ? fmtPct(pm.residualLossPct, false) : '—'],
+      ['Total LOSS', fmtIDR(s.totalLoss), pm?.totalLoss != null ? fmtPct(calcGrowth(s.totalLoss, pm.totalLoss), true) : '—', pm?.totalLoss != null ? fmtIDR(pm.totalLoss) : '—'],
+      ['Total SURPLUS', fmtIDR(s.totalSurplus), pm?.totalSurplus != null ? fmtPct(calcGrowth(s.totalSurplus, pm.totalSurplus), true) : '—', pm?.totalSurplus != null ? fmtIDR(pm.totalSurplus) : '—'],
+      ['% Loss to Sales', fmtPct(s.lossToSales, false), pm?.lossToSales != null ? fmtPct(calcGrowth(s.lossToSales, pm.lossToSales), true) : '—', pm?.lossToSales != null ? fmtPct(pm.lossToSales, false) : '—'],
+      ['% Surplus to Sales', fmtPct(s.surplusToSales, false), pm?.surplusToSales != null ? fmtPct(calcGrowth(s.surplusToSales, pm.surplusToSales), true) : '—', pm?.surplusToSales != null ? fmtPct(pm.surplusToSales, false) : '—'],
     ], [undefined, undefined, undefined, PERIOD_COL_PREV]));
 
   }
   if (hasSection('growth')) {
-    const g = data.growthComparison || {};
-    children.push(heading('2. Perubahan (Growth)'));
-    // USER-POLISH: + QTY Waste / Susut / Trial growth — same calcGrowth-based
-    // values the Section 1 rows already show for these metrics (single MoM
-    // step, signed), now surfaced in the growth section itself.
-    children.push(makeTable(['Metric', 'Value'], [
-      ['Penjualan Growth', fmtPct(g.salesGrowth, true)],
-      ['QTY BOM Growth', fmtPct(g.bomGrowth, true)],
-      ['QTY Deviasi Growth', fmtPct(g.qtyDeviasiGrowth, true)],
-      ['Nominal Deviasi Growth', fmtPct(g.nominalDeviasiGrowth, true)],
-      ['QTY Waste Growth', fmtPct(g.qtyWasteGrowth, true)],
-      ['QTY Susut Growth', fmtPct(g.qtySusutGrowth, true)],
-      ['QTY Trial Growth', fmtPct(g.qtyTrialGrowth, true)],
-    ]));
+    const s = data.executiveSummary;
+    const pm = s._prevMetrics;
+    // EXPAND-1: the old "Metric | Value" 7-row growth list became a full
+    // before/after comparison table — current value, compare value, absolute
+    // delta (IDR/qty) or percentage-point delta (ratios), and the growth %.
+    // All from the same execSummary + _prevMetrics values Section 1 renders.
+    const devToSalesCur = s.sales.current > 0 ? s.nominalDeviasi.current / s.sales.current : null;
+    const devToSalesPrev = (s.sales.previous != null && s.sales.previous > 0 && s.nominalDeviasi.previous != null)
+      ? s.nominalDeviasi.previous / s.sales.previous
+      : null;
+    // value-row: |label| + curr + prev + (curr - prev) + growth%
+    const vr = (label: string, cur: number | null, prev: number | null, fmt: typeof fmtIDR, growth: number | null): string[] => [
+      label, fmt(cur), fmt(prev),
+      cur != null && prev != null ? fmt(cur - prev) : '—',
+      growth != null ? fmtPct(growth, true) : '—',
+    ];
+    // ratio-row: delta shown in percentage points ("pp") — clearer than a %
+    // growth-of-a-percentage for ratios.
+    const rr = (label: string, cur: number | null, prev: number | null, growth: number | null): string[] => [
+      label, fmtPct(cur, false), fmtPct(prev, false),
+      cur != null && prev != null ? fmtPp(cur - prev) : '—',
+      growth != null ? fmtPct(growth, true) : '—',
+    ];
+    children.push(heading('2. Perubahan vs Periode Pembanding'));
+    children.push(makeTable(['Metrik', currLabel, prevLabel, 'Selisih', 'Growth %'], [
+      vr('Penjualan (Rp)', s.sales.current, s.sales.previous, fmtIDR, s.sales.growth),
+      vr('Nominal Deviasi (Rp)', s.nominalDeviasi.current, s.nominalDeviasi.previous, fmtIDR, s.nominalDeviasi.growth),
+      vr('QTY BOM', s.qtyBom.current, s.qtyBom.previous, fmtNum, s.qtyBom.growth),
+      vr('QTY Deviasi', s.qtyDeviasi.current, s.qtyDeviasi.previous, fmtNum, s.qtyDeviasi.growth),
+      vr('QTY Waste', s.qtyWaste.current, s.qtyWaste.previous, fmtNum, s.qtyWaste.growth),
+      vr('QTY Susut', s.qtySusut.current, s.qtySusut.previous, fmtNum, s.qtySusut.growth),
+      vr('QTY Trial', s.qtyTrial.current, s.qtyTrial.previous, fmtNum, s.qtyTrial.growth),
+      vr('Total LOSS (Rp)', s.totalLoss, pm?.totalLoss ?? null, fmtIDR, pm?.totalLoss != null ? calcGrowth(s.totalLoss, pm.totalLoss) : null),
+      vr('Total SURPLUS (Rp)', s.totalSurplus, pm?.totalSurplus ?? null, fmtIDR, pm?.totalSurplus != null ? calcGrowth(s.totalSurplus, pm.totalSurplus) : null),
+      rr('% Deviasi To BOM', s.deviationToBom, pm?.deviationToBom ?? null, pm?.deviationToBom != null ? calcGrowth(s.deviationToBom, pm.deviationToBom) : null),
+      rr('% Nominal Deviasi to Sales', devToSalesCur, devToSalesPrev, devToSalesCur != null && devToSalesPrev != null ? calcGrowth(devToSalesCur, devToSalesPrev) : null),
+      rr('% Loss to Sales', s.lossToSales, pm?.lossToSales ?? null, pm?.lossToSales != null ? calcGrowth(s.lossToSales, pm.lossToSales) : null),
+      rr('% Surplus to Sales', s.surplusToSales, pm?.surplusToSales ?? null, pm?.surplusToSales != null ? calcGrowth(s.surplusToSales, pm.surplusToSales) : null),
+    ], [undefined, undefined, PERIOD_COL_PREV, undefined, undefined]));
+    children.push(paragraph('Selisih baris rasio dinyatakan dalam poin persentase (pp). Growth % = (nilai sekarang − nilai pembanding) / |nilai pembanding|.', false, 16));
     children.push(divider());
 
   }
+  if (hasSection('breakdown')) {
+    const b = data.deviationBreakdown || {};
+    const cst = data.deviationCost || { wasteCost: 0, susutCost: 0, trialCost: 0, residualCost: 0, totalCost: 0, lossCount: 0, surplusCount: 0 };
+    const bdTotal = b.total || 0;
+    children.push(heading('3. Rincian Komposisi Selisih'));
+    // EXPAND-1: 3 sub-tables — QTY composition (as before), Nominal (Rp)
+    // composition (from the same q-kpis row's cost aggregates), and the
+    // LOSS/SURPLUS record counts. Same component set in all three so the
+    // reader can cross-read QTY ↔ Nominal.
+    children.push(paragraph('3.1 Komposisi QTY', true));
+    children.push(makeTable(['Komponen', 'QTY', '% dari Total'], [
+      ['QTY Waste', fmtNum(b.waste), bdTotal > 0 ? `${((b.waste / bdTotal) * 100).toFixed(1)}%` : '—'],
+      ['QTY Susut', fmtNum(b.susut), bdTotal > 0 ? `${((b.susut / bdTotal) * 100).toFixed(1)}%` : '—'],
+      ['QTY Trial', fmtNum(b.trial), bdTotal > 0 ? `${((b.trial / bdTotal) * 100).toFixed(1)}%` : '—'],
+      ['Loss/Surplus Qty', fmtNum(b.residual), bdTotal > 0 ? `${((b.residual / bdTotal) * 100).toFixed(1)}%` : '—'],
+      ['TOTAL', fmtNum(bdTotal), '100%'],
+    ]));
+    children.push(paragraph(''));
+    children.push(paragraph('3.2 Komposisi Nominal (Rp)', true));
+    const ct = cst.totalCost || 0;
+    children.push(makeTable(['Komponen', 'Nominal (Rp)', '% dari Total'], [
+      ['Waste', fmtIDR(cst.wasteCost), ct > 0 ? `${((cst.wasteCost / ct) * 100).toFixed(1)}%` : '—'],
+      ['Susut', fmtIDR(cst.susutCost), ct > 0 ? `${((cst.susutCost / ct) * 100).toFixed(1)}%` : '—'],
+      ['Trial', fmtIDR(cst.trialCost), ct > 0 ? `${((cst.trialCost / ct) * 100).toFixed(1)}%` : '—'],
+      ['Loss/Surplus', fmtIDR(cst.residualCost), ct > 0 ? `${((cst.residualCost / ct) * 100).toFixed(1)}%` : '—'],
+      ['TOTAL', fmtIDR(ct), '100%'],
+    ]));
+    children.push(paragraph(''));
+    children.push(paragraph('3.3 Jumlah Record', true));
+    children.push(makeTable(['Kategori', 'Jumlah Record'], [
+      ['LOSS', fmtNum(cst.lossCount)],
+      ['SURPLUS', fmtNum(cst.surplusCount)],
+      ['TOTAL', fmtNum((cst.lossCount || 0) + (cst.surplusCount || 0))],
+    ]));
+    children.push(paragraph('Residual (Loss/Surplus) = selisih yang tidak terjelaskan oleh Waste + Susut + Trial.', false, 16));
+    children.push(divider());
+
+  }
+  // ============================================================
+  // EXPAND-1 — NEW Section 4: Analisis per Area
+  // --------------------------------------------------------
+  // Per-area aggregates (queryAreaAnalysis, shared q-area cache row with
+  // the dashboard's Area tab): outlet count, sales, total abs Loss/Surplus
+  // nominal, % Dev/BOM, % Loss to Sales. TOTAL row uses the overall
+  // execSummary ratios (the data-fetcher gates the q-kpis fetch on needArea
+  // so these are always the real values when this section renders).
+  // ============================================================
+  if (hasSection('area')) {
+    const ar = data.areaAnalysis || [];
+    if (ar.length > 0) {
+      const s = data.executiveSummary;
+      const sumOutletCount = ar.reduce((acc, r) => acc + (r.outletCount || 0), 0);
+      const sumSales = ar.reduce((acc, r) => acc + (r.totalSales || 0), 0);
+      const sumAbsNominal = ar.reduce((acc, r) => acc + (r.totalAbsNominal || 0), 0);
+      children.push(heading('4. Analisis per Area'));
+      children.push(makeTable(['Area', 'Jumlah Resto', 'Penjualan', 'Total Nominal Loss/Surplus', '% Dev/BOM', '% Loss to Sales'],
+        [
+          ...ar.map((r) => [
+            r.area,
+            fmtNum(r.outletCount),
+            fmtIDR(r.totalSales),
+            fmtIDR(r.totalAbsNominal),
+            fmtPct(r.avgDevBom, false),
+            r.lossToSales != null ? fmtPct(r.lossToSales, false) : '—',
+          ]),
+          ['TOTAL', fmtNum(sumOutletCount), fmtIDR(sumSales), fmtIDR(sumAbsNominal), fmtPct(s.deviationToBom, false), fmtPct(s.lossToSales, false)],
+        ],
+        [undefined, undefined, undefined, undefined, undefined, undefined]));
+      children.push(divider());
+    }
+
+  }
+  // ============================================================
+  // EXPAND-1 — NEW Section 5: Resto Prioritas
+  // --------------------------------------------------------
+  // Top 10 outlets by |nominal deviasi| (queryOutletHealthRanking — rides
+  // the shared cached q-outlet-agg scan). % Dev/BOM per outlet derived from
+  // the row's own qty aggregates. Factual ranking — no narrative.
+  // ============================================================
+  if (hasSection('outlets')) {
+    const orr = data.outletRanking || [];
+    if (orr.length > 0) {
+      children.push(heading('5. Resto Prioritas'));
+      children.push(paragraph('10 resto dengan nominal deviasi terbesar (diurutkan berdasarkan nilai absolut). Angka negatif = LOSS/rugi (ditandai merah).'));
+      children.push(makeTable(['#', 'Kode Resto', 'Nama Resto', 'Area', 'Nominal Deviasi', 'QTY Deviasi', '% Dev/BOM', 'Loss (Rp)', 'Penjualan'],
+        orr.slice(0, 10).map((o, i) => [
+          String(i + 1),
+          o.outletCode,
+          o.outletName,
+          o.area,
+          fmtIDR(o.nominalDeviasi),
+          fmtNum(o.totalQtyDeviasi),
+          o.totalQtyBom > 0 ? fmtPct(o.totalQtyDeviasi / o.totalQtyBom, false) : '—',
+          fmtIDR(o.lossNominal),
+          fmtIDR(o.sales),
+        ]),
+        [undefined, { align: 'left' }, { align: 'left' }, { align: 'left' }, undefined, undefined, undefined, undefined, undefined]));
+      children.push(divider());
+    }
+
+  }
   if (hasSection('topItems')) {
-    children.push(heading('3. Item Prioritas (Top Items)'));
+    children.push(heading('6. Item Prioritas (Top Items)'));
     children.push(paragraph('Item-item dengan kontribusi terbesar berdasarkan berbagai kategori. Angka negatif = LOSS/rugi (ditandai merah).'));
-    // H-2b (WI-1c): kolom "Satuan" disisipkan setelah "Item" di tabel 3.3-3.6 (unit of
+    // H-2b (WI-1c): kolom "Satuan" disisipkan setelah "Item" di tabel 6.3-6.6 (unit of
     // measure per item — MAX(ir."satuan") dari query, nullable → '—').
-    // H-2b (WI-2b): colOpts untuk tabel 3.3-3.6 (9 kolom): Satuan left-align,
+    // H-2b (WI-2b): colOpts untuk tabel 6.3-6.6 (9 kolom): Satuan left-align,
     // kolom prev (amber) + kolom Hist (emerald); kolom current & derived netral.
+    // EXPAND-1: section renumbered 3 → 6 (Area + Resto Prioritas inserted above).
     const TOP_CAT_COL_OPTS: Array<ColumnOpts | undefined> = [
       undefined,          // '#'
       undefined,          // 'Item'
@@ -342,16 +519,16 @@ export async function buildDocxReport(
     ];
     const topSections = [
       // Rev 3: Sort by absNominalDeviasi (done in query), display signed nominalDeviasi
-      { title: `3.1 Nominal Deviasi Terbesar (${currLabel})`, items: data.topItemsByNominal, cols: ['#', 'Item', 'Resto', `Nominal Deviasi ${currLabel}`], colOpts: undefined, map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.nominalDeviasi)] },
+      { title: `6.1 Nominal Deviasi Terbesar (${currLabel})`, items: data.topItemsByNominal, cols: ['#', 'Item', 'Resto', `Nominal Deviasi ${currLabel}`], colOpts: undefined, map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtIDR(it.nominalDeviasi)] },
       // Rev 4: Sort by abs(devBom) (done in query), display signed devBom
       // USER-POLISH: '% Toleransi' column removed per user request — the
       // deviation magnitude is the story; tolerance is set per item elsewhere.
-      { title: `3.2 % Deviasi To BOM Terbesar (${currLabel})`, items: data.topItemsByDevBom, cols: ['#', 'Item', 'Resto', `% Deviasi To BOM ${currLabel}`], colOpts: undefined, map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtPct(it.devBom, false)] },
+      { title: `6.2 % Deviasi To BOM Terbesar (${currLabel})`, items: data.topItemsByDevBom, cols: ['#', 'Item', 'Resto', `% Deviasi To BOM ${currLabel}`], colOpts: undefined, map: (it, i) => [String(i + 1), it.itemName, it.outletCode, fmtPct(it.devBom, false)] },
       // Rev 2: Add QTY Prev + QTY Hist Avg columns for Waste/Susut/Trial/LossSurplus
-      { title: `3.3 QTY Waste Terbesar (${currLabel})`, items: data.topItemsByWaste, cols: ['#', 'Item', 'Satuan', 'Resto', `QTY Waste ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Waste ${currLabel}`], colOpts: TOP_CAT_COL_OPTS, map: (it, i) => [String(i + 1), it.itemName, it.satuan ?? '—', it.outletCode, fmtNum(it.qtyWaste), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyWaste, it.histAvgQty), fmtIDR(it.nominalWaste)] },
-      { title: `3.4 QTY Susut Terbesar (${currLabel})`, items: data.topItemsBySusut, cols: ['#', 'Item', 'Satuan', 'Resto', `QTY Susut ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Susut ${currLabel}`], colOpts: TOP_CAT_COL_OPTS, map: (it, i) => [String(i + 1), it.itemName, it.satuan ?? '—', it.outletCode, fmtNum(it.qtySusut), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtySusut, it.histAvgQty), fmtIDR(it.nominalSusut)] },
-      { title: `3.5 QTY Trial Terbesar (${currLabel})`, items: data.topItemsByTrial, cols: ['#', 'Item', 'Satuan', 'Resto', `QTY Trial ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Trial ${currLabel}`], colOpts: TOP_CAT_COL_OPTS, map: (it, i) => [String(i + 1), it.itemName, it.satuan ?? '—', it.outletCode, fmtNum(it.qtyTrial), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyTrial, it.histAvgQty), fmtIDR(it.nominalTrial)] },
-      { title: `3.6 QTY Loss/Surplus Terbesar (${currLabel})`, items: data.topItemsByLossSurplus, cols: ['#', 'Item', 'Satuan', 'Resto', `QTY Loss/Surplus ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Loss/Surplus ${currLabel}`], colOpts: TOP_CAT_COL_OPTS, map: (it, i) => [String(i + 1), it.itemName, it.satuan ?? '—', it.outletCode, fmtNum(it.qtyLossSurplus), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyLossSurplus, it.histAvgQty), fmtIDR(it.nominalLossSurplus)] },
+      { title: `6.3 QTY Waste Terbesar (${currLabel})`, items: data.topItemsByWaste, cols: ['#', 'Item', 'Satuan', 'Resto', `QTY Waste ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Waste ${currLabel}`], colOpts: TOP_CAT_COL_OPTS, map: (it, i) => [String(i + 1), it.itemName, it.satuan ?? '—', it.outletCode, fmtNum(it.qtyWaste), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyWaste, it.histAvgQty), fmtIDR(it.nominalWaste)] },
+      { title: `6.4 QTY Susut Terbesar (${currLabel})`, items: data.topItemsBySusut, cols: ['#', 'Item', 'Satuan', 'Resto', `QTY Susut ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Susut ${currLabel}`], colOpts: TOP_CAT_COL_OPTS, map: (it, i) => [String(i + 1), it.itemName, it.satuan ?? '—', it.outletCode, fmtNum(it.qtySusut), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtySusut, it.histAvgQty), fmtIDR(it.nominalSusut)] },
+      { title: `6.5 QTY Trial Terbesar (${currLabel})`, items: data.topItemsByTrial, cols: ['#', 'Item', 'Satuan', 'Resto', `QTY Trial ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Trial ${currLabel}`], colOpts: TOP_CAT_COL_OPTS, map: (it, i) => [String(i + 1), it.itemName, it.satuan ?? '—', it.outletCode, fmtNum(it.qtyTrial), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyTrial, it.histAvgQty), fmtIDR(it.nominalTrial)] },
+      { title: `6.6 QTY Loss/Surplus Terbesar (${currLabel})`, items: data.topItemsByLossSurplus, cols: ['#', 'Item', 'Satuan', 'Resto', `QTY Loss/Surplus ${currLabel}`, `QTY ${prevLabel}`, histLabel, 'vs Hist', `Nominal Loss/Surplus ${currLabel}`], colOpts: TOP_CAT_COL_OPTS, map: (it, i) => [String(i + 1), it.itemName, it.satuan ?? '—', it.outletCode, fmtNum(it.qtyLossSurplus), it.prevQty != null ? fmtNum(it.prevQty) : '—', it.histAvgQty != null ? fmtNum(it.histAvgQty) : '—', fmtVsHist(it.qtyLossSurplus, it.histAvgQty), fmtIDR(it.nominalLossSurplus)] },
     ];
     // H-2b (WI-2c): the one-line color legend ("Warna kolom: kuning = …")
     // was removed per user request — the muted professional tints are
@@ -366,27 +543,28 @@ export async function buildDocxReport(
     children.push(divider());
 
   }
-  if (hasSection('breakdown')) {
-    const b = data.deviationBreakdown || {};
-    const bdTotal = b.total || 0;
-    children.push(heading('4. Rincian Komposisi Selisih'));
-    children.push(makeTable(['Component', 'QTY', '% of Total'], [
-      ['QTY Waste', fmtNum(b.waste), bdTotal > 0 ? `${((b.waste / bdTotal) * 100).toFixed(1)}%` : '—'],
-      ['QTY Susut', fmtNum(b.susut), bdTotal > 0 ? `${((b.susut / bdTotal) * 100).toFixed(1)}%` : '—'],
-      ['QTY Trial', fmtNum(b.trial), bdTotal > 0 ? `${((b.trial / bdTotal) * 100).toFixed(1)}%` : '—'],
-      ['Loss/Surplus Qty', fmtNum(b.residual), bdTotal > 0 ? `${((b.residual / bdTotal) * 100).toFixed(1)}%` : '—'],
-      ['TOTAL', fmtNum(bdTotal), '100%'],
-    ]));
-    children.push(divider());
-
-  }
   if (hasSection('variance')) {
     const va = data.varianceAnalysis || {};
+    // EXPAND-1: the section now renders BOTH directions the query already
+    // returns — topWorsened (7.1) AND topImproved (7.2, previously fetched
+    // but never rendered) — with Area + direction context columns.
+    if ((va.topWorsened || []).length > 0 || (va.topImproved || []).length > 0) {
+      children.push(heading('7. Perubahan Item (vs Periode Pembanding)'));
+    }
     if ((va.topWorsened || []).length > 0) {
-      children.push(heading('5. Perubahan Item (Selisih Terbesar)'));
-      children.push(makeTable(['Item', 'Resto', `Nominal ${currLabel}`, `Nominal ${prevLabel}`, 'Selisih'],
-        va.topWorsened.slice(0, 10).map((it) => [it.itemName, it.outletCode, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)]),
-        [undefined, undefined, undefined, PERIOD_COL_PREV, undefined]));
+      children.push(paragraph(`7.1 Memburuk — selisih nominal terbesar (${currLabel} vs ${prevLabel})`, true));
+      children.push(makeTable(['#', 'Item', 'Resto', 'Area', `Nominal ${currLabel}`, `Nominal ${prevLabel}`, 'Selisih'],
+        va.topWorsened.map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.area, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)]),
+        [undefined, undefined, undefined, { align: 'left' }, undefined, PERIOD_COL_PREV, undefined]));
+      children.push(paragraph(''));
+    }
+    if ((va.topImproved || []).length > 0) {
+      children.push(paragraph(`7.2 Membaik — penurunan selisih nominal terbesar (${currLabel} vs ${prevLabel})`, true));
+      children.push(makeTable(['#', 'Item', 'Resto', 'Area', `Nominal ${currLabel}`, `Nominal ${prevLabel}`, 'Selisih'],
+        va.topImproved.map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.area, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)]),
+        [undefined, undefined, undefined, { align: 'left' }, undefined, PERIOD_COL_PREV, undefined]));
+    }
+    if ((va.topWorsened || []).length > 0 || (va.topImproved || []).length > 0) {
       children.push(divider());
     }
 
@@ -394,15 +572,53 @@ export async function buildDocxReport(
   // Section 13 (RANKING ITEM NASIONAL) removed per user request
   if (hasSection('trend')) {
     if (data.trend && data.trend.length > 0) {
-      children.push(heading('6. Trend Antar Periode'));
+      children.push(heading('8. Trend Antar Periode'));
       // Hapus Penjualan, tambah % Nominal Deviasi to Sales = |nominal| / sales * 100
-      children.push(makeTable(['Period', 'Nominal Deviasi', '% Deviasi To BOM', '% Nominal to Sales'],
+      // EXPAND-1: + Loss (Rp) / Surplus (Rp) columns (TrendAggRow already
+      // carried them — the old mapping dropped them).
+      children.push(makeTable(['Period', 'Nominal Deviasi', '% Deviasi To BOM', 'Loss (Rp)', 'Surplus (Rp)', '% Nominal to Sales'],
         data.trend.map((t) => [
           t.weekLabel,
           fmtIDR(t.nominal),
           fmtPct(t.devBom, false),
+          fmtIDR(t.lossNominal),
+          fmtIDR(t.surplusNominal),
           t.sales && t.sales > 0 ? fmtPct(Math.abs(t.nominal) / t.sales, false) : '—',
         ])));
+      children.push(divider());
+    }
+
+  }
+
+  // ============================================================
+  // EXPAND-1 — NEW Section 9: Lampiran — Cakupan Data & Filter
+  // --------------------------------------------------------
+  // Factual metadata only: period, compare period, record/outlet/item
+  // counts, historical baseline size, active filters, and the report's
+  // generation timestamp (Asia/Jakarta). Helps the reader verify scope.
+  // ============================================================
+  if (hasSection('coverage')) {
+    const cv = data.coverage;
+    if (cv) {
+      const f = data.filters;
+      const filterVal = (v: string | null | undefined) => (v && v !== 'all' ? v : 'Semua');
+      children.push(heading('9. Lampiran: Cakupan Data & Filter'));
+      children.push(makeTable(['Keterangan', 'Nilai'], [
+        ['Periode', `${data.period.monthLabel} — ${data.period.weekLabel}`],
+        ['Periode Pembanding', data.period.comparisonMonth ? `${data.period.comparisonMonth} — ${data.period.comparisonWeek ?? '—'}` : '—'],
+        ['Jumlah Record', fmtNum(cv.recordCount)],
+        ['Jumlah Resto', cv.outletCount != null ? fmtNum(cv.outletCount) : '—'],
+        ['Jumlah Item', cv.itemCount != null ? fmtNum(cv.itemCount) : '—'],
+        ['Jumlah Periode Terdata', fmtNum(cv.periodCount)],
+        ['Jumlah Periode Historis (baseline rata-rata)', fmtNum(cv.historicalPeriodCount)],
+        ['Rentang Historis', histRange],
+        ['Filter Area', filterVal(f.area)],
+        ['Filter Kelompok', filterVal(f.kelompok)],
+        ['Filter Resto', filterVal(f.outletCode)],
+        ['Filter Item', filterVal(f.itemName)],
+        ['Filter PIC', filterVal(f.pic)],
+        ['Waktu Laporan Dibuat', fmtDateTimeWIB(cv.generatedAt)],
+      ], [undefined, { align: 'left' }]));
       children.push(divider());
     }
 

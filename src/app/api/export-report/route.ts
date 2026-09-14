@@ -160,10 +160,11 @@ export async function GET(req: NextRequest) {
         };
         const { data, ctx } = await fetchReportData(params);
 
-        // Stage 2 — assemble the Word document (title + 6 section blocks
+        // Stage 2 — assemble the Word document (title + 9 section blocks
         // (filtered by ?sections=) + footer + Packer.toBuffer). Returns
         // { bufferBase64, fileName } for the cache wrapper — P3-HYG-4: base64
         // keeps the cache row compact + JSON-serializable (see docx-builder.ts).
+        // EXPAND-1: 6 → 9 sections (area / outlets / coverage added).
         return buildDocxReport(data, ctx);
       },
     );

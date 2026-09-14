@@ -196,7 +196,9 @@ export const changeAnalysisItemsQuerySchema = changeAnalysisQuerySchema.extend({
 // (?sections=exec,topitems → section 3 just missing from the report, no
 // error). Keep this list in sync with SECTIONS in ExportDialog.tsx and the
 // hasSection() keys in docx-builder.ts.
-const EXPORT_SECTION_KEYS = ['exec', 'growth', 'topItems', 'breakdown', 'variance', 'trend'] as const;
+// EXPAND-1: + 'area' (Analisis per Area), 'outlets' (Resto Prioritas),
+// 'coverage' (Lampiran: Cakupan Data & Filter) — report grew 6 → 9 sections.
+const EXPORT_SECTION_KEYS = ['exec', 'growth', 'topItems', 'breakdown', 'area', 'outlets', 'variance', 'trend', 'coverage'] as const;
 export const exportReportQuerySchema = z.object({
   month: monthLabelSchema,
   week: weekLabelSchema,
