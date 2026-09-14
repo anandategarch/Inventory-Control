@@ -5,7 +5,7 @@
 //  --------------------------------------------------------
 //  Owns:
 //    • handleExport  — fires /api/export-report, downloads the
-//      .docx, surfaces a toast. Memoized via useCallback.
+//      .pdf, surfaces a toast. Memoized via useCallback.
 //    • handleRefresh — invalidates the dashboard query keys (analysis,
 //      status, outlet-items, item-history, peer-comparison,
 //      recommendations) + fires a toast. Memoized.
@@ -41,6 +41,11 @@ export interface UseDashboardActionsParams {
   area: string | null;
   kelompok: string | null;
   outletCode: string | null;
+  // EXPORT-PDF: the Resto Analysis tab's active outlet (focusOutlet from a
+  // table row click || outletCode from the FilterBar dropdown) — the export
+  // follows the SAME outlet the user sees in Resto Analysis (user request:
+  // "filter resto nya dari Filter resto analisis").
+  focusOutlet: string | null;
   itemName: string | null;
   pic: string | null;
   status: StatusData | undefined;
@@ -73,6 +78,7 @@ export function useDashboardActions({
   area,
   kelompok,
   outletCode,
+  focusOutlet,
   itemName,
   pic,
   status,
@@ -92,14 +98,23 @@ export function useDashboardActions({
   //
   // FIX (BUG-3-b A2/A3/A4): the export flow used to (a) wait on the fetch
   // forever — server hang = spinner until the browser/CDN 504s, (b) accept
-  // any 200 body as a valid .docx (0-byte/HTML files were saved + a fake
+  // any 200 body as a valid .pdf (0-byte/HTML files were saved + a fake
   // success toast fired), (c) revoke the object URL synchronously right after
   // a.click() — on WebKit/Safari that races the download and can cancel it
   // ("toast sukses tapi file tak ada"). Now: 120s AbortController timeout,
   // blob size + content-type validation, deferred revoke, and an in-progress
   // toast (dismissed on completion) so the user knows the wait is normal.
+  // EXPORT-PDF: output switched .docx → .pdf (server returns
+  // application/pdf from pdf-builder). The outlet follows the Resto Analysis
+  // filter (focusOutlet || outletCode — same activeOutlet the Resto
+  // Analysis tab renders), so "what I see in Resto Analysis" == "what the
+  // report contains" (user request: filter resto dari Filter resto analisis).
   const handleExport = useCallback(async (selectedSections: string[]) => {
     if (!analysisData) return;
+    // Resto Analysis convention (RestoAnalysis.tsx: activeOutlet =
+    // focusOutlet || outletCode) — focusOutlet wins while set; the FilterBar
+    // dropdown's setOutlet clears it (useDashboard.ts), so both paths agree.
+    const activeOutlet = focusOutlet || outletCode;
     setExportDialogOpen(false);
     setIsExporting(true);
     // FIX (BUG-3-b A2): in-progress feedback — the dialog closes immediately
@@ -115,7 +130,7 @@ export function useDashboardActions({
       if (comparisonMonth) params.set('compareMonth', comparisonMonth);
       if (area) params.set('area', area);
       if (kelompok) params.set('kelompok', kelompok);
-      if (outletCode) params.set('outlet', outletCode);
+      if (activeOutlet) params.set('outlet', activeOutlet);
       if (itemName) params.set('item', itemName);
       if (pic) params.set('pic', pic);
       params.set('sections', selectedSections.join(','));
@@ -138,23 +153,23 @@ export function useDashboardActions({
       const contentType = res.headers.get('content-type') || '';
       const blob = await res.blob();
       // FIX (BUG-3-b A4): validate the payload before declaring success —
-      // a 200 with an empty body or non-DOCX content (proxy error page,
+      // a 200 with an empty body or non-PDF content (proxy error page,
       // JSON error that slipped through) used to be saved as a corrupt
-      // "Laporan_*.docx" with a success toast on top.
+      // "Laporan_*.pdf" with a success toast on top.
       if (blob.size === 0) throw new Error('File kosong dari server — coba lagi');
-      if (!contentType.includes('wordprocessingml')) {
-        throw new Error(`Server mengirim file yang bukan Word (.docx) [${contentType || 'tanpa content-type'}] — coba lagi`);
+      if (!contentType.includes('pdf')) {
+        throw new Error(`Server mengirim file yang bukan PDF [${contentType || 'tanpa content-type'}] — coba lagi`);
       }
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       // FIX: filename include periode + nama resto (jika outlet dipilih)
-      // Format: Laporan_[OutletName]_[Month]_[Week]_[comparePeriod?].docx
-      const outletName = outletCode
-        ? status?.outlets?.find(o => o.code === outletCode)?.name?.replace(/\s+/g, '_') || outletCode
+      // Format: Laporan_[OutletName]_[Month]_[Week]_[comparePeriod?].pdf
+      const outletName = activeOutlet
+        ? status?.outlets?.find(o => o.code === activeOutlet)?.name?.replace(/\s+/g, '_') || activeOutlet
         : 'Semua_Resto';
       const compareSuffix = comparisonWeek ? `_vs_${comparisonWeek.replace(/\s+/g, '')}` : '';
-      a.download = `Laporan_${outletName}_${(monthLabel || 'unknown').replace(/\s+/g, '_')}_${currentWeek || ''}${compareSuffix}.docx`;
+      a.download = `Laporan_${outletName}_${(monthLabel || 'unknown').replace(/\s+/g, '_')}_${currentWeek || ''}${compareSuffix}.pdf`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -164,7 +179,7 @@ export function useDashboardActions({
       // no manual clear needed, the timer firing post-unmount is harmless.
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
       pending.dismiss();
-      toast({ title: '✅ Export berhasil', description: `${selectedSections.length} section · Laporan Word telah diunduh` });
+      toast({ title: '✅ Export berhasil', description: `${selectedSections.length} section · Laporan PDF telah diunduh` });
     } catch (e: unknown) {
       pending.dismiss();
       // FIX (BUG-3-b A3): map AbortError to a friendly Indonesian message
@@ -181,7 +196,7 @@ export function useDashboardActions({
     } finally {
       setIsExporting(false);
     }
-  }, [analysisData, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, toast, status, setExportDialogOpen]);
+  }, [analysisData, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, focusOutlet, itemName, pic, toast, status, setExportDialogOpen]);
 
   // UX-ENHANCE + FIX (TASK H-3): Refresh handler — clears the SERVER-side
   // AggregationCache FIRST, then invalidates ALL client query caches.

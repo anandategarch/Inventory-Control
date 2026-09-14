@@ -109,7 +109,10 @@ export default function DashboardPage() {
   // compare setter) instead of setMonth/setWeek/setCompareWeek — the effects
   // hook only needs the atomic setter, and the old three-setter chain caused
   // the double /api/analysis fetch on every period change.
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setPeriod, activeTab, visitedTabs, setActiveTab, setDrilldown, setSourceModal, setDeepDiveItem } = useDashboard(useShallow((s) => ({
+  // EXPORT-PDF: + focusOutlet — passed to useDashboardActions so the export
+  // follows the Resto Analysis tab's active outlet (user request: filter
+  // resto export dari Filter resto analisis).
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, focusOutlet, setPeriod, activeTab, visitedTabs, setActiveTab, setDrilldown, setSourceModal, setDeepDiveItem } = useDashboard(useShallow((s) => ({
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
     comparisonWeek: s.comparisonWeek,
@@ -119,6 +122,7 @@ export default function DashboardPage() {
     outletCode: s.outletCode,
     itemName: s.itemName,
     pic: s.pic,
+    focusOutlet: s.focusOutlet,
     setPeriod: s.setPeriod,
     activeTab: s.activeTab,
     // PERF (H-8 QUICK WIN 3): visited-tab gating — see the TabsContent blocks.
@@ -219,6 +223,7 @@ export default function DashboardPage() {
     area,
     kelompok,
     outletCode,
+    focusOutlet,
     itemName,
     pic,
     status,

@@ -195,10 +195,13 @@ export const changeAnalysisItemsQuerySchema = changeAnalysisQuerySchema.extend({
 // FIX (BUG-3-a C6): unknown section keys used to vanish silently
 // (?sections=exec,topitems → section 3 just missing from the report, no
 // error). Keep this list in sync with SECTIONS in ExportDialog.tsx and the
-// hasSection() keys in docx-builder.ts.
+// hasSection() keys in pdf/pdf-builder.ts.
 // EXPAND-1: + 'area' (Analisis per Area), 'outlets' (Resto Prioritas),
 // 'coverage' (Lampiran: Cakupan Data & Filter) — report grew 6 → 9 sections.
-const EXPORT_SECTION_KEYS = ['exec', 'growth', 'topItems', 'breakdown', 'area', 'outlets', 'variance', 'trend', 'coverage'] as const;
+// EXPORT-PDF: + 'pareto' (Konsentrasi & Pareto), 'itemTrend' (Trend Item
+// multi-periode), 'flip' (Analisis Flip-Flop), 'peer' (Pembanding
+// Peer-to-Peer) — report grew 9 → 13 sections; output switched .docx → .pdf.
+const EXPORT_SECTION_KEYS = ['exec', 'growth', 'topItems', 'breakdown', 'area', 'outlets', 'pareto', 'variance', 'itemTrend', 'flip', 'peer', 'trend', 'coverage'] as const;
 export const exportReportQuerySchema = z.object({
   month: monthLabelSchema,
   week: weekLabelSchema,

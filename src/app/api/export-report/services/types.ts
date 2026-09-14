@@ -3,25 +3,25 @@
 //  --------------------------------------------------------
 //  Extracted from the original 1120-line route.ts (Task 4-c refactor).
 //
+//  EXPORT-PDF: the output format switched .docx → .pdf (pdf-builder.ts);
+//  DocxContext renamed → ReportContext. The report grew 9 → 13 sections
+//  (+ pareto / itemTrend / flip / peer).
+//
 //  Contains:
 //    - PrevMetrics + ExecSummaryWithPrev (helper-types for the
 //      ExecutiveSummary._prevMetrics extension used only by this route)
 //    - ReportParams (input to fetchReportData — parsed URL params)
-//    - ReportData (output of fetchReportData — drives docx-builder)
-//    - DocxContext (auxiliary state passed to buildDocxReport that
-//      doesn't belong in ReportData — section filter +
-//      historicalPeriods for the header "Hist (Jan-Jul 26)" label)
+//    - ReportData (output of fetchReportData — drives pdf-builder)
+//    - ReportContext (auxiliary state passed to buildPdfReport that
+//      doesn't belong in ReportData — section filter + historicalPeriods
+//      for the header "Hist (Jan-Jul 26)" label)
 //    - Derived row shapes (TopCatItem*, BreakdownEnriched, TrendRow,
 //      GrowthMetrics)
 //
 //  FIX (BUG-3-a P1) — dead shapes removed together with the dead compute
-//  that fed them (verified 0 reads in docx-builder.ts): AreaAnalysisMappedRow
+//  that fed them (verified 0 reads in the builder): AreaAnalysisMappedRow
 //  (q-area), HistCriticalItem + GrowthComparisonWithHist.historicalAnalysis
-//  (q-hist-critical / q-hist-stats), GrowthMetrics.multiPeriodComparison,
-//  and DocxContext's thresholds/sqlFlags/month/week/prevWeek/prevMonth (the
-//  "5.1 BOM-korelasi" per-record table that consumed them was removed by an
-//  earlier user request; growthComparison is now the plain GrowthMetrics
-//  object the Section 2 table actually renders).
+//  (q-hist-critical / q-hist-stats), GrowthMetrics.multiPeriodComparison.
 //
 //  H-12: the EarlyHttpResponse class moved to the shared module
 //  src/lib/early-http-response.ts (was defined verbatim 3×) — import it
@@ -35,6 +35,10 @@ import type { ExecutiveSummary } from '@/types/inventory';
 import type { queryVarianceAnalysis } from '@/lib/queries/health-ranking';
 import type { queryOutletHealthRanking } from '@/lib/queries/health-ranking';
 import type { queryAreaAnalysis } from '@/lib/queries/areas';
+import type { FlipRankResult } from '@/lib/queries/items/flip-ranking';
+import type { ItemTrendMatrixRow } from '@/lib/queries/items/item-trend-matrix';
+import type { ParetoResult } from '@/lib/queries/pareto';
+import type { PeerComparisonRow } from '@/lib/queries/outlets/peer-comparison';
 
 // PERF-CACHE-06: helper used to short-circuit the cache wrapper for early-return
 // error paths (404 No records found). Throwing this error propagates through
@@ -243,7 +247,7 @@ export interface CoverageInfo {
 //  drift in the underlying query surfaces here as a tsc error.
 //
 //  FIX (BUG-3-a P2): fields for sections that were NOT selected hold
-//  zero-value placeholders (null kpis / empty arrays) — docx-builder's
+//  zero-value placeholders (null kpis / empty arrays) — the builder's
 //  hasSection() gates rendering with the SAME `sections` list that gated
 //  the fetch, so a placeholder is never rendered.
 //
@@ -251,6 +255,11 @@ export interface CoverageInfo {
 //  pipeline's Area tab), outletRanking (queryOutletHealthRanking, which rides
 //  the shared q-outlet-agg cached scan), deviationCost (from the same q-kpis
 //  row as deviationBreakdown), coverage (Lampiran metadata).
+//
+//  EXPORT-PDF: + paretoItem/paretoOutlet (q-pareto-item / q-pareto-outlet),
+//  itemTrendMatrix (q-item-trend-matrix), flipRanking (q-flip-rank),
+//  peerComparison (q-peer-cmp + resolved target outlet — the outletCode
+//  param, or auto top-1 resto prioritas when no outlet filter is active).
 // ============================================================
 export interface ReportData {
   period: { monthLabel: string; weekLabel: string; comparisonWeek: string | null; comparisonMonth: string | null };
@@ -272,29 +281,44 @@ export interface ReportData {
   areaAnalysis: Awaited<ReturnType<typeof queryAreaAnalysis>>;
   outletRanking: Awaited<ReturnType<typeof queryOutletHealthRanking>>;
   coverage: CoverageInfo | null;
+  // EXPORT-PDF — section 'pareto': item-level + outlet-level Pareto
+  // (zero-value placeholders when the section is off).
+  paretoItem: ParetoResult;
+  paretoOutlet: ParetoResult;
+  // EXPORT-PDF — section 'itemTrend': per-(month × item) rows ([] when off).
+  itemTrendMatrix: ItemTrendMatrixRow[];
+  // EXPORT-PDF — section 'flip': top flip-risk items ({ items: [],
+  // totalItemsScanned: 0 } when off).
+  flipRanking: FlipRankResult;
+  // EXPORT-PDF — section 'peer': target outlet vs similar-sales peers.
+  // null when the section is off OR no peer data could be computed.
+  peerComparison: {
+    targetOutlet: { code: string; name: string; area: string };
+    /** true when the target was auto-picked (top-1 Resto Prioritas) because no outlet filter was active. */
+    autoTarget: boolean;
+    targetSales: number;
+    peers: PeerComparisonRow[];
+  } | null;
   durationMs: number;
 }
 
 // ============================================================
-//  DocxContext — auxiliary state passed to buildDocxReport
+//  ReportContext — auxiliary state passed to buildPdfReport
 //  --------------------------------------------------------
-//  Contains everything the docx-builder needs that is NOT part of the
+//  EXPORT-PDF: renamed from DocxContext (output switched .docx → .pdf).
+//  Contains everything the pdf-builder needs that is NOT part of the
 //  ReportData object itself:
 //    - sections:           URL `?sections=` filter (null = all sections;
-//                          [] = no section — header-only document)
+//                          [] = no section — cover-only document)
 //    - historicalPeriods:  for the "Hist (Jan-Jul 26)" range label
-//  FIX (BUG-3-a P1): thresholds / sqlFlags / month / week / prevWeek /
-//  prevMonth removed — their only consumer was the deleted "5.1 BOM
-//  correlation" per-record table; docx-builder reads the period labels
-//  from data.period instead.
 // ============================================================
-export interface DocxContext {
+export interface ReportContext {
   sections: string[] | null;
   historicalPeriods: Array<{ monthLabel: string; weekLabel: string; sortKey: string }>;
 }
 
-// Shape returned by fetchReportData — the data object + auxiliary docx context.
+// Shape returned by fetchReportData — the data object + auxiliary report context.
 export interface FetchedReport {
   data: ReportData;
-  ctx: DocxContext;
+  ctx: ReportContext;
 }

@@ -7,6 +7,9 @@ export * from './shared';
 export * from './dashboard';
 export * from './items/top-items';
 export * from './items/global-search';
+// EXPORT-PDF: per-(month × item) ABS nominal matrix for the export
+// report's Trend Item section (same-week-across-months convention).
+export * from './items/item-trend-matrix';
 // H-11 (#4a): './outlets/top-outlets' REMOVED — queryTopOutlets +
 // queryTopOutletsBySales were deleted with the Dashboard's TopOutlets card
 // (duplicate of the Pareto tab's byOutlet quadrant card) and the never-rendered

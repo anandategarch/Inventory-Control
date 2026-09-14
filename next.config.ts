@@ -15,6 +15,10 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: false,
   },
   reactStrictMode: true,
+  // EXPORT-PDF: pdfkit reads its .afm font-metric files from node_modules at
+  // runtime (fs + __dirname) — keeping it external (not webpack-bundled)
+  // preserves those file reads in every deployment target (Vercel/Railway).
+  serverExternalPackages: ['pdfkit'],
   // Disable Next.js dev tools floating widget ("N" circle in bottom-right)
   devIndicators: false,
   // FIX: enable gzip compression for API responses (334KB → ~40KB, 85% reduction)

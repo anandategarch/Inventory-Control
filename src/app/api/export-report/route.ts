@@ -1,7 +1,11 @@
 // ============================================================
-//  /api/export-report — Export analysis data to Word (.docx)
+//  /api/export-report — Export analysis data to PDF
 //  GET: ?month=&week=&compareWeek=&compareMonth=&area=&outlet=&item=&pic=&kelompok=&sections=
-//  Fetches analysis data server-side, generates .docx, returns as download.
+//  Fetches analysis data server-side, generates a .pdf, returns as download.
+//
+//  EXPORT-PDF: output switched .docx → .pdf (13 sections, full design +
+//  vector charts — services/pdf/*). The old docx-builder.ts was removed;
+//  the pipeline shape (cache → fetch → build → base64) is unchanged.
 //
 //  PERF-FASE3-BE04: Migrated from legacy JS rule evaluator (35K-record loop
 //  calling evaluateRules per record) to SQL-pushed evaluators. Matches the
@@ -15,8 +19,8 @@
 //  ./services/. The slim handler retains: rate limit, Zod input validation,
 //  cache key construction, withCacheAndDedup wrapper, buffer reconstruction,
 //  and the EarlyHttpResponse short-circuit catch. All SQL/data-assembly
-//  logic moved to data-fetcher.ts; all Word document assembly moved to
-//  docx-builder.ts. See each service file for the per-section rationale
+//  logic moved to data-fetcher.ts; all PDF document assembly moved to
+//  pdf/pdf-builder.ts. See each service file for the per-section rationale
 //  and inline "FIX (XXX)" comments preserved from the original monolith.
 // ============================================================
 import { logger } from '@/lib/logger';
@@ -29,7 +33,7 @@ import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 import { EarlyHttpResponse } from '@/lib/early-http-response';
 import type { ReportParams } from './services/types';
 import { fetchReportData } from './services/data-fetcher';
-import { buildDocxReport } from './services/docx-builder';
+import { buildPdfReport } from './services/pdf/pdf-builder';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -160,28 +164,30 @@ export async function GET(req: NextRequest) {
         };
         const { data, ctx } = await fetchReportData(params);
 
-        // Stage 2 — assemble the Word document (title + 9 section blocks
-        // (filtered by ?sections=) + footer + Packer.toBuffer). Returns
-        // { bufferBase64, fileName } for the cache wrapper — P3-HYG-4: base64
-        // keeps the cache row compact + JSON-serializable (see docx-builder.ts).
-        // EXPAND-1: 6 → 9 sections (area / outlets / coverage added).
-        return buildDocxReport(data, ctx);
+        // Stage 2 — assemble the PDF document (cover band + 13 numbered
+        // section blocks (filtered by ?sections=) + running header/footer +
+        // vector charts). Returns { bufferBase64, fileName } for the cache
+        // wrapper — P3-HYG-4: base64 keeps the cache row compact +
+        // JSON-serializable (see pdf-builder.ts).
+        // EXPORT-PDF: 9 → 13 sections (pareto / itemTrend / flip / peer
+        // added); output switched .docx → .pdf.
+        return buildPdfReport(data, ctx);
       },
     );
 
     // Reconstruct the binary Buffer from the cached/fresh base64 payload +
-    // send as Word download. Same response shape for both cache hit and
+    // send as PDF download. Same response shape for both cache hit and
     // fresh compute. (P3-HYG-4: Buffer.from(b64) is a single fast decode —
     // was Buffer.from(number[]) which walks a 500K-element JS array.)
     // FIX (BUG-3-a C5): filename is server-generated + sanitized in
-    // docx-builder ([^A-Za-z0-9._-] → '_'), and the header also carries the
+    // pdf-builder ([^A-Za-z0-9._-] → '_'), and the header also carries the
     // RFC 5987/6266 filename* form so non-ASCII-safe handling is spec'd for
     // every client — belt-and-braces against header splitting/quoting bugs.
     const buffer = Buffer.from(exportData.bufferBase64, 'base64');
     return new NextResponse(new Uint8Array(buffer) as BodyInit, {
       status: 200,
       headers: {
-        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'Content-Type': 'application/pdf',
         'Content-Disposition': `attachment; filename="${exportData.fileName}"; filename*=UTF-8''${encodeURIComponent(exportData.fileName)}`,
         // PERF-FASE1-BE01: CDN cache for 5 min, stale grace 10 min. Same report
         // for same period+filters won't change until underlying data changes.

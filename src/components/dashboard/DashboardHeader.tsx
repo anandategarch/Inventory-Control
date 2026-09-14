@@ -173,7 +173,7 @@ export function DashboardHeader({
               className="h-8 gap-1.5 text-xs font-medium shadow-sm hover:shadow-md bg-amber-600 hover:bg-amber-700 text-white transition-all active:scale-95"
               disabled={isExporting}
               onClick={onExportClick}
-              aria-label="Export laporan Word"
+              aria-label="Export laporan PDF"
             >
               {isExporting ? (
                 <><Loader2 className="h-3.5 w-3.5 animate-spin" /> <span className="inline">Exporting...</span></>

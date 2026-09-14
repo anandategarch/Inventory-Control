@@ -15,20 +15,28 @@ interface SectionOption {
 }
 
 // H-5: '5. Analisis Korelasi BOM' removed per user request (same removal
-// series as Loss-to-Sales / Kepatuhan). Variance + Trend renumbered 6/7 → 5/6.
+// series as Loss-to-Sales / Kepatuhan).
 // EXPAND-1: report grew 6 → 9 sections — + Analisis per Area, + Resto
-// Prioritas, + Lampiran Cakupan Data & Filter. Keep the keys in sync with
-// EXPORT_SECTION_KEYS (validation.ts) + the hasSection() keys in docx-builder.
+// Prioritas, + Lampiran Cakupan Data & Filter.
+// EXPORT-PDF: output switched .docx → .pdf (full design + charts); report
+// grew 9 → 13 sections — + Konsentrasi & Pareto, Trend Item Multi-Periode,
+// Analisis Flip-Flop, Pembanding Peer-to-Peer. Section numbering is FIXED
+// (stable across ?sections= selections — mirrors pdf-builder.ts). Keep the
+// keys in sync with EXPORT_SECTION_KEYS (validation.ts).
 const SECTIONS: SectionOption[] = [
-  { key: 'exec', label: '1. Ringkuman Eksekutif', description: '16 KPI: Penjualan, Nominal Deviasi, QTY BOM/Deviasi/Waste/Susut/Trial/Loss-Surplus, Total LOSS/SURPLUS, rasio to Sales/BOM — dengan growth vs pembanding', default: true },
-  { key: 'growth', label: '2. Perubahan vs Periode Pembanding', description: 'Tabel nilai sekarang vs pembanding: selisih absolut, selisih pp (rasio), growth %', default: true },
-  { key: 'breakdown', label: '3. Rincian Komposisi Selisih', description: 'Komposisi QTY + Komposisi Nominal (Rp) + jumlah record LOSS/SURPLUS', default: true },
-  { key: 'area', label: '4. Analisis per Area', description: 'Per area: jumlah resto, penjualan, total nominal loss/surplus, % Dev/BOM, % loss to sales + baris TOTAL', default: true },
-  { key: 'outlets', label: '5. Resto Prioritas', description: '10 resto dengan nominal deviasi terbesar: area, QTY deviasi, % Dev/BOM, loss, penjualan', default: true },
-  { key: 'topItems', label: '6. Item Prioritas (Top Items)', description: '6 ranking: Nominal, Dev/BOM, Waste, Susut, Trial, Loss/Surplus — dengan QTY prev, rata-rata historis, vs Hist', default: true },
-  { key: 'variance', label: '7. Perubahan Item (vs Pembanding)', description: 'Memburuk + Membaik: item dengan selisih nominal terbesar vs periode pembanding', default: true },
-  { key: 'trend', label: '8. Trend Antar Periode', description: 'Nominal Deviasi, % Dev/BOM, Loss, Surplus, % Nominal to Sales per periode', default: true },
-  { key: 'coverage', label: '9. Lampiran: Cakupan Data & Filter', description: 'Periode, jumlah record/resto/item, periode historis, filter aktif, waktu dibuat', default: true },
+  { key: 'exec', label: '1. Ringkasan Eksekutif', description: 'Kartu KPI + tabel 16 metrik: Penjualan, Nominal Deviasi, QTY, LOSS/SURPLUS, rasio — dengan growth vs pembanding', default: true },
+  { key: 'growth', label: '2. Perubahan vs Periode Pembanding', description: 'Tabel nilai vs pembanding (selisih absolut / pp / growth %) + grafik batang growth per metrik', default: true },
+  { key: 'breakdown', label: '3. Rincian Komposisi Selisih', description: 'Komposisi QTY + Nominal (Rp) + grafik donat + jumlah record LOSS/SURPLUS', default: true },
+  { key: 'area', label: '4. Analisis per Area', description: 'Per area: resto, penjualan, nominal deviasi, rasio + grafik batang — dengan baris TOTAL', default: true },
+  { key: 'outlets', label: '5. Resto Prioritas', description: '10 resto nominal deviasi terbesar + grafik batang bertanda (merah = LOSS)', default: true },
+  { key: 'pareto', label: '6. Konsentrasi & Analisis Pareto', description: 'Aturan 80/20: grafik pareto item + tabel item/resto teratas + statistik konsentrasi', default: true },
+  { key: 'topItems', label: '7. Item Prioritas (Top Items)', description: '6 ranking: Nominal, Dev/BOM, Waste, Susut, Trial, Loss/Surplus — dengan QTY prev, rata-rata historis, vs Hist', default: true },
+  { key: 'variance', label: '8. Perubahan Item (vs Pembanding)', description: 'Memburuk + Membaik: selisih nominal terbesar vs periode pembanding + grafik batang', default: true },
+  { key: 'itemTrend', label: '9. Trend Item Multi-Periode', description: 'Matriks 15 item teratas × periode (maks 7 bulan) dengan sel warna panas + trend terakhir', default: true },
+  { key: 'flip', label: '10. Analisis Flip-Flop', description: 'Item dengan pembalikan arah deviasi antar periode sejenis: sempurna/dominan/parsial + grafik pasangan flip', default: true },
+  { key: 'peer', label: '11. Pembanding Peer-to-Peer', description: 'Resto target vs resto sejenis (penjualan ±10%): tabel + grafik Dev/BOM + komposisi Loss/Surplus', default: true },
+  { key: 'trend', label: '12. Trend Antar Periode', description: 'Nominal Deviasi, % Dev/BOM, Loss, Surplus, % to Sales per periode + grafik batang & garis', default: true },
+  { key: 'coverage', label: '13. Lampiran: Cakupan Data & Filter', description: 'Periode, jumlah record/resto/item, filter aktif, waktu dibuat, definisi metrik', default: true },
 ];
 
 interface ExportDialogProps {
@@ -84,10 +92,10 @@ export function ExportDialog({ open, onOpenChange, onExport, isExporting }: Expo
         <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2 text-base">
             <FileDown className="h-4 w-4" />
-            Export ke Word (.docx)
+            Export ke PDF (.pdf)
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Pilih section yang ingin di-export. File Word akan berisi data sesuai filter yang aktif.
+            Pilih section yang ingin di-export. Laporan PDF dengan desain penuh dan grafik. Filter resto mengikuti Filter Resto di tab Resto Analysis (atau filter resto global).
           </DialogDescription>
         </DialogHeader>
 

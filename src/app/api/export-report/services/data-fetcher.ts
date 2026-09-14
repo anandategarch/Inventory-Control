@@ -79,9 +79,18 @@ import {
   queryTopItemsByDevBom,
   queryTopItemsByAllCategories,
   queryHistoricalCategoryAvg,
+  // EXPORT-PDF: the item-trend matrix + peer comparison section queries
+  // (re-exported via the queries barrel).
+  queryItemTrendMatrix,
+  queryPeerComparison,
 } from '@/lib/queries';
 import { queryVarianceAnalysis, queryOutletHealthRanking } from '@/lib/queries/health-ranking';
 import { queryAreaAnalysis } from '@/lib/queries/areas';
+// EXPORT-PDF: the remaining new section queries (not re-exported via the
+// barrel — pareto + flip-ranking live under their own module paths).
+import { queryParetoByItem, queryParetoByOutlet } from '@/lib/queries/pareto';
+import { queryFlipRanking } from '@/lib/queries/items/flip-ranking';
+import type { ItemTrendMatrixRow } from '@/lib/queries/items/item-trend-matrix';
 import { cachedSharedQuery, cachedSharedQueryMap, histPeriodsKeyParts } from '@/lib/queries/query-cache';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
@@ -95,7 +104,7 @@ import type {
   ExecSummaryWithPrev,
   ReportParams,
   ReportData,
-  DocxContext,
+  ReportContext,
   FetchedReport,
 } from './types';
 
@@ -163,15 +172,16 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
 
   // ============================================================
   //  FIX (BUG-3-a P2): sections-aware fetching. `?sections=` used to gate
-  //  only the DOCX rendering — every export paid the FULL query bill even
+  //  only the rendering — every export paid the FULL query bill even
   //  when it rendered one section (an "exec only" export still ran q-trend
   //  + the whole top-items batch). Build the `need` set up front and gate
   //  every fetch below on it. `sections === null` (param absent) = ALL
   //  sections; `[]` (empty param — FIX BUG-3-a C4 in route.ts) = NONE.
   //  Keep this list in sync with EXPORT_SECTION_KEYS (validation.ts),
-  //  ExportDialog.tsx and the hasSection() keys in docx-builder.ts.
+  //  ExportDialog.tsx and the hasSection() keys in pdf/pdf-builder.ts.
   // ============================================================
-  const ALL_EXPORT_SECTIONS = ['exec', 'growth', 'topItems', 'breakdown', 'area', 'outlets', 'variance', 'trend', 'coverage'] as const;
+  // EXPORT-PDF: + 'pareto' / 'itemTrend' / 'flip' / 'peer' — 13 sections.
+  const ALL_EXPORT_SECTIONS = ['exec', 'growth', 'topItems', 'breakdown', 'area', 'outlets', 'pareto', 'variance', 'itemTrend', 'flip', 'peer', 'trend', 'coverage'] as const;
   const need = new Set<string>(sections ?? ALL_EXPORT_SECTIONS);
   // Section → data dependencies (verified against docx-builder.ts, not
   // assumed): exec renders executiveSummary (q-kpis + prev q-exec-summary);
@@ -192,6 +202,21 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   const needVariance = need.has('variance');
   const needTrend = need.has('trend');
   const needCoverage = need.has('coverage');
+  // EXPORT-PDF — new section fetch gates:
+  //   pareto    → q-pareto-item + q-pareto-outlet
+  //   itemTrend → q-item-trend-matrix
+  //   flip      → q-flip-rank
+  //   peer      → q-peer-cmp (+ outletRanking when the target must be
+  //               auto-picked — see the peer block after the Promise.all)
+  const needPareto = need.has('pareto');
+  const needItemTrend = need.has('itemTrend');
+  const needFlip = need.has('flip');
+  const needPeer = need.has('peer');
+  // EXPORT-PDF: the peer section's auto-target fallback reads the SAME
+  // outletRanking rows the 'outlets' section renders — when 'outlets' is off
+  // but 'peer' is on and no outlet filter is active, fetch the ranking
+  // anyway (rides the shared q-outlet-agg cached scan — cheap when warm).
+  const needOutletRanking = needOutlets || (needPeer && !(outletCode && outletCode !== 'all'));
   // EXPAND-1: 'area' also needs the q-kpis row — its TOTAL row renders the
   // overall % Dev/BOM + Loss-to-Sales ratios (execSummary derivations), so
   // the kpis fetch is gated on needArea too. Cheap: shared cached q-* row.
@@ -370,6 +395,14 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     histWasteMap, histSusutMap, histTrialMap, histLossSurplusMap,
     // EXPAND-1: area analysis + outlet ranking + coverage counts
     areaAnalysisRows, outletRankingRows, coverageCounts,
+    // EXPORT-PDF: pareto (item + outlet), item-trend matrix, flip ranking
+    // FIX (found in runtime verify): queryItemTrendMatrix returns
+    // { rows: ItemTrendMatrixRow[] } (the whole result object), NOT the bare
+    // array — the old `as ItemTrendMatrixRow[]` cast silenced tsc while the
+    // object landed in ReportData.itemTrendMatrix, whose `.length` was
+    // undefined → the section silently never rendered even with 743 cached
+    // rows. Unwrap .rows here; `[]` stays the off-section placeholder.
+    paretoItemRes, paretoOutletRes, itemTrendMatrixRes, flipRankingRes,
   ] = await Promise.all([
     // PERF (TAHAP-2 / P2-9): kpis + trendAgg + category tops use the shared
     // per-query cache (same queryIds as the analysis pipeline).
@@ -482,8 +515,9 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     // q-outlet-agg cached scan (superset also used by /api/recommendations +
     // the analysis pipeline) — the threshold is passed explicitly so the
     // cache key converges with those callers (both load the same runtime
-    // settings value).
-    needOutlets ? queryOutletHealthRanking(week, month, filterOpts, thresholds.HIGH_LOSS_NOMINAL_THRESHOLD)
+    // settings value). EXPORT-PDF: also gated on needOutletRanking (the
+    // peer section's auto-target fallback reads the same rows).
+    needOutletRanking ? queryOutletHealthRanking(week, month, filterOpts, thresholds.HIGH_LOSS_NOMINAL_THRESHOLD)
       : Promise.resolve([]),
     // EXPAND-1 (section 'coverage'): ONE COUNT(DISTINCT) scan for the Lampiran
     // outlet/item counts — the record count itself reuses the 404-check
@@ -496,6 +530,41 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         ${buildSqlFilters(filterOpts)}
     `) : Promise.resolve(null),
+    // EXPORT-PDF (section 'pareto'): item-level + outlet-level 80/20
+    // concentration. Same underlying queries as the dashboard's Pareto tab
+    // (queryParetoByItem/ByOutlet), but behind dedicated q-* cache ids so
+    // mutations invalidate them (the /api/pareto route caches at route level
+    // with a different key shape — not reusable here).
+    needPareto ? cachedSharedQuery(
+      'q-pareto-item',
+      { month, week, filters: filterOpts },
+      () => queryParetoByItem(week, month, filterOpts),
+    ) : Promise.resolve(null),
+    needPareto ? cachedSharedQuery(
+      'q-pareto-outlet',
+      { month, week, filters: filterOpts },
+      () => queryParetoByOutlet(week, month, filterOpts),
+    ) : Promise.resolve(null),
+    // EXPORT-PDF (section 'itemTrend'): per-(month × item) ABS-nominal matrix
+    // for the same weekLabel across ALL months. The query's only inputs are
+    // weekLabel + filters — month is NOT one of them, so the cache key uses
+    // the literal 'ALL' month (converges across exports of different
+    // months: identical input → one cache row, same convention as the
+    // dashboard's item-trend route key which also keys on week only).
+    needItemTrend ? cachedSharedQuery(
+      'q-item-trend-matrix',
+      { month: 'ALL', week, filters: { ...filterOpts, itemName: null }, extra: { weekLabel: week } },
+      () => queryItemTrendMatrix(week, { ...filterOpts, itemName: null }),
+    ) : Promise.resolve(null),
+    // EXPORT-PDF (section 'flip'): flip-pattern risk ranking. monthLabel
+    // scopes the pairs to those involving the exported month (same param
+    // semantics as /api/flip-ranking's month filter). limit 15 → the PDF
+    // renders the top 10 + pair details for the top 5.
+    needFlip ? cachedSharedQuery(
+      'q-flip-rank',
+      { month, week, filters: { ...filterOpts, itemName: null }, extra: { weekLabel: week, limit: 15 } },
+      () => queryFlipRanking({ ...filterOpts, itemName: null }, week, month, 15),
+    ) : Promise.resolve(null),
   ]);
   const topWasteRows = topCategories.waste;
   const topSusutRows = topCategories.susut;
@@ -607,6 +676,64 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     generatedAt: new Date().toISOString(),
   } : null;
 
+  // ============================================================
+  //  EXPORT-PDF (section 'peer'): target outlet vs similar-sales peers.
+  //  --------------------------------------------------------
+  //  The target follows the Resto Analysis filter convention (the frontend
+  //  sends focusOutlet || outletCode as the `outlet` param): when an outlet
+  //  filter is active, THAT outlet is the target. When none is active, the
+  //  top-1 Resto Prioritas in the filtered scope is auto-picked so the
+  //  section always has a concrete target (labeled in the report — factual,
+  //  not a generated narrative).
+  //
+  //  Dependent fetch (AFTER the Promise.all): the auto-target reads
+  //  outletRankingRows, and queryPeerComparison itself takes the resolved
+  //  target code — both only exist at this point, so the peer section is the
+  //  one intentionally-serial wave in the pipeline (≤2 extra RTTs, only
+  //  when the section is selected).
+  //  Non-fatal by design: a failure (or a target with no records) leaves
+  //  peerComparison = null → the builder renders a factual "data tidak
+  //  tersedia" note instead of killing the whole export.
+  // ============================================================
+  let peerComparison: ReportData['peerComparison'] = null;
+  if (needPeer) {
+    try {
+      const resolvedOutlet = outletCode && outletCode !== 'all' ? outletCode : null;
+      let targetCode: string | null = resolvedOutlet;
+      let autoTarget = false;
+      if (!targetCode) {
+        const topOutlet = outletRankingRows.length > 0 ? outletRankingRows[0] : null;
+        if (topOutlet) {
+          targetCode = topOutlet.outletCode;
+          autoTarget = true;
+        }
+      }
+      if (targetCode) {
+        const kelompokParam = kelompok && kelompok !== 'all' ? kelompok : null;
+        const peerRes = await cachedSharedQuery(
+          'q-peer-cmp',
+          { month, week, filters: filterOpts, extra: { target: targetCode, limit: 10 } },
+          () => queryPeerComparison(targetCode as string, month, week, 'week', 10, kelompokParam),
+        );
+        const targetRow = peerRes.peers.find((p) => p.isTarget);
+        // Only attach when the target actually has data in this period —
+        // otherwise the peer set degenerates (see the target_fallback CTE in
+        // peer-comparison.ts) and the section would mislead.
+        if (targetRow) {
+          peerComparison = {
+            targetOutlet: { code: targetRow.outletCode, name: targetRow.outletName, area: targetRow.area },
+            autoTarget,
+            targetSales: peerRes.targetSales,
+            peers: peerRes.peers,
+          };
+        }
+      }
+    } catch (e) {
+      logger.error('[export-report] peer comparison failed:', { error: e instanceof Error ? e.message : String(e) });
+      peerComparison = null;
+    }
+  }
+
   // (PERF H-8 QUICK WIN 1: the outletHealthRanking fetch was removed — its
   // DOCX section (restoPriority) no longer exists, so the query was pure
   // dead compute. topItemForCrossOutlet + queryGlobalItemSearch were removed
@@ -631,16 +758,25 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     areaAnalysis: areaAnalysisRows,
     outletRanking: outletRankingRows,
     coverage,
+    // EXPORT-PDF — the four new sections (placeholders when off: null →
+    // zero-value shapes below; never rendered — the builder gates on the
+    // SAME sections list that gated these fetches).
+    paretoItem: paretoItemRes ?? { drivers: [], remainderCount: 0, remainderPct: 0, totalAbsNominal: 0, totalCount: 0 },
+    paretoOutlet: paretoOutletRes ?? { drivers: [], remainderCount: 0, remainderPct: 0, totalAbsNominal: 0, totalCount: 0 },
+    itemTrendMatrix: itemTrendMatrixRes?.rows ?? [],
+    flipRanking: flipRankingRes ?? { items: [], totalItemsScanned: 0 },
+    peerComparison,
     durationMs: Date.now() - startedAt,
   };
 
-  // DocxContext — auxiliary state needed by buildDocxReport. Kept separate
-  // from ReportData so the cache payload (only `{ buffer, fileName }`) stays
-  // clean. FIX (BUG-3-a P1): thresholds + sqlFlags + the period labels were
-  // removed — their only DOCX consumer was the deleted "5.1 BOM-correlation"
-  // per-record table; docx-builder reads period labels from data.period and
-  // the historical range from historicalPeriods.
-  const ctx: DocxContext = {
+  // ReportContext — auxiliary state needed by buildPdfReport (EXPORT-PDF:
+  // renamed from DocxContext when the output switched .docx → .pdf). Kept
+  // separate from ReportData so the cache payload (only `{ buffer,
+  // fileName }`) stays clean. FIX (BUG-3-a P1): thresholds + sqlFlags + the
+  // period labels were removed — their only consumer was the deleted
+  // "5.1 BOM-correlation" per-record table; the builder reads period labels
+  // from data.period and the historical range from historicalPeriods.
+  const ctx: ReportContext = {
     sections,
     historicalPeriods,
   };
