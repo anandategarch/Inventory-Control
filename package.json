@@ -16,6 +16,7 @@
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
     "db:refresh-stats": "bun run scripts/refresh-db-stats.ts",
+    "db:maintenance": "bun run scripts/db-maintenance.ts",
     "db:fix-duplicate-weeks": "bun run scripts/fix-duplicate-weeks.ts",
     "db:fix-null-akun-duplicates": "bun run scripts/fix-null-akun-duplicates.ts",
     "db:recreate-covering-indexes": "bun run scripts/recreate-covering-indexes.ts"

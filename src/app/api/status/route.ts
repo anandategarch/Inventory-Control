@@ -15,6 +15,11 @@ import { extractKelompokFromCode } from '@/lib/kelompok-resolver';
 // Status is called frequently (every dashboard load) — calling cleanup here
 // (rate-limited internally to once per 10 min) prevents unbounded table growth.
 import { cleanupExpiredCache } from '@/lib/aggregation-cache';
+// DB-SIZE-1: runtime DB size hygiene — orphaned FileChunk TTL cleanup
+// (leaked chunks from uploads that never got processed / crashed parses)
+// + one-shot autovacuum tuning on the churn-heavy tables. Same
+// fire-and-forget pattern as cleanupExpiredCache above.
+import { cleanupOrphanedFileChunks, ensureAutovacuumTuning } from '@/lib/db-maintenance';
 // H-8 QUICK WIN 6c: rate limiting — /api/status was the ONLY DB-touching GET
 // without it (an external hammer bypassed all protection and each cold
 // instance paid the 6-query batch incl. a full-table COUNT).
@@ -61,6 +66,14 @@ export async function GET(req: NextRequest) {
     // status call after server start (or after 10 min idle) triggers cleanup;
     // subsequent calls within 10 min are no-ops.
     void cleanupExpiredCache();
+
+    // DB-SIZE-1: same opportunistic pattern for DB size hygiene —
+    // (a) FileChunk rows older than 24h can only be leaked upload chunks;
+    // (b) autovacuum tuning is applied once per process (idempotent ALTERs,
+    // 5s statement timeout, non-throwing). Both are rate-limited/capped
+    // internally and never block or fail this route.
+    void cleanupOrphanedFileChunks();
+    void ensureAutovacuumTuning();
 
     const url = new URL(req.url);
 

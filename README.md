@@ -75,6 +75,25 @@ JULI 2026.xlsx            → uppercase
 191.JULI 26.xlsx          → 2-digit year
 ```
 
+### 🧹 Maintenance Ukuran Database
+
+PostgreSQL tidak pernah mengembalikan ruang disk dari `DELETE` ke OS dengan sendirinya — dead tuple hanya *dipakai ulang* oleh insert berikutnya. Aplikasi ini sudah **otomatis** menjaga kebersihan (zero-click, berjalan saat dashboard dipakai):
+
+- **FileChunk yatim** (chunk upload yang tidak pernah diproses) dibersihkan otomatis setelah 24 jam — dijalankan dari `/api/status`
+- **Autovacuum tuning** pada tabel yang churn tinggi (`InventoryRecord`, `DQIssue` 2% dead-tuple, `AggregationCache` 10%) diterapkan otomatis saat server start
+- **AggregationCache** kadaluarsa (> 90 menit) dibersihkan otomatis
+
+Untuk **mengecilkan file DB secara fisik** (reclaim bloat lama):
+
+```bash
+# Laporan ukuran per tabel + purge aman + ANALYZE + tuning (tanpa lock eksklusif)
+bun run db:maintenance
+
+# + VACUUM FULL (rewrite tabel & index → disk benar-benar mengecil)
+# ⚠️ mengunci tabel beberapa detik — jalankan di jam sepi
+bun run db:maintenance --vacuum-full
+```
+
 ## 📁 Struktur Folder
 
 ```
