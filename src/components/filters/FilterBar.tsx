@@ -170,8 +170,18 @@ export function FilterBar() {
   async function handleIngest() {
     setIngesting(true);
     setIngestMsg(null);
+    // FIX (BUG-3-b B11): AbortController + 120s timeout — a hung /api/ingest
+    // kept the Sinkron File button spinning forever with no way out (pattern:
+    // useDashboardActions handleExport / fetchAnalysis.ts).
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120_000);
     try {
-      const res = await fetch('/api/ingest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const res = await fetch('/api/ingest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+        signal: controller.signal,
+      });
       // FIX: Check content-type before parsing — server crash returns HTML
       const contentType = res.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
@@ -184,7 +194,7 @@ export function FilterBar() {
         const skipped = d.results.filter((r: any) => r.status === 'SKIPPED');
         const errors = d.results.filter((r: any) => r.status === 'ERROR');
         setIngestMsg(`Ingested: ${ingested.length}, Skipped: ${skipped.length}, Errors: ${errors.length}`);
-        // FIX (H-14/T3): full 18-key invalidation via shared helper — the old
+        // FIX (H-14/T3): full 19-key invalidation via shared helper — the old
         // 6-key subset left pareto/heatmap/trend/flip/drilldown/price-effect
         // keys stale in keep-alive tabs after an ingest.
         invalidateAllData(queryClient);
@@ -193,8 +203,15 @@ export function FilterBar() {
         setIngestMsg(`Error: ${d.error || 'Unknown server error'}`);
       }
     } catch (e: unknown) {
-      setIngestMsg(`Error: ${(e instanceof Error ? e.message : String(e))}`);
+      // FIX (BUG-3-b B11): AbortError → friendly Indonesian message instead
+      // of "The user aborted a request".
+      if (e instanceof Error && e.name === 'AbortError') {
+        setIngestMsg('Error: Server timeout (120s) — server tidak merespons. Coba lagi nanti.');
+      } else {
+        setIngestMsg(`Error: ${(e instanceof Error ? e.message : String(e))}`);
+      }
     } finally {
+      clearTimeout(timeoutId);
       setIngesting(false);
       setTimeout(() => setIngestMsg(null), 8000);
     }

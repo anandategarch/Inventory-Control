@@ -26,7 +26,11 @@ import { reassembleFile, reuseTempFile } from './file-reassembly';
 import { extractMonthFromRows, type IngestProcessContext } from './shared';
 
 export async function handleImportAll(ctx: IngestProcessContext): Promise<NextResponse> {
-  const weeksToImport: string[] = (ctx.body.weeksToImport as string[]) || [];
+  // FIX (BUG-3-c SEDANG-3): weeksToImport now comes from the Zod-VALIDATED
+  // body (≤12 entries of ≤20 chars, enforced by ingestProcessBodySchema).
+  // Previously this read the raw JSON array — an unbounded array drove the
+  // per-week import loop below (one transaction + SourceFile upsert each).
+  const weeksToImport: string[] = ctx.body.weeksToImport ?? [];
   if (weeksToImport.length === 0) {
     return NextResponse.json(
       { success: false, error: 'weeksToImport array required for import-all mode' },

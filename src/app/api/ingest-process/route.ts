@@ -60,7 +60,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
     }
 
-    const { mode, fileName: rawFileName, fileHash, fileSize, ext, manualFileName, numberLocale } = body;
+    // FIX (BUG-3-c SEDANG-3): destructure from the VALIDATED payload (not the
+    // raw body) — the schema's bounds (weekLabel format, ≤12 weeksToImport,
+    // manualFileName length) used to be decorative because every consumer
+    // below re-read the raw JSON.
+    const { mode, fileName: rawFileName, fileHash, fileSize, ext, manualFileName, numberLocale } = validation.data;
 
     if (!mode || !rawFileName || !fileHash) {
       return NextResponse.json(
@@ -70,8 +74,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Validate numberLocale if provided (default 'auto' for local file uploads)
-    const validLocales = ['auto', 'id', 'us'];
-    const locale: 'auto' | 'id' | 'us' = validLocales.includes(numberLocale) ? numberLocale : 'auto';
+    const locale: 'auto' | 'id' | 'us' = numberLocale ?? 'auto';
 
     // ============================================================
     // Manual rename support (user override for "Loading Google Sheet" etc.)
@@ -132,9 +135,11 @@ export async function POST(req: NextRequest) {
     // (fileExt already validated above via validateFileMetadata — do NOT recompute from raw `ext`.)
 
     // Shared context consumed by all three mode handlers.
+    // FIX (BUG-3-c SEDANG-3): ctx.body carries the VALIDATED payload
+    // (validation.data) — mode handlers no longer read raw JSON.
     const ctx: IngestProcessContext = {
       startedAt,
-      body,
+      body: validation.data,
       rawFileName,
       fileName,
       monthInfo,

@@ -8,23 +8,26 @@ import { db } from '@/lib/db';
 
 // FIX H4 (AUDIT-7): PgBouncer transaction mode (port 6543) silently strips the
 // `statement_timeout` URL param. To enforce a per-query timeout, wrap the query
-// in a transaction with `SET LOCAL statement_timeout = 30000`. SET LOCAL only
-// applies to the current transaction, so it's safe and doesn't leak to other queries.
+// in a transaction with `SELECT set_config('statement_timeout', ..., true)`
+// (transaction-scoped, the functional form of SET LOCAL — see the FIX
+// (BUG-3-a P3) note inside).
 //
 // Usage: `const rows = await withStatementTimeout(() => db.$queryRaw\`...\`);`
 //
-// Note: this adds ~1-2ms overhead per call (transaction begin/commit). Only use
-// for queries that could potentially hang (e.g. heavy aggregations on large tables).
+// Note: this adds ~1ms overhead per call (transaction begin + one merged
+// set_config statement + commit — BUG-3-a P3 merged the two SET LOCALs into
+// one round-trip). Only use for queries that could potentially hang (e.g.
+// heavy aggregations on large tables).
 //
-// PERF-DB-03: also sets `work_mem = 64MB` per transaction. Supabase's default
-// work_mem is 4MB — sort-heavy queries (variance self-join, top-items bucket
-// avg) spill 2-3MB to disk, adding ~50ms latency per spill. Bumping to 64MB
-// per-transaction is safe (only consumed if sort/hash actually needs it; PG
-// allocates work_mem per sort node, not per query). 64MB × 30 connection limit
-// = 1.9GB worst case — well under Supabase free tier's 500MB database storage
-// (work_mem is RAM, not disk). Verified via EXPLAIN: variance query drops from
-// 109ms (with disk spill) → 91ms (in-memory sort) — modest gain, but eliminates
-// the IO wait which can spike under concurrent load.
+// PERF-DB-03: also sets `work_mem = 32MB` per transaction (PAKET B / F11 —
+// lowered from 64MB). Supabase's default work_mem is 4MB — sort-heavy queries
+// (variance self-join, top-items bucket avg) spill 2-3MB to disk, adding
+// ~50ms latency per spill. The bump is safe (only consumed if sort/hash
+// actually needs it; PG allocates work_mem per sort node, not per query),
+// and 32MB × ~10 concurrent transactions keeps the worst-case budget well
+// under a small shared Postgres. Verified via EXPLAIN: variance query drops
+// from 109ms (with disk spill) → 91ms (in-memory sort) — modest gain, but
+// eliminates the IO wait which can spike under concurrent load.
 export async function withStatementTimeout<T>(
   fn: (tx: Prisma.TransactionClient) => Promise<T>,
   timeoutMs: number = 30000
@@ -36,18 +39,30 @@ export async function withStatementTimeout<T>(
   // to increase the interactive transaction timeout to match statement_timeout.
   return db.$transaction(
     async (tx) => {
-      // FIX: SET LOCAL doesn't accept parameterized values in Prisma ($1).
-      // Use Prisma.raw to interpolate the integer safely (it's a hardcoded int,
-      // not user input — no SQL injection risk).
-      await tx.$executeRaw`SET LOCAL statement_timeout = ${Prisma.raw(String(timeoutMs))}`;
-      // PERF-DB-03: bump work_mem per-transaction to avoid sort spills.
-      // PERF (PAKET B / F11): lowered 64MB → 32MB. The pipeline keeps up to
-      // ~10 transactions open concurrently (early promises + batch queries),
-      // so the theoretical worst-case work_mem budget was 640MB against a
-      // small shared Postgres. The aggregate sorts here scan ≤ ~35K rows
-      // (~a few MB per sort node), so 32MB per tx still avoids spills while
-      // halving the worst-case memory pressure.
-      await tx.$executeRaw`SET LOCAL work_mem = '32MB'`;
+      // FIX (BUG-3-a P3): the two SET LOCAL statements below used to be TWO
+      // separate round-trips, making every wrapped query cost 5 RTTs
+      // (BEGIN + SET + SET + query + COMMIT). From a Vercel function (iad1)
+      // to the Supabase DB (sin1) that is ~230ms/RTT ≈ 1s of pure network
+      // latency PER heavy query. Merge them into ONE statement:
+      //   SELECT set_config('statement_timeout', $1, true),
+      //          set_config('work_mem', '32MB', true)
+      // set_config(..., true) is the functional form of SET LOCAL — the
+      // setting is scoped to the CURRENT TRANSACTION and vanishes at COMMIT,
+      // so semantics (transaction-scoped timeout + work_mem) are preserved
+      // EXACTLY. 5 → 4 RTTs per wrapped query.
+      //
+      // Why $executeRaw + a bind parameter (not the old Prisma.raw trick):
+      // SET LOCAL cannot take $1 parameters, but set_config() is a normal
+      // function call, so the timeout value now travels as a typed text
+      // parameter — still zero injection surface (callers pass a number).
+      // $executeRaw is legal for SELECT (returns the row count, discarded) —
+      // the same pattern Prisma users rely on for SELECT setval(...).
+      //
+      // work_mem stays 32MB (PAKET B / F11): the pipeline keeps up to ~10
+      // transactions open concurrently, so 64MB would budget 640MB against
+      // a small shared Postgres; the aggregate sorts here scan ≤ ~35K rows
+      // (a few MB per sort node), so 32MB per tx still avoids spills.
+      await tx.$executeRaw`SELECT set_config('statement_timeout', ${String(timeoutMs)}, true), set_config('work_mem', '32MB', true)`;
       return fn(tx);
     },
     {

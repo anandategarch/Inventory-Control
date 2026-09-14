@@ -3,30 +3,57 @@
 //  --------------------------------------------------------
 //  Extracted from the original 1120-line route.ts (Task 4-c refactor).
 //
-//  Responsibilities (route.ts:349-667 of the original computeFn body):
-//    1. Load runtime thresholds (getRuntimeThresholds)
+//  Responsibilities (updated by FIX BUG-3-a P1/P2 — sections-aware, dead
+//  compute removed; this list replaces the old 1-16 list):
+//    1. Load runtime thresholds (getRuntimeThresholds — now ONLY consumed
+//       for TOP_N_ITEMS; the rule-evaluation thresholds left with the
+//       dead q-rules / q-hist-rules compute, see P1 below)
 //    2. Resolve PIC outlet codes (case-insensitive raw SQL + sentinel)
 //    3. Resolve kelompok outlet codes (shared helper)
 //    4. Build Prisma where-clause factory (buildInventoryWhere)
-//    5. Fetch weeks + sourceFiles metadata → allPeriods list
+//    5. Fetch weeks + sourceFiles metadata → allPeriods list (wrapped in
+//       withStatementTimeout — FIX BUG-3-a C3)
 //    6. Resolve month label case (case-insensitive via getMonthResolver)
-//    7. Resolve prevWeek + prevMonth (via resolveComparePeriod)
-//    8. Compute historicalPeriods (same weekLabel, prior months)
-//    9. Parallel fetch: currSlim ∥ historicalByOutletItem ∥ sqlFlags
-//       ∥ varianceAnalysis
-//   10. 404 short-circuit (throw EarlyHttpResponse if currSlim empty)
-//   11. evaluateHistoricalRulesJs on currSlim → histFlags → topFlagByKey
-//   12. Exec summary (curr ∥ prev via queryExecSummary)
-//   13. 17-query Promise.all: topNominal / topDevBom / topWaste / topSusut
-//       / topTrial / topLossSurplus / areaAnalysis / breakdown / trendAgg
-//       / prevWaste / prevSusut / prevTrial / prevLossSurplus / histWaste
-//       / histSusut / histTrial / histLossSurplus
-//       (+ queryHistoricalCriticalItems fired EARLY right after the flag
-//       merge — see the H-8 QUICK WIN 1b comment below)
-//   14. Build prev + hist lookup maps + enrich topWaste/Susut/Trial/LossSurplus
-//   15. Build breakdownEnriched + growthMetrics + multiPeriodComparison + trend
-//   16. Build histCriticalItems + historicalAnalysis + growthComparisonWithHist
-//   17. Assemble ReportData + DocxContext, return both
+//    7. Resolve prevWeek + prevMonth (via resolveComparePeriod, fed with
+//       the preloaded period tables — FIX BUG-3-a P4)
+//    8. Compute historicalPeriods (same weekLabel, prior months — only
+//       feeds the header "Hist (…)" label + the topItems section's
+//       q-hist-catavg periods now)
+//    9. 404 short-circuit (throw EarlyHttpResponse if the current period
+//       has 0 records) — first data query for EVERY sections combination
+//   10. Sections-aware parallel fetch (FIX BUG-3-a P2) — verified against
+//       docx-builder.ts, `?sections=` now gates the FETCHING too:
+//         exec / growth / breakdown → q-kpis (+ prev q-exec-summary for
+//                                     exec/growth growth columns)
+//         topItems                  → q-top-nominal + q-top-devbom +
+//                                     q-topcat + prev q-topcat (limit 100)
+//                                     + 4× q-hist-catavg
+//         variance                  → q-variance
+//         trend                     → q-trend
+//   11. Build prev lookup maps + enrich topWaste/Susut/Trial/LossSurplus
+//   12. Build execSummary + breakdownEnriched + growthMetrics + trend
+//   13. Assemble ReportData + DocxContext, return both
+//
+//  FIX (BUG-3-a P1) — DEAD COMPUTE REMOVED: q-rules (evaluateRulesSql),
+//  q-hist-rules (evaluateHistoricalRulesSql), q-hist-stats
+//  (queryHistoricalStatsMultiMetric), q-hist-critical
+//  (queryHistoricalCriticalItems) and q-area (queryAreaAnalysis) were the 5
+//  heaviest queries of the pipeline, but their DOCX sections (Historical
+//  anomaly, Area analysis, 5.1 BOM-correlation per-record table) had already
+//  been removed by earlier user requests — hunt BUG-3-a verified 0 reads of
+//  areaAnalysis / growthComparison.historicalAnalysis / ctx.sqlFlags /
+//  ctx.thresholds / multiPeriodComparison in docx-builder.ts. They cost
+//  ±5-9s (35-60%) of the 15.3s cold path, and even the 404 path paid them
+//  (the 404 is thrown after that wave). Their plumbing went with them:
+//  historicalByOutletItem, allFlags/topFlagByKey, histCriticalKeys,
+//  areaAnalysisRaw + the ReportData/DocxContext fields they fed.
+//  TRADEOFF: the export no longer cross-warms those 5 q-* rows for the
+//  /api/analysis dashboard — the dashboard computes them in its own
+//  warm-up (run-queries.ts fires all 5 regardless), so only the rare
+//  "export first, then open dashboard" ordering loses a warm row; the
+//  common "dashboard → export" direction still warms every q-* row the
+//  export now needs (q-kpis / q-exec-summary / q-top-nominal / q-top-devbom
+//  / q-topcat / q-trend / q-variance / q-hist-catavg).
 //
 //  PERF (H-8 QUICK WIN 1): removed two DEAD queries — queryTopItemsByDeviasiRank
 //  (500-row national rank) and queryOutletHealthRanking — whose DOCX sections
@@ -41,9 +68,8 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/db';
 import { getRuntimeThresholds } from '@/lib/settings';
-import { calcGrowth, computeNominalDeviationGrowth, calcZScoreFromStats } from '@/lib/metrics';
+import { calcGrowth, computeNominalDeviationGrowth } from '@/lib/metrics';
 import {
   queryTrendAgg,
   queryExecSummary,
@@ -53,12 +79,9 @@ import {
   queryTopItemsByDevBom,
   queryTopItemsByAllCategories,
   queryHistoricalCategoryAvg,
-  queryAreaAnalysis,
 } from '@/lib/queries';
-import { queryVarianceAnalysis, queryHistoricalCriticalItems } from '@/lib/queries/health-ranking';
-import { evaluateRulesSql, evaluateHistoricalRulesSql } from '@/lib/queries/rule-evaluation';
-import { cachedSharedQuery, cachedSharedQueryMap, histPeriodsKeyParts, histCriticalKeysHash } from '@/lib/queries/query-cache';
-import { queryHistoricalStatsMultiMetric } from '@/lib/queries/historical';
+import { queryVarianceAnalysis } from '@/lib/queries/health-ranking';
+import { cachedSharedQuery, cachedSharedQueryMap, histPeriodsKeyParts } from '@/lib/queries/query-cache';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import { buildInventoryWhere } from '@/lib/build-where';
@@ -66,8 +89,6 @@ import { resolveComparePeriod } from '@/lib/period-resolver';
 import { withStatementTimeout } from '@/lib/queries/shared';
 import { logger } from '@/lib/logger';
 import type { ExecSummaryRow } from '@/lib/queries/dashboard';
-import type { SqlRuleFlag } from '@/lib/queries/rule-evaluation';
-import type { MultiMetricHistoricalStats } from '@/lib/queries/historical';
 import { EarlyHttpResponse } from '@/lib/early-http-response';
 import type {
   ExecSummaryWithPrev,
@@ -126,11 +147,9 @@ function buildExecSummaryFromSql(
 // ============================================================
 //  fetchReportData — main data-fetching pipeline
 //  --------------------------------------------------------
-//  Body relocated VERBATIM from route.ts:349-667 (the computeFn body of
-//  the original withCacheAndDedup wrapper). Comments preserved exactly;
-//  only the surrounding closure wrapper + 4-space indentation were
-//  adjusted to fit a top-level async function with standard 2-space
-//  indentation.
+//  Body relocated from route.ts:349-667 (the computeFn body of the
+//  original withCacheAndDedup wrapper). Comments preserved;
+//  restructured by FIX (BUG-3-a P1/P2) — see the file header.
 //
 //  Throws EarlyHttpResponse on 404 (no records found for the filter).
 //  The caller (route.ts) catches this in its outer try/catch.
@@ -141,10 +160,43 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     userCompareWeek, userCompareMonth, sections, startedAt,
   } = params;
 
+  // ============================================================
+  //  FIX (BUG-3-a P2): sections-aware fetching. `?sections=` used to gate
+  //  only the DOCX rendering — every export paid the FULL query bill even
+  //  when it rendered one section (an "exec only" export still ran q-trend
+  //  + the whole top-items batch). Build the `need` set up front and gate
+  //  every fetch below on it. `sections === null` (param absent) = ALL
+  //  sections; `[]` (empty param — FIX BUG-3-a C4 in route.ts) = NONE.
+  //  Keep this list in sync with EXPORT_SECTION_KEYS (validation.ts),
+  //  ExportDialog.tsx and the hasSection() keys in docx-builder.ts.
+  // ============================================================
+  const ALL_EXPORT_SECTIONS = ['exec', 'growth', 'topItems', 'breakdown', 'variance', 'trend'] as const;
+  const need = new Set<string>(sections ?? ALL_EXPORT_SECTIONS);
+  // Section → data dependencies (verified against docx-builder.ts, not
+  // assumed): exec renders executiveSummary (q-kpis + prev q-exec-summary);
+  // growth renders growthComparison (derived from the SAME execSummary —
+  // growth values + _prevMetrics need the prev-period row); breakdown
+  // renders deviationBreakdown (derived from the same q-kpis row);
+  // topItems renders the 6 top tables (q-top-nominal / q-top-devbom /
+  // q-topcat + prev q-topcat + 4× q-hist-catavg); variance → q-variance;
+  // trend → q-trend. The header/footer need metadata only (no SQL).
+  const needExec = need.has('exec');
+  const needGrowth = need.has('growth');
+  const needTopItems = need.has('topItems');
+  const needBreakdown = need.has('breakdown');
+  const needVariance = need.has('variance');
+  const needTrend = need.has('trend');
+  const needKpis = needExec || needGrowth || needBreakdown;
+  const needPrevSummary = needExec || needGrowth;
+
   // PERF-CACHE-06: monthParam + week are `const` (narrowed to `string` by the
   // outer guard) — TS carries the narrowing into this closure. The resolved
   // `month` (after monthResolver) is declared as a separate const below.
-  // Load thresholds
+  // Load thresholds.
+  // FIX (BUG-3-a P1): after the dead-compute removal the ONLY consumer of
+  // thresholds here is TOP_N_ITEMS (the rule-evaluation thresholds went away
+  // with q-rules / q-hist-rules). Keep the call — getRuntimeThresholds sits
+  // on getAllSettings' 30s-TTL in-process cache, so it is ~0ms when warm.
   const thresholds = await getRuntimeThresholds();
 
   // Resolve PIC outlets — FIX FILTER-3: case-insensitive via raw SQL LOWER()
@@ -173,7 +225,7 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   // `buildInventoryWhere` helper from @/lib/build-where.ts. The helper
   // handles area/itemName/kelompok/PIC/outletCode + all intersections,
   // including sentinel for empty PIC list (idempotent — export-report
-  // pre-sentineled at line 300; helper passes it through unchanged).
+  // pre-sentineled above; helper passes it through unchanged).
   const buildWhere = (wk: string, mLabel: string): Prisma.InventoryRecordWhereInput =>
     buildInventoryWhere({
       week: wk,
@@ -195,9 +247,14 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   };
 
   // Fetch current + prev records
+  // FIX (BUG-3-a C3): these metadata reads (and the inventoryRecord COUNT
+  // below) were plain db.* calls — the PgBouncer transaction pooler strips
+  // the statement_timeout URL param, so a stuck query could hang them
+  // unbounded (Vercel maxDuration 60s → 504 → the reported "spinner muter
+  // terus"). Wrap in withStatementTimeout so they fail loudly at 30s.
   const [weeksRaw, fileMonthKeys] = await Promise.all([
-    db.week.findMany({ select: { weekLabel: true, monthKey: true }, distinct: ['monthKey', 'weekLabel'] }),
-    db.sourceFile.findMany({ select: { monthLabel: true, monthKey: true } }),
+    withStatementTimeout((tx) => tx.week.findMany({ select: { weekLabel: true, monthKey: true }, distinct: ['monthKey', 'weekLabel'] })),
+    withStatementTimeout((tx) => tx.sourceFile.findMany({ select: { monthLabel: true, monthKey: true } })),
   ]);
   const monthLabelByKey = new Map(fileMonthKeys.map(f => [f.monthKey, f.monthLabel]));
   // BUG FIX (AUDIT-EXPORT-AI-1): monthKeyByLabel — reverse lookup for trend sort.
@@ -229,49 +286,46 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   // compareMonth, the old code searched for the CURRENT week (not compareWeek) in
   // the previous month — so setting compareWeek alone had no effect. The new
   // helper correctly searches for `compareWeek` in the previous month.
+  //
+  // FIX (BUG-3-a P4): pass the ALREADY-fetched weeksRaw + fileMonthKeys into
+  // resolveComparePeriod — without this the helper re-fetched both tables
+  // (2 extra round-trips right after the same data was loaded above). Same
+  // pattern as analysis/services/fetch-records.ts:152-162.
   const { prevWeek, prevMonth } = await resolveComparePeriod(
     week,
     month,
     userCompareWeek,
     resolvedCompareMonth,
+    { weeksRaw, fileMonthKeys },
   );
 
-  // Historical periods (same weekLabel only)
+  // Historical periods (same weekLabel only).
+  // FIX (BUG-3-a P1): after the dead-compute removal no SQL consumes this
+  // list unconditionally anymore — it now feeds (a) the DOCX header's
+  // "Hist (Jan-Jul 26)" range label (every section combination) and
+  // (b) the topItems section's q-hist-catavg periods. Cheap: metadata only.
   const historicalPeriods = allPeriods.filter(p => p.weekLabel === week && p.monthLabel !== month)
     .filter(p => { const cur = allPeriods.find(ap => ap.monthLabel === month && ap.weekLabel === week); return !cur || p.sortKey < cur.sortKey; });
 
-  // PERF (TAHAP-2 / P2-7 + P2-9): the old block fetched currSlim — 5 columns
-  // × ~35K rows — solely to feed evaluateHistoricalRulesJs's JS loop. The
-  // 3 zScore rules now run as ONE SQL query (evaluateHistoricalRulesSql)
-  // INSIDE this parallel wave, so the current period only needs a COUNT for
-  // the 404 short-circuit. The queries marked "shared" below use
-  // cachedSharedQuery with the SAME queryIds as the /api/analysis pipeline —
-  // when the dashboard was just viewed, those rows are already cached and
-  // this export skips recomputing them (~4-6s of the old cold path).
-  const [currRecordCount, historicalByOutletItem, sqlFlags, varianceAnalysis, histFlags] = await Promise.all([
-    db.inventoryRecord.count({ where: buildWhere(week, month) }),
-    historicalPeriods.length > 0
-      ? cachedSharedQueryMap(
-          'q-hist-stats',
-          { ...histPeriodsKeyParts(historicalPeriods), filters: filterOpts },
-          () => queryHistoricalStatsMultiMetric(historicalPeriods, filterOpts),
+  // ============================================================
+  //  404 short-circuit wave — the FIRST data query for every sections
+  //  combination.
+  //  FIX (BUG-3-a P1): this wave used to also carry the 5 dead queries
+  //  (q-rules / q-hist-rules / q-hist-stats), so even a filter with 0
+  //  records paid seconds of dead compute before the 404 was thrown.
+  //  FIX (BUG-3-a P2): q-variance is gated on the variance section (it
+  //  renders nothing else — the top-worsened table is its only consumer).
+  // ============================================================
+  const [currRecordCount, varianceAnalysis] = await Promise.all([
+    // FIX (BUG-3-a C3): bound the COUNT with a statement timeout too.
+    withStatementTimeout((tx) => tx.inventoryRecord.count({ where: buildWhere(week, month) })),
+    needVariance
+      ? cachedSharedQuery(
+          'q-variance',
+          { month, week, compareWeek: prevWeek, compareMonth: prevMonth, filters: filterOpts },
+          () => queryVarianceAnalysis(week, month, prevWeek, prevMonth, filterOpts),
         )
-      : Promise.resolve(new Map<string, MultiMetricHistoricalStats>()),
-    cachedSharedQuery(
-      'q-rules',
-      { month, week, compareWeek: prevWeek, compareMonth: prevMonth, filters: filterOpts },
-      () => evaluateRulesSql(week, month, prevWeek, prevMonth, filterOpts, thresholds),
-    ),
-    cachedSharedQuery(
-      'q-variance',
-      { month, week, compareWeek: prevWeek, compareMonth: prevMonth, filters: filterOpts },
-      () => queryVarianceAnalysis(week, month, prevWeek, prevMonth, filterOpts),
-    ),
-    cachedSharedQuery(
-      'q-hist-rules',
-      { month, week, filters: filterOpts },
-      () => evaluateHistoricalRulesSql(week, month, historicalPeriods, filterOpts, thresholds),
-    ),
+      : Promise.resolve({ topWorsened: [], topImproved: [] }),
   ]);
 
   if (currRecordCount === 0) {
@@ -290,61 +344,6 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     throw new EarlyHttpResponse(NextResponse.json({ success: false, error: `No records found for ${filterSummary}. Coba cek filter atau import data ulang.` }, { status: 404 }));
   }
 
-  // PERF (TAHAP-2 / P2-7): the zScore hist flags arrived from SQL in the
-  // parallel wave above (evaluateHistoricalRulesSql — replaced the 35K-row
-  // currSlim fetch + evaluateHistoricalRulesJs loop).
-  // Build topFlagByKey — one entry per (outletId, itemId, akunPenyesuaian)
-  // that fired at least one rule. Keeps the highest-priority flag.
-  const allFlags = [...sqlFlags, ...histFlags];
-  const topFlagByKey = new Map<string, SqlRuleFlag>();
-  for (const flag of allFlags) {
-    const key = `${flag.outletId}|${flag.itemId}|${flag.akunPenyesuaian ?? ''}`;
-    const existing = topFlagByKey.get(key);
-    if (!existing || flag.priority > existing.priority) {
-      topFlagByKey.set(key, flag);
-    }
-  }
-
-  // PERF (H-8 QUICK WIN 1b): fire queryHistoricalCriticalItems HERE — its only
-  // input (histCriticalKeys, derived from the flag merge above) is ready — so
-  // it overlaps the KPI + big Promise.all phases below instead of running
-  // sequentially after them (~100-300ms off the cold path).
-  const histCriticalKeys = [...topFlagByKey.values()]
-    .filter((f) => f.ruleCode === 'HISTORICAL_ABNORMAL' || f.ruleCode === 'HISTORICAL_ABNORMAL_SURPLUS' || f.ruleCode === 'HISTORICAL_WARNING')
-    .map(f => ({ outletId: f.outletId, itemId: f.itemId, akunPenyesuaian: f.akunPenyesuaian }));
-  // PERF (H-11 / #3): q-hist-critical — SAME queryId + keys fingerprint as
-  // the analysis pipeline's identical call (both derive the keys from the
-  // shared q-rules / q-hist-rules rows), so a dashboard view before the
-  // export skips this scan entirely.
-  const histCriticalRowsPromise = cachedSharedQuery(
-    'q-hist-critical',
-    { month, week, filters: filterOpts, extra: { keys: histCriticalKeysHash(histCriticalKeys) } },
-    () => queryHistoricalCriticalItems(week, month, filterOpts, histCriticalKeys),
-  );
-  // SQL queries
-  // PERF (PAKET B / F2 — scan merge): current-period exec summary + deviation
-  // breakdown come from ONE merged scan (queryDashboardKpis); only the
-  // previous-period exec summary still runs standalone.
-  // PERF (TAHAP-2 / P2-9): kpis + trendAgg + category tops use the shared
-  // per-query cache (same queryIds as the analysis pipeline).
-  const [kpis, prevSummary] = await Promise.all([
-    cachedSharedQuery(
-      'q-kpis',
-      { month, week, filters: filterOpts },
-      () => queryDashboardKpis(week, month, filterOpts),
-    ),
-    // PERF (H-11 / #3): q-exec-summary — SAME queryId + period key as the
-    // analysis pipeline's prev-period call, so whichever pipeline runs
-    // first warms the row for the other.
-    prevMonth && prevWeek ? cachedSharedQuery(
-      'q-exec-summary',
-      { month: prevMonth, week: prevWeek, filters: filterOpts },
-      () => queryExecSummary(prevWeek, prevMonth, filterOpts),
-    ) : Promise.resolve(null),
-  ]);
-  const execSummary = buildExecSummaryFromSql(kpis, prevSummary, month, week, prevWeek);
-  const breakdown = kpisToBreakdown(kpis);
-
   const topNItems = thresholds.TOP_N_ITEMS || 10;
 
   // Rev 2: Fetch previous period + historical category data for comparison
@@ -352,61 +351,110 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   // PERF (PAKET B / F2 — scan merge): the 4 current + 4 previous category
   // queries each scanned their period separately; now 1 merged scan per
   // period (queryTopItemsByAllCategories — same result sets).
-  const [topNominal, topDevBom, topCategories, prevTopCategories, areaAnalysisRaw, trendAggRows,
+  //
+  // PERF (H-8 QUICK WIN 2 pattern — kept by FIX BUG-3-a P2): ONE Promise.all
+  // for ALL remaining section-gated queries. The old code ran TWO serial
+  // waves (kpis + prev summary first, then the category batch) with no data
+  // dependency between them — one extra full-RTT barrier on the cold path.
+  const [kpis, prevSummary, topNominal, topDevBom, topCategories, prevTopCategories, trendAggRows,
     // Historical category averages (Rev 2)
     histWasteMap, histSusutMap, histTrialMap, histLossSurplusMap,
   ] = await Promise.all([
-    // PERF (H-11 / #3): q-top-nominal / q-top-devbom / q-area — SAME queryIds
-    // + keys as the analysis pipeline's calls (limit in the key), and
-    // q-hist-catavg — shared across export runs with different `sections`
-    // params (the route-level cache key includes sections; the q-* rows do
-    // not, so a sections change no longer re-pays the whole query bill).
-    cachedSharedQuery(
-      'q-top-nominal',
-      { month, week, filters: filterOpts, extra: { limit: topNItems } },
-      () => queryTopItemsByNominal(week, month, filterOpts, topNItems),
-    ),
-    cachedSharedQuery(
-      'q-top-devbom',
-      { month, week, filters: filterOpts, extra: { limit: topNItems } },
-      () => queryTopItemsByDevBom(week, month, filterOpts, topNItems),
-    ),
-    cachedSharedQuery(
+    // PERF (TAHAP-2 / P2-9): kpis + trendAgg + category tops use the shared
+    // per-query cache (same queryIds as the analysis pipeline).
+    needKpis
+      ? cachedSharedQuery(
+          'q-kpis',
+          { month, week, filters: filterOpts },
+          () => queryDashboardKpis(week, month, filterOpts),
+        )
+      // FIX (BUG-3-a P2): not-fetched sections get zero-value placeholders —
+      // never rendered (docx-builder's hasSection gates with the SAME list).
+      : Promise.resolve(null),
+    // PERF (H-11 / #3): q-exec-summary — SAME queryId + period key as the
+    // analysis pipeline's prev-period call, so whichever pipeline runs
+    // first warms the row for the other.
+    needPrevSummary && prevMonth && prevWeek ? cachedSharedQuery(
+      'q-exec-summary',
+      { month: prevMonth, week: prevWeek, filters: filterOpts },
+      () => queryExecSummary(prevWeek, prevMonth, filterOpts),
+    ) : Promise.resolve(null),
+    // PERF (H-11 / #3): q-top-nominal / q-top-devbom — SAME queryIds + keys
+    // as the analysis pipeline's calls (limit in the key), and q-hist-catavg
+    // — shared across export runs with different `sections` params (the
+    // route-level cache key includes sections; the q-* rows do not, so a
+    // sections change no longer re-pays the whole query bill).
+    needTopItems
+      ? cachedSharedQuery(
+          'q-top-nominal',
+          { month, week, filters: filterOpts, extra: { limit: topNItems } },
+          () => queryTopItemsByNominal(week, month, filterOpts, topNItems),
+        )
+      : Promise.resolve([]),
+    needTopItems
+      ? cachedSharedQuery(
+          'q-top-devbom',
+          { month, week, filters: filterOpts, extra: { limit: topNItems } },
+          () => queryTopItemsByDevBom(week, month, filterOpts, topNItems),
+        )
+      : Promise.resolve([]),
+    needTopItems
+      ? cachedSharedQuery(
+          'q-topcat',
+          { month, week, filters: filterOpts, extra: { limit: topNItems } },
+          () => queryTopItemsByAllCategories(week, month, filterOpts, topNItems),
+        )
+      : Promise.resolve({ waste: [], susut: [], trial: [], lossSurplus: [] }),
+    // FIX (BUG-3-a P5): the prev-period merged category scan was the ONE
+    // remaining uncached heavy query (recomputed on every export with a
+    // compare period). Wrapped in cachedSharedQuery under the SAME 'q-topcat'
+    // queryId (period = prevMonth/prevWeek + limit 100 in the key):
+    //   - Key: a dedicated 'q-topcat-prev' id would NOT be covered by
+    //     invalidateAnalysisCache()'s route-prefix list ('q-topcat\x1f'
+    //     matches this row too, since the key starts with the same route
+    //     prefix) — the invalidation list lives in aggregation-cache/**
+    //     (out of scope for this fix), so reusing 'q-topcat' is the choice
+    //     that keeps mutations (ingest/delete/settings) from serving a
+    //     stale prev-period row for up to 30 min.
+    //   - Limit: kept at 100, NOT topNItems. The prev rows build a LOOKUP
+    //     map for the CURRENT period's top-N items — an item ranked #10 now
+    //     may rank #11-#100 in the prev period, so a topNItems limit would
+    //     turn real prev quantities into '—' in the "QTY <prev>" column
+    //     (correctness regression); 100 gives the lookup rank headroom.
+    //     extra.limit=100 keeps the cache key distinct from the
+    //     current-period q-topcat row (extra.limit=topNItems).
+    needTopItems && prevMonth && prevWeek ? cachedSharedQuery(
       'q-topcat',
-      { month, week, filters: filterOpts, extra: { limit: topNItems } },
-      () => queryTopItemsByAllCategories(week, month, filterOpts, topNItems),
-    ),
-    prevMonth && prevWeek ? queryTopItemsByAllCategories(prevWeek, prevMonth, filterOpts, 100) : Promise.resolve({ waste: [], susut: [], trial: [], lossSurplus: [] }),
-    cachedSharedQuery(
-      'q-area',
-      { month, week, filters: filterOpts },
-      () => queryAreaAnalysis(week, month, filterOpts),
-    ),
-    cachedSharedQuery(
-      'q-trend',
-      { month, week, filters: filterOpts, extra: { weekLabel: week || 'ALL' } },
-      () => queryTrendAgg({ ...filterOpts, weekLabel: week }),
-    ),
+      { month: prevMonth, week: prevWeek, filters: filterOpts, extra: { limit: 100 } },
+      () => queryTopItemsByAllCategories(prevWeek, prevMonth, filterOpts, 100),
+    ) : Promise.resolve({ waste: [], susut: [], trial: [], lossSurplus: [] }),
+    needTrend
+      ? cachedSharedQuery(
+          'q-trend',
+          { month, week, filters: filterOpts, extra: { weekLabel: week || 'ALL' } },
+          () => queryTrendAgg({ ...filterOpts, weekLabel: week }),
+        )
+      : Promise.resolve([]),
     // Rev 2: Historical category averages (Map-safe wrapper — see
     // cachedSharedQueryMap for why Maps must be cached as entry arrays).
     // Empty-periods guard: skip caching degenerate empty rows (the query
     // itself early-returns an empty Map when there is no baseline).
-    historicalPeriodsList.length > 0 ? cachedSharedQueryMap(
+    needTopItems && historicalPeriodsList.length > 0 ? cachedSharedQueryMap(
       'q-hist-catavg',
       { ...histPeriodsKeyParts(historicalPeriodsList), filters: filterOpts, extra: { metric: 'waste' } },
       () => queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'waste'),
     ) : Promise.resolve(new Map<string, { avgQty: number; avgNominal: number }>()),
-    historicalPeriodsList.length > 0 ? cachedSharedQueryMap(
+    needTopItems && historicalPeriodsList.length > 0 ? cachedSharedQueryMap(
       'q-hist-catavg',
       { ...histPeriodsKeyParts(historicalPeriodsList), filters: filterOpts, extra: { metric: 'susut' } },
       () => queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'susut'),
     ) : Promise.resolve(new Map<string, { avgQty: number; avgNominal: number }>()),
-    historicalPeriodsList.length > 0 ? cachedSharedQueryMap(
+    needTopItems && historicalPeriodsList.length > 0 ? cachedSharedQueryMap(
       'q-hist-catavg',
       { ...histPeriodsKeyParts(historicalPeriodsList), filters: filterOpts, extra: { metric: 'trial' } },
       () => queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'trial'),
     ) : Promise.resolve(new Map<string, { avgQty: number; avgNominal: number }>()),
-    historicalPeriodsList.length > 0 ? cachedSharedQueryMap(
+    needTopItems && historicalPeriodsList.length > 0 ? cachedSharedQueryMap(
       'q-hist-catavg',
       { ...histPeriodsKeyParts(historicalPeriodsList), filters: filterOpts, extra: { metric: 'lossSurplus' } },
       () => queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'lossSurplus'),
@@ -459,11 +507,23 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     return { itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, qtyLossSurplus: r.qty, nominalLossSurplus: r.nominal, direction: r.direction, prevQty: prev?.qty ?? null, histAvgQty: hist?.avgQty ?? null };
   });
 
+  // FIX (BUG-3-a P2): kpis/prevSummary are null when the exec/growth/
+  // breakdown sections are all off — kpisToBreakdown + buildExecSummaryFromSql
+  // degrade to their zero-value shapes (never rendered; hasSection gates
+  // rendering with the SAME sections list that gated the fetch).
+  const execSummary = buildExecSummaryFromSql(kpis, prevSummary, month, week, prevWeek);
+  const breakdown = kpisToBreakdown(kpis);
+
   const explainedTotal = (breakdown.waste ?? 0) + (breakdown.susut ?? 0) + (breakdown.trial ?? 0);
   const breakdownEnriched = { ...breakdown, explained: explainedTotal, explainedPct: breakdown.total > 0 ? explainedTotal / breakdown.total : null, netPct: breakdown.total > 0 ? (breakdown.residual ?? 0) / breakdown.total : null };
 
   // Growth metrics
   const nominalDeviasiGrowthMagnitude = computeNominalDeviationGrowth(execSummary.nominalDeviasi.current, execSummary.nominalDeviasi.previous ?? null);
+  // FIX (BUG-3-a P1): multiPeriodComparison REMOVED from growthMetrics —
+  // hunt BUG-3-a verified 0 reads in docx-builder.ts (the Section 2 table
+  // renders only the 7 scalar growth fields; the analysis payload keeps its
+  // own copy for the frontend). It was rebuilt from trendAggRows on every
+  // export for nothing.
   const growthMetrics = {
     salesGrowth: execSummary.sales.growth, bomGrowth: execSummary.qtyBom.growth,
     qtyDeviasiGrowth: execSummary.qtyDeviasi.growth, nominalDeviasiGrowth: nominalDeviasiGrowthMagnitude,
@@ -474,48 +534,12 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     qtyTrialGrowth: execSummary.qtyTrial.growth,
     deviationToSalesRatio: execSummary.sales.current > 0 ? execSummary.nominalDeviasi.current / execSummary.sales.current : null,
     deviationToBomRatio: execSummary.deviationToBom,
-    multiPeriodComparison: [] as Array<Record<string, unknown>>,
   };
-
-  const multiPeriodComparison = trendAggRows.map(r => {
-    const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
-    return { period: `${r.weekLabel} ${r.monthLabel?.split(' ')[0].slice(0, 3)}`, sortKey: `${mk}|${String(parseInt(r.weekLabel?.replace(/\D/g, '')) || 0).padStart(2, '0')}`, sales: r.sales, deviation: r.nominal, devBomRatio: r.devBom, growthPct: null as number | null };
-  }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).map((row, i, arr) => { if (i > 0) row.growthPct = computeNominalDeviationGrowth(row.deviation, arr[i - 1].deviation); const { sortKey, ...rest } = row; return rest; });
-  growthMetrics.multiPeriodComparison = multiPeriodComparison;
 
   const trend = trendAggRows.map(r => {
     const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
     return { weekLabel: `${r.weekLabel} ${r.monthLabel?.split(' ')[0].slice(0, 3)}`, sortKey: `${mk}|${String(parseInt(r.weekLabel?.replace(/\D/g, '')) || 0).padStart(2, '0')}`, devBom: r.devBom, sales: r.sales, nominal: r.nominal };
   }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).map(({ sortKey, ...rest }) => rest);
-
-  // PERF-FASE3-BE04: varianceAnalysis already computed via SQL in the
-  // Promise.all block above (queryVarianceAnalysis). Historical analysis
-  // now uses queryHistoricalCriticalItems SQL instead of 35K-record JS loop.
-  // (H-8 QUICK WIN 1b: the query was FIRED right after the flag merge above
-  // — awaited here after overlapping the KPI + category phases.)
-  const histCriticalRows = await histCriticalRowsPromise;
-  const histCriticalItems = histCriticalRows.map(row => {
-    const key = `${row.outletId}|${row.itemId}`;
-    const stats = historicalByOutletItem.get(key);
-    if (!stats || stats.devBom.stdDev <= 0) return null;
-    // ZS-03 FIX: Don't coerce null to 0 — pass raw value to calcZScoreFromStats
-    const zScore = calcZScoreFromStats(row.pctQtyDeviasiToBom, stats.devBom.mean, stats.devBom.stdDev);
-    return {
-      itemName: row.itemName,
-      outletCode: row.outletCode,
-      area: row.area,
-      currentDevBom: row.pctQtyDeviasiToBom ?? 0,
-      historicalAvg: stats.devBom.mean,
-      zScore: zScore ?? 0,
-      absNominal: row.absNominalDeviasi ?? 0,
-      currentWaste: Math.abs(row.qtyWaste ?? 0),
-      currentSusut: Math.abs(row.qtySusut ?? 0),
-      currentTrial: Math.abs(row.qtyTrial ?? 0),
-    };
-  }).filter((x): x is NonNullable<typeof x> => x !== null);
-  histCriticalItems.sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore));
-  const historicalAnalysis = { criticalItems: histCriticalItems.slice(0, 200) };
-  const growthComparisonWithHist = { ...growthMetrics, historicalAnalysis };
 
   // (PERF H-8 QUICK WIN 1: the outletHealthRanking fetch was removed — its
   // DOCX section (restoPriority) no longer exists, so the query was pure
@@ -528,29 +552,24 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     // FIX (BUG-PERF-11): include pic too — was missing, inconsistent with pareto route.
     filters: { area, kelompok, outletCode, itemName, pic },
     executiveSummary: execSummary,
-    growthComparison: growthComparisonWithHist,
+    growthComparison: growthMetrics,
     topItemsByNominal: topNominal, topItemsByDevBom: topDevBom,
     topItemsByWaste: topWaste, topItemsBySusut: topSusut, topItemsByTrial: topTrial, topItemsByLossSurplus: topLossSurplus,
     deviationBreakdown: breakdownEnriched,
-    areaAnalysis: areaAnalysisRaw.map(a => ({ area: a.area, outletCount: a.outletCount, totalSales: a.totalSales, totalAbsNominal: a.totalAbsNominal, avgDevBom: a.avgDevBom, lossToSales: a.lossToSales })),
     varianceAnalysis,
     trend,
     durationMs: Date.now() - startedAt,
   };
 
-  // DocxContext — auxiliary state needed by buildDocxReport (sections filter,
-  // historicalPeriods for the Hist label, thresholds + sqlFlags + period labels
-  // for the 5.1 BOM-correlation per-record table). Kept separate from
-  // ReportData so the cache payload (only `{ buffer, fileName }`) stays clean.
+  // DocxContext — auxiliary state needed by buildDocxReport. Kept separate
+  // from ReportData so the cache payload (only `{ buffer, fileName }`) stays
+  // clean. FIX (BUG-3-a P1): thresholds + sqlFlags + the period labels were
+  // removed — their only DOCX consumer was the deleted "5.1 BOM-correlation"
+  // per-record table; docx-builder reads period labels from data.period and
+  // the historical range from historicalPeriods.
   const ctx: DocxContext = {
     sections,
     historicalPeriods,
-    thresholds,
-    sqlFlags,
-    month,
-    week,
-    prevWeek,
-    prevMonth,
   };
 
   return { data, ctx };

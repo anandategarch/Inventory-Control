@@ -474,9 +474,20 @@ export async function resolveChangeAnalysisContext(
     week
       ? Promise.resolve<{ w: string | null }[]>([{ w: week }])
       : db.$queryRaw<Array<{ w: string | null }>>`
-          SELECT MAX(ir."weekLabel") as w
+          -- FIX (BUG-3-c R-8): NUMERIC week ordering, not lexicographic.
+          -- MAX("weekLabel") returns "WEEK 9" once WEEK 10+ exists ('1' <
+          -- '9' in text order), silently reporting last-month-minus-one as
+          -- the fallback week. GROUP BY first (a handful of distinct labels
+          -- per month), then order by the leading integer parsed out of the
+          -- label — NULLS LAST keeps any malformed label without digits from
+          -- outranking real weeks, and the label tiebreak makes the pick
+          -- deterministic.
+          SELECT ir."weekLabel" as w
           FROM "InventoryRecord" ir
           WHERE ir."monthLabel" = ${month}
+          GROUP BY ir."weekLabel"
+          ORDER BY SUBSTRING(ir."weekLabel" FROM '[0-9]+')::int DESC NULLS LAST, ir."weekLabel" DESC
+          LIMIT 1
         `,
     db.sourceFile.findFirst({
       where: { monthLabel: month },

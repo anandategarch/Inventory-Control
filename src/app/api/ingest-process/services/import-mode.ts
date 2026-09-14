@@ -25,7 +25,10 @@ import { reassembleFile, reuseTempFile } from './file-reassembly';
 import { extractMonthFromRows, type IngestProcessContext } from './shared';
 
 export async function handleImport(ctx: IngestProcessContext): Promise<NextResponse> {
-  const weekLabel = ctx.body.weekLabel as string;
+  // FIX (BUG-3-c SEDANG-3): weekLabel comes from the Zod-VALIDATED body
+  // (route.ts passes validation.data) — format + length are enforced upstream
+  // instead of being read raw from the JSON.
+  const weekLabel = ctx.body.weekLabel;
   if (!weekLabel) {
     return NextResponse.json(
       { success: false, error: 'weekLabel required for import mode' },

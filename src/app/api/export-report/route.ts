@@ -4,9 +4,11 @@
 //  Fetches analysis data server-side, generates .docx, returns as download.
 //
 //  PERF-FASE3-BE04: Migrated from legacy JS rule evaluator (35K-record loop
-//  calling evaluateRules per record) to SQL-pushed evaluators (evaluateRulesSql
-//  + queryVarianceAnalysis + queryHistoricalCriticalItems). Matches the
+//  calling evaluateRules per record) to SQL-pushed evaluators. Matches the
 //  dashboard's /api/analysis route — 3-5s faster per export.
+//  FIX (BUG-3-a P1): the SQL rule/historical evaluators were later removed
+//  from THIS pipeline entirely (their DOCX sections no longer exist) — the
+//  dashboard's /api/analysis keeps them; see data-fetcher.ts header.
 //
 //  REFACTOR (Task 4-c): the original 1120-line god function has been split
 //  into a slim coordinator (~95 LOC, this file) + 4 service modules under
@@ -39,9 +41,20 @@ export async function GET(req: NextRequest) {
   const startedAt = Date.now();
   try {
     const ip = getClientIP(req);
-    const rl = rateLimit(`export-report:${ip}`, RATE_LIMITS.analysis.maxRequests, RATE_LIMITS.analysis.windowMs);
+    // FIX (BUG-3-a C7): dedicated export bucket (10/min) — was the shared
+    // analysis bucket (60/min), far too loose for the heaviest route in the
+    // app (seconds of SQL + docx assembly per call).
+    const rl = rateLimit(`export-report:${ip}`, RATE_LIMITS.export.maxRequests, RATE_LIMITS.export.windowMs);
     if (!rl.allowed) {
-      return NextResponse.json({ success: false, error: 'Rate limit exceeded.' }, { status: 429 });
+      // FIX (BUG-3-a C7): Retry-After so a well-behaved client backs off
+      // instead of retry-hammering. The limiter is fixed-window, so
+      // rl.resetAt is the start of the next window — advertise the seconds
+      // remaining (bounded to ≥1s; the window itself is 60s).
+      const retryAfterSec = String(Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000)));
+      return NextResponse.json(
+        { success: false, error: 'Rate limit exceeded.' },
+        { status: 429, headers: { 'Retry-After': retryAfterSec } },
+      );
     }
 
     const url = new URL(req.url);
@@ -75,13 +88,19 @@ export async function GET(req: NextRequest) {
     const userCompareWeek = url.searchParams.get('compareWeek');
     const userCompareMonth = url.searchParams.get('compareMonth');
     const sectionsParam = url.searchParams.get('sections');
-    const sections = sectionsParam ? sectionsParam.split(',').filter(Boolean) : null;
+    // FIX (BUG-3-a C4): `?sections=` (empty string) used to fall through to
+    // null = "ALL sections" — inverted semantics. Now an EMPTY param means NO
+    // section active (docx-builder renders the header-only document; verified
+    // crash-free — every section body is behind hasSection() guards). Param
+    // absent (null) still means all sections. The cache key below keeps the
+    // two cases distinct.
+    const sections = sectionsParam !== null ? sectionsParam.split(',').filter(Boolean) : null;
 
     if (!monthParam || !week) {
       return NextResponse.json({ success: false, error: 'month and week required' }, { status: 400 });
     }
 
-    // PERF: DB-level cache check — export-report is the heaviest route (7-12s).
+    // PERF: DB-level cache check — export-report is the heaviest route.
     // Cache the generated .docx buffer for 5 min. Same filter params = same report.
     //
     // PERF-CACHE-04: cache key now includes `sections` (was missing → two requests
@@ -89,8 +108,14 @@ export async function GET(req: NextRequest) {
     //   in exported report). Sections are sorted for determinism.
     // PERF-CACHE-06: withCacheAndDedup adds in-flight Promise dedup for concurrent
     //   identical requests (was missing — only /api/analysis had it). Critical for
-    //   export-report because the compute is ~8s cold; without dedup, two concurrent
-    //   identical exports would each compute + write the cache separately.
+    //   export-report because the compute is still multi-second cold; without
+    //   dedup, two concurrent identical exports would each compute + write the
+    //   cache separately.
+    // FIX (BUG-3-a C4): buildCacheKey SKIPS empty-string extras — with the new
+    // "empty sections param = no sections" semantics, `?sections=` must NOT
+    // share the null (all-sections) key. Encode the empty list as an explicit
+    // '__NONE__' marker (unforgeable: validation.ts 400-rejects any sections
+    // token outside the 6 known keys, so '__NONE__' can never be user input).
     // PERF (TAHAP-2 / P2-11): resolve month + compareMonth to actual DB case
     // BEFORE the cache key (getMonthResolver is process-cached ~0ms). The
     // data-fetcher re-resolves internally (idempotent no-op on the resolved
@@ -108,30 +133,37 @@ export async function GET(req: NextRequest) {
       kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
       outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
       itemName: itemName || null, pic: pic || null,
-      extra: { sections: sections ? [...sections].sort().join(',') : null },
+      extra: { sections: sections === null ? null : (sections.length > 0 ? [...sections].sort().join(',') : '__NONE__') },
     });
     const EXPORT_CACHE_TTL = 5 * 60 * 1000; // 5 min
 
-    // PERF-CACHE-06: wrap the heavy compute (thresholds → SQL fetches → docx
-    // assembly → Packer.toBuffer) in withCacheAndDedup. On cache hit, returns
-    // the stored { bufferBase64, fileName } without re-running any of the ~8s pipeline.
+    // PERF-CACHE-06: wrap the heavy compute (thresholds → section-gated SQL
+    // fetches → docx assembly → Packer.toBuffer) in withCacheAndDedup. On
+    // cache hit, returns the stored { bufferBase64, fileName } without
+    // re-running any of the cold pipeline (FIX BUG-3-a P6: was quoted as
+    // "~8s" — after the dead-compute removal + sections-aware fetching the
+    // cold path depends on how many sections are selected; a warm q-* row
+    // from a preceding dashboard view cuts it further).
     const { data: exportData } = await withCacheAndDedup<{ bufferBase64: string; fileName: string }>(
       cacheKey,
       EXPORT_CACHE_TTL,
       async () => {
-        // Stage 1 — fetch all data (thresholds + 18 parallel SQL queries +
-        // rule evaluation + historical analysis + variance analysis).
-        // Throws EarlyHttpResponse on 404 (no records for the filter).
+        // Stage 1 — fetch the data the selected sections need
+        // (FIX BUG-3-a P1/P2: the 5 dead queries are gone and ?sections=
+        // now gates the FETCHING too — an "exec only" export no longer pays
+        // q-trend + the top-items batch. See data-fetcher.ts header for the
+        // section → query map). Throws EarlyHttpResponse on 404 (no records
+        // for the filter).
         const params: ReportParams = {
           monthParam, week, area, outletCode, itemName, pic, kelompok,
           userCompareWeek, userCompareMonth, sections, startedAt,
         };
         const { data, ctx } = await fetchReportData(params);
 
-        // Stage 2 — assemble the Word document (title + 7 sections + footer
-        // + Packer.toBuffer). Returns { bufferBase64, fileName } for the
-        // cache wrapper — P3-HYG-4: base64 keeps the cache row compact +
-        // JSON-serializable (see docx-builder.ts).
+        // Stage 2 — assemble the Word document (title + 6 section blocks
+        // (filtered by ?sections=) + footer + Packer.toBuffer). Returns
+        // { bufferBase64, fileName } for the cache wrapper — P3-HYG-4: base64
+        // keeps the cache row compact + JSON-serializable (see docx-builder.ts).
         return buildDocxReport(data, ctx);
       },
     );
@@ -140,12 +172,16 @@ export async function GET(req: NextRequest) {
     // send as Word download. Same response shape for both cache hit and
     // fresh compute. (P3-HYG-4: Buffer.from(b64) is a single fast decode —
     // was Buffer.from(number[]) which walks a 500K-element JS array.)
+    // FIX (BUG-3-a C5): filename is server-generated + sanitized in
+    // docx-builder ([^A-Za-z0-9._-] → '_'), and the header also carries the
+    // RFC 5987/6266 filename* form so non-ASCII-safe handling is spec'd for
+    // every client — belt-and-braces against header splitting/quoting bugs.
     const buffer = Buffer.from(exportData.bufferBase64, 'base64');
     return new NextResponse(new Uint8Array(buffer) as BodyInit, {
       status: 200,
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'Content-Disposition': `attachment; filename="${exportData.fileName}"`,
+        'Content-Disposition': `attachment; filename="${exportData.fileName}"; filename*=UTF-8''${encodeURIComponent(exportData.fileName)}`,
         // PERF-FASE1-BE01: CDN cache for 5 min, stale grace 10 min. Same report
         // for same period+filters won't change until underlying data changes.
         'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600, must-revalidate',

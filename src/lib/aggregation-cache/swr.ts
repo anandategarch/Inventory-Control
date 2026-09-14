@@ -13,6 +13,7 @@
 import { getCacheGeneration } from './generation';
 import { getCachedWithMeta, setCached } from './store';
 import { getInflight, setInflight } from './inflight';
+import { scheduleBackground } from '../background-scheduler';
 
 // ============================================================
 //  PERF-CACHE-06: withCacheAndDedup — combines DB cache lookup + in-flight
@@ -116,7 +117,12 @@ export async function withCacheAndDedup<T>(
       //     fire-and-forget background recompute. The in-flight Promise
       //     (registered in step 2) is resolved by the background recompute,
       //     so concurrent requests awaiting it get FRESH data.
-      (async () => {
+      // FIX (BUG-3-c SEDANG-5): schedule the IIFE via after() so Vercel
+      // keeps the function alive until the recompute + cache write land.
+      // A plain floating promise was frozen at response time — the fresh
+      // row never got written and every subsequent request kept paying a
+      // cold recompute until cleanup aged the stale row out.
+      scheduleBackground((async () => {
         try {
           // FIX (BUG-2-b): capture the generation BEFORE computeFn. If an
           // invalidation lands while the background recompute runs, the
@@ -138,7 +144,7 @@ export async function withCacheAndDedup<T>(
         } catch (e) {
           rejectComputation(e);
         }
-      })();
+      })());
       return { data: cachedWithMeta.data, cached: true, stale: true };
     }
 

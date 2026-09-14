@@ -9,12 +9,19 @@
 //    - ReportParams (input to fetchReportData — parsed URL params)
 //    - ReportData (output of fetchReportData — drives docx-builder)
 //    - DocxContext (auxiliary state passed to buildDocxReport that
-//      doesn't belong in ReportData — section filter, historicalPeriods
-//      for label rendering, thresholds + sqlFlags + period labels for
-//      the BOM-correlation per-record table)
-//    - Derived row shapes (TopCatItem*, BreakdownEnriched,
-//      AreaAnalysisMappedRow, TrendRow, HistCriticalItem,
-//      GrowthMetrics, GrowthComparisonWithHist)
+//      doesn't belong in ReportData — section filter +
+//      historicalPeriods for the header "Hist (Jan-Jul 26)" label)
+//    - Derived row shapes (TopCatItem*, BreakdownEnriched, TrendRow,
+//      GrowthMetrics)
+//
+//  FIX (BUG-3-a P1) — dead shapes removed together with the dead compute
+//  that fed them (verified 0 reads in docx-builder.ts): AreaAnalysisMappedRow
+//  (q-area), HistCriticalItem + GrowthComparisonWithHist.historicalAnalysis
+//  (q-hist-critical / q-hist-stats), GrowthMetrics.multiPeriodComparison,
+//  and DocxContext's thresholds/sqlFlags/month/week/prevWeek/prevMonth (the
+//  "5.1 BOM-korelasi" per-record table that consumed them was removed by an
+//  earlier user request; growthComparison is now the plain GrowthMetrics
+//  object the Section 2 table actually renders).
 //
 //  H-12: the EarlyHttpResponse class moved to the shared module
 //  src/lib/early-http-response.ts (was defined verbatim 3×) — import it
@@ -25,8 +32,6 @@
 //  outlet-items/services/types.ts:15 (TopDeviasiRankPromise pattern).
 // ============================================================
 import type { ExecutiveSummary } from '@/types/inventory';
-import type { RuntimeThresholds } from '@/lib/settings';
-import type { SqlRuleFlag } from '@/lib/queries/rule-evaluation';
 import type { queryVarianceAnalysis } from '@/lib/queries/health-ranking';
 
 // PERF-CACHE-06: helper used to short-circuit the cache wrapper for early-return
@@ -64,6 +69,10 @@ export type ExecSummaryWithPrev = ExecutiveSummary & { _prevMetrics: PrevMetrics
 //  All fields come from `url.searchParams.get(...)` in route.ts.
 //  `startedAt` is captured at the top of GET() so durationMs reflects
 //  the full request wall-clock time (not just the computeFn body).
+//
+//  FIX (BUG-3-a C4): `sections` semantics — null (param absent) = ALL
+//  sections; [] (empty param, e.g. `?sections=`) = NO section active
+//  (header-only document).
 // ============================================================
 export interface ReportParams {
   monthParam: string;
@@ -163,17 +172,6 @@ export interface BreakdownEnriched {
   netPct: number | null;
 }
 
-// areaAnalysis mapped row — derived at route.ts:662 from queryAreaAnalysis
-// output. Same fields, just narrowed to the 6 the export cares about.
-export interface AreaAnalysisMappedRow {
-  area: string;
-  outletCount: number;
-  totalSales: number;
-  totalAbsNominal: number;
-  avgDevBom: number;
-  lossToSales: number | null;
-}
-
 // trend row — derived at route.ts:600-603 from trendAggRows (queryTrendAgg).
 // `sortKey` is stripped by the destructure `({ sortKey, ...rest }) => rest`.
 export interface TrendRow {
@@ -183,25 +181,10 @@ export interface TrendRow {
   nominal: number;
 }
 
-// Per-row shape inside growthComparison.historicalAnalysis.criticalItems
-// (built at route.ts:612-630 — maps queryHistoricalCriticalItems output
-// + computes zScore via calcZScoreFromStats).
-export interface HistCriticalItem {
-  itemName: string;
-  outletCode: string;
-  area: string;
-  currentDevBom: number;
-  historicalAvg: number;
-  zScore: number;
-  absNominal: number;
-  currentWaste: number;
-  currentSusut: number;
-  currentTrial: number;
-}
-
-// Growth metrics object (route.ts:586-592). `multiPeriodComparison` is
-// typed as `Array<Record<string, unknown>>` in the original (route.ts:591)
-// — preserved here for byte-identical type behavior.
+// Growth metrics object (route.ts:586-592) — the Section 2 "Perubahan
+// (Growth)" table payload. FIX (BUG-3-a P1): `multiPeriodComparison` removed
+// (verified 0 reads in docx-builder.ts — the analysis payload keeps its own
+// copy for the frontend; the export computed it on every run for nothing).
 export interface GrowthMetrics {
   salesGrowth: number | null;
   bomGrowth: number | null;
@@ -214,19 +197,20 @@ export interface GrowthMetrics {
   qtyTrialGrowth: number | null;
   deviationToSalesRatio: number | null;
   deviationToBomRatio: number | null;
-  multiPeriodComparison: Array<Record<string, unknown>>;
-}
-
-export interface GrowthComparisonWithHist extends GrowthMetrics {
-  historicalAnalysis: { criticalItems: HistCriticalItem[] };
 }
 
 // ============================================================
 //  ReportData — the full data object built by fetchReportData
 //  --------------------------------------------------------
-//  Shape mirrors the `data` literal built at route.ts:651-667 verbatim.
+//  Shape mirrors the `data` literal built at route.ts:651-667 verbatim,
+//  minus the dead fields removed by FIX (BUG-3-a P1) — see the file header.
 //  SQL-return fields use `Awaited<ReturnType<typeof ...>>` so a signature
 //  drift in the underlying query surfaces here as a tsc error.
+//
+//  FIX (BUG-3-a P2): fields for sections that were NOT selected hold
+//  zero-value placeholders (null kpis / empty arrays) — docx-builder's
+//  hasSection() gates rendering with the SAME `sections` list that gated
+//  the fetch, so a placeholder is never rendered.
 // ============================================================
 export interface ReportData {
   period: { monthLabel: string; weekLabel: string; comparisonWeek: string | null; comparisonMonth: string | null };
@@ -234,7 +218,7 @@ export interface ReportData {
   // FIX (BUG-PERF-11): include pic too — was missing, inconsistent with pareto route.
   filters: { area: string | null; kelompok: string | null; outletCode: string | null; itemName: string | null; pic: string | null };
   executiveSummary: ExecSummaryWithPrev;
-  growthComparison: GrowthComparisonWithHist;
+  growthComparison: GrowthMetrics;
   topItemsByNominal: TopItemByNominalRow[];
   topItemsByDevBom: TopItemByDevBomRow[];
   topItemsByWaste: TopCatItemWaste[];
@@ -242,7 +226,6 @@ export interface ReportData {
   topItemsByTrial: TopCatItemTrial[];
   topItemsByLossSurplus: TopCatItemLossSurplus[];
   deviationBreakdown: BreakdownEnriched;
-  areaAnalysis: AreaAnalysisMappedRow[];
   varianceAnalysis: Awaited<ReturnType<typeof queryVarianceAnalysis>>;
   trend: TrendRow[];
   durationMs: number;
@@ -253,22 +236,17 @@ export interface ReportData {
 //  --------------------------------------------------------
 //  Contains everything the docx-builder needs that is NOT part of the
 //  ReportData object itself:
-//    - sections:           URL `?sections=` filter (null = all sections)
+//    - sections:           URL `?sections=` filter (null = all sections;
+//                          [] = no section — header-only document)
 //    - historicalPeriods:  for the "Hist (Jan-Jul 26)" range label
-//    - thresholds:         for BOM_DISPROPORTIONATE_FACTOR + BOM_DEVIATION_FACTOR
-//    - sqlFlags:           for the 5.1 BOM-correlation per-record table
-//    - month/week/prevWeek/prevMonth: for the bomKeys InventoryRecord lookup
-//      (current + prev period records matched by outletId+itemId+akun)
+//  FIX (BUG-3-a P1): thresholds / sqlFlags / month / week / prevWeek /
+//  prevMonth removed — their only consumer was the deleted "5.1 BOM
+//  correlation" per-record table; docx-builder reads the period labels
+//  from data.period instead.
 // ============================================================
 export interface DocxContext {
   sections: string[] | null;
   historicalPeriods: Array<{ monthLabel: string; weekLabel: string; sortKey: string }>;
-  thresholds: RuntimeThresholds;
-  sqlFlags: SqlRuleFlag[];
-  month: string;
-  week: string;
-  prevWeek: string | null;
-  prevMonth: string | null;
 }
 
 // Shape returned by fetchReportData — the data object + auxiliary docx context.

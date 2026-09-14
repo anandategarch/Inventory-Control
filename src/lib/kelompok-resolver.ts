@@ -69,6 +69,19 @@ export async function resolveKelompokOutletCodes(
     logger.error('[kelompok-resolver] resolveKelompokOutletCodes failed', {
       error: e instanceof Error ? e.message : String(e),
     });
-    return [];
+    // FIX (BUG-3-c R-3): the error path used to return [] — every caller
+    // treats an empty array as "no kelompok filter" (resolveOutletCodeFilters
+    // normalizes [] → null, drilldown/heatmap skip the filter entirely), so a
+    // TRANSIENT DB error silently widened the query to ALL outlets (wrong
+    // data served as if correct). Return the __NO_MATCH__ sentinel instead:
+    // callers surface an empty/"no data" result — a visible failure rather
+    // than a silent one — and the filter is never dropped. Verified callers:
+    //   - resolveOutletCodeFilters: length-1 sentinel → noMatch:true → empty
+    //     result (6 routes)
+    //   - drilldown + heatmap ×2: sentinel → emptyResult early-return
+    //   - buildInventoryWhere (analysis + export-report): sentinel flows as a
+    //     non-matching outlet code list → 0 rows (same as the pre-existing
+    //     []-sentinel path — no behavior change there)
+    return ['__NO_MATCH__'];
   }
 }

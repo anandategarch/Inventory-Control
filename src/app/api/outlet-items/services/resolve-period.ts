@@ -9,21 +9,14 @@
 //    2. Parallel fetch of runtime thresholds + outlet lookup
 //    3. Throw EarlyHttpResponse on 404 outlet (so withCacheAndDedup's
 //       rejectComputation propagates the 404 to concurrent awaiters)
-//    4. Determine previous period (prevWeek + prevMonth):
-//       - If compareWeek provided: use it (+ compareMonth if provided)
-//       - Otherwise: search backwards for same weekLabel in a DIFFERENT
-//         month (FIX BUG 3: cumulative weeks — chronological previous
-//         caused W4→W2 same-month false positives)
-//       - No fallback (FIX AUDIT-BUG-2): if no same-weekLabel period
-//         exists in a previous month → { prevWeek: null, prevMonth: null }
-//         so the caller short-circuits (fetch-records guards
-//         `prevWeek && prevMonth`; empty prevRecs → profile renders its
-//         no-comparison / NEW state).
+//    4. Determine previous period (prevWeek + prevMonth) — DELEGATED to
+//       the shared @/lib/period-resolver (see FIX BUG-3-c R-9 below).
 // ============================================================
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getRuntimeThresholds } from '@/lib/settings';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
+import { resolveComparePeriod } from '@/lib/period-resolver';
 import { EarlyHttpResponse } from '@/lib/early-http-response';
 import type { OutletLookup, ResolvedPeriod } from './types';
 
@@ -68,49 +61,35 @@ export async function resolveOutletAndPeriod(params: {
     );
   }
 
-  // Determine previous period
-  // FIX (BUG 3): Same-weekLabel in previous month (cumulative weeks).
-  // Was: chronological previous (W4→W2 same month = false positive growth).
-  let prevWeek: string | null = compareWeek;
-  let prevMonth: string | null = compareMonth || null;
-  if (!prevWeek) {
-    // PERF-04: Parallelize weeksRaw + fileMonthKeys (independent)
-    const [weeksRaw, fileMonthKeys] = await Promise.all([
-      db.week.findMany({
-        select: { weekLabel: true, monthKey: true },
-        distinct: ['monthKey', 'weekLabel'],
-      }),
-      db.sourceFile.findMany({ select: { monthLabel: true, monthKey: true } }),
-    ]);
-    const monthLabelByKey = new Map(fileMonthKeys.map(f => [f.monthKey, f.monthLabel]));
-    const allPeriods = weeksRaw
-      .map(w => ({
-        monthLabel: monthLabelByKey.get(w.monthKey) || 'Unknown',
-        weekLabel: w.weekLabel,
-        sortKey: `${w.monthKey}|${String(parseInt(w.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
-      }))
-      .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
-
-    const currentIdx = allPeriods.findIndex(p => p.monthLabel === resolvedMonth && p.weekLabel === week);
-    // Search backwards for same weekLabel in a DIFFERENT month
-    prevWeek = week;
-    let foundMonth: string | null = null;
-    const startIdx = currentIdx >= 0 ? currentIdx - 1 : allPeriods.length - 1;
-    for (let i = startIdx; i >= 0; i--) {
-      if (allPeriods[i].weekLabel === week && allPeriods[i].monthLabel !== resolvedMonth) {
-        foundMonth = allPeriods[i].monthLabel;
-        break;
-      }
-    }
-    prevMonth = foundMonth;
-    // FIX (AUDIT-BUG-2): weeks are CUMULATIVE — cross-week comparison (e.g. W2
-    // vs W1 same month) produces false ~-50% growth. No fallback: no same-week
-    // prior period → no comparison. Both fields null (matches
-    // resolvePreviousPeriod in @/lib/period-resolver) so callers short-circuit.
-    if (!prevMonth) {
-      prevWeek = null;
-    }
-  }
+  // ============================================================
+  //  Determine previous period — delegated to the SHARED resolver.
+  //
+  //  FIX (BUG-3-c R-9): this used to be a ~40-line inline copy of the
+  //  period-resolution logic that DIVERGED from @/lib/period-resolver in
+  //  three ways (all reproduced here by delegating):
+  //    (a) same-month cross-week explicit compare was NOT refused — W4 vs W1
+  //        of the same month compared a 25-day cumulative window against a
+  //        7-day one (false "growth", BUG-2-b's lib-side fix never reached
+  //        this route);
+  //    (b) compareWeek WITHOUT compareMonth produced prevMonth=null — the
+  //        comparison silently vanished instead of searching for the same
+  //        weekLabel in a previous month (lib Case 3);
+  //    (c) Case 3 can never resolve to the CURRENT month — the backwards
+  //        search only accepts monthLabel !== month, so a request to compare
+  //        the period against itself (e.g. ?compareWeek=<current week> with
+  //        no compareMonth) is refused rather than producing a fake 0%-delta
+  //        self-comparison.
+  //  The lib resolver is already covered by tests/lib/period-resolver.test.ts
+  //  (13 tests incl. the same-month cross-week guards); no preloaded tables
+  //  are passed — the two metadata fetches are cheap (small tables, shared
+  //  with the analysis + export-report routes' resolver usage).
+  // ============================================================
+  const { prevWeek, prevMonth } = await resolveComparePeriod(
+    week,
+    resolvedMonth,
+    compareWeek,
+    compareMonth,
+  );
 
   return {
     month: resolvedMonth,

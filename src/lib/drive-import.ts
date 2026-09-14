@@ -38,6 +38,90 @@ export interface DriveImportResult {
 }
 
 // ============================================================
+//  FIX (BUG-3-c SEDANG-2): network hardening — every fetch gets an
+//  AbortSignal timeout, every download gets a byte cap, and every
+//  res.text() on an HTML body is bounded. Previously a hung / hostile
+//  Google endpoint could stall the route until the 300s maxDuration
+//  kill ("import drive muter terus") or fill /tmp with an unbounded
+//  download.
+// ============================================================
+
+// Every fetch carries a 60s abort — Google endpoints normally answer in
+// <5s; 60s only trips on a genuinely hung connection.
+const FETCH_TIMEOUT_MS = 60_000;
+// Folder listing is a single small HTML page — 30s is plenty.
+const FOLDER_LIST_TIMEOUT_MS = 30_000;
+
+// Hard cap per downloaded file (mirrors the upload path's limit — keep in
+// sync with MAX_TOTAL_SIZE in src/app/api/ingest-upload/route.ts, which is
+// NOT exported because importing a route module from a lib would drag its
+// route-specific Next.js machinery into this module's import graph).
+const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024; // 50MB
+
+/**
+ * FIX (BUG-3-c SEDANG-2): read an HTML/text response body WITHOUT trusting
+ * its size. `await res.text()` buffered whatever the server chose to send —
+ * a hostile/broken endpoint could stream gigabytes into memory. The declared
+ * Content-Length is checked first (cheap reject), then the body is streamed
+ * and reading stops (reader.cancel()) once the cap is exceeded.
+ */
+async function readTextCapped(res: Response, capBytes: number): Promise<string> {
+  const declared = Number(res.headers.get('content-length') || 0);
+  if (declared && declared > capBytes) {
+    throw new Error(`Response body too large: ${declared} bytes (limit ${capBytes})`);
+  }
+  if (!res.body) return res.text();
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let out = '';
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    out += decoder.decode(value, { stream: true });
+    if (received > capBytes) {
+      await reader.cancel().catch(() => {});
+      break;
+    }
+  }
+  return out;
+}
+
+/**
+ * FIX (BUG-3-c SEDANG-2): stream a response body to disk while enforcing a
+ * byte cap. A plain `pipeline(stream, fileStream)` happily wrote until the
+ * disk filled — the counter destroys the source stream once the cap is
+ * exceeded, which makes `pipeline` reject with that error; the partial file
+ * is removed so /tmp (Vercel's tiny ephemeral disk) never accumulates it.
+ */
+async function pipelineWithByteCap(
+  res: Response,
+  localPath: string,
+): Promise<void> {
+  const source = Readable.fromWeb(res.body as unknown as import('stream/web').ReadableStream<Uint8Array>);
+  let received = 0;
+  source.on('data', (chunk: Buffer) => {
+    received += chunk.length;
+    if (received > MAX_DOWNLOAD_BYTES) {
+      // Destroying the readable makes pipeline() reject with this error.
+      source.destroy(new Error(
+        `Download exceeded ${MAX_DOWNLOAD_BYTES / 1024 / 1024}MB limit (got ${received} bytes)`,
+      ));
+    }
+  });
+  const fileStream = createWriteStream(localPath);
+  try {
+    await pipeline(source, fileStream);
+  } catch (e) {
+    // Remove the partial file — a truncated xlsx/csv is unusable and only
+    // wastes the shared /tmp space.
+    await fs.unlink(localPath).catch(() => {});
+    throw e;
+  }
+}
+
+// ============================================================
 //  Extract ID + type from various Google URL formats
 //  Returns type: 'folder' | 'file' | 'sheets'
 // ============================================================
@@ -79,6 +163,9 @@ export function extractDriveId(url: string): DriveIdType | null {
 export async function listDriveFolderFiles(folderId: string): Promise<DriveFile[]> {
   const url = `https://drive.google.com/embeddedfolderview?id=${folderId}#list`;
   const res = await fetch(url, {
+    // FIX (BUG-3-c SEDANG-2): folder listing is one small HTML page — 30s
+    // abort keeps a hung connection from eating the route's 300s budget.
+    signal: AbortSignal.timeout(FOLDER_LIST_TIMEOUT_MS),
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       'Accept': 'text/html,application/xhtml+xml',
@@ -87,7 +174,9 @@ export async function listDriveFolderFiles(folderId: string): Promise<DriveFile[
   if (!res.ok) {
     throw new Error(`Failed to fetch folder listing: HTTP ${res.status}`);
   }
-  const html = await res.text();
+  // FIX (BUG-3-c SEDANG-2): bounded read — the listing HTML grows with the
+  // file count, so cap it generously (a folder with 10k entries ≈ 2-4MB).
+  const html = await readTextCapped(res, 5 * 1024 * 1024);
 
   // ============================================================
   //  Parse HTML — each file entry has this structure:
@@ -170,6 +259,9 @@ export async function downloadDriveFile(
   const directUrl = `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=t`;
 
   let res = await fetch(directUrl, {
+    // FIX (BUG-3-c SEDANG-2): 60s abort — a hung Drive connection used to
+    // stall until the 300s maxDuration kill.
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Accept': 'application/octet-stream, application/binary, */*',
@@ -181,7 +273,9 @@ export async function downloadDriveFile(
   // Strategy 2: If we got HTML (virus scan page), parse for confirm token
   const contentType = res.headers.get('content-type') || '';
   if (contentType.includes('text/html')) {
-    const html = await res.text();
+    // FIX (BUG-3-c SEDANG-2): the virus-scan interstitial is a small form
+    // page — bounded read instead of a raw res.text().
+    const html = await readTextCapped(res, 512 * 1024);
 
     // Try to extract confirm token from form action
     // Bug 5 fix: limit [^"]* to {0,500} to prevent ReDoS
@@ -203,6 +297,7 @@ export async function downloadDriveFile(
         throw new Error(`Confirm URL hostname "${confirmParsed.hostname}" not in Google allowlist — possible SSRF`);
       }
       res = await fetch(confirmUrl, {
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
           'Cookie': res.headers.get('set-cookie') || '',
@@ -213,6 +308,7 @@ export async function downloadDriveFile(
       // Strategy 3: Try uc?export=download with confirm=t
       const altUrl = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`;
       res = await fetch(altUrl, {
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         },
@@ -227,15 +323,16 @@ export async function downloadDriveFile(
     throw new Error(`Download failed: HTTP ${res.status} ${res.statusText}`);
   }
   if (finalContentType.includes('text/html')) {
-    const sample = (await res.text()).slice(0, 200);
+    const sample = (await readTextCapped(res, 4 * 1024)).slice(0, 200);
     throw new Error(`Got HTML page instead of file. File may require sign-in or is not shared publicly. Sample: ${sample}`);
   }
 
   // Stream the file to disk
+  // FIX (BUG-3-c SEDANG-2): byte-capped pipeline — destroys the stream and
+  // rejects once the download exceeds MAX_DOWNLOAD_BYTES (partial file is
+  // unlinked), so a hostile/misbehaving endpoint can't fill /tmp.
   if (!res.body) throw new Error('No response body');
-  const stream = Readable.fromWeb(res.body as unknown as import('stream/web').ReadableStream<Uint8Array>);
-  const fileStream = createWriteStream(localPath);
-  await pipeline(stream, fileStream);
+  await pipelineWithByteCap(res, localPath);
 
   const stat = await fs.stat(localPath);
   // Sanity check — file should be at least 1KB (valid xlsx is typically >5KB)
@@ -274,6 +371,9 @@ export async function downloadGoogleSheetsAsCsv(
   const exportUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
 
   const res = await fetch(exportUrl, {
+    // FIX (BUG-3-c SEDANG-2): 60s abort — a hung Sheets export used to stall
+    // until the 300s maxDuration kill.
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Accept': 'text/csv, application/octet-stream, */*',
@@ -287,14 +387,16 @@ export async function downloadGoogleSheetsAsCsv(
 
   const contentType = res.headers.get('content-type') || '';
   if (contentType.includes('text/html')) {
-    const sample = (await res.text()).slice(0, 300);
+    // FIX (BUG-3-c SEDANG-2): bounded read (only the first 300 chars are used
+    // in the error sample — no need to buffer the whole sign-in page).
+    const sample = (await readTextCapped(res, 64 * 1024)).slice(0, 300);
     throw new Error(`Google Sheets returned HTML. Spreadsheet may require sign-in. Sample: ${sample}`);
   }
 
   if (!res.body) throw new Error('No response body');
-  const stream = Readable.fromWeb(res.body as unknown as import('stream/web').ReadableStream<Uint8Array>);
-  const fileStream = createWriteStream(localPath);
-  await pipeline(stream, fileStream);
+  // FIX (BUG-3-c SEDANG-2): byte-capped pipeline — a huge sheet can no longer
+  // fill /tmp (partial file is unlinked on cap breach).
+  await pipelineWithByteCap(res, localPath);
 
   const stat = await fs.stat(localPath);
   if (stat.size < 1024) {
@@ -315,11 +417,15 @@ export async function downloadGoogleSheetsAsCsv(
 async function getSheetsTitle(sheetId: string): Promise<string | null> {
   try {
     const res = await fetch(`https://docs.google.com/spreadsheets/d/${sheetId}/edit`, {
+      // FIX (BUG-3-c SEDANG-2): 60s abort + bounded HTML read below.
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
       redirect: 'follow',
     });
     if (!res.ok) return null;
-    const html = await res.text();
+    // The Sheets edit page is a heavy single-page app shell — legitimately
+    // up to a few MB. Capped so a hostile response can't balloon memory.
+    const html = await readTextCapped(res, 5 * 1024 * 1024);
 
     // FIX: list of placeholder titles Google uses during loading.
     // These should NOT be used as the real filename.
@@ -452,11 +558,16 @@ export async function importFromDriveUrl(
     try {
       // First, get file name from Drive metadata
       const metaRes = await fetch(`https://drive.google.com/file/d/${parsed.id}/view`, {
+        // FIX (BUG-3-c SEDANG-2): 60s abort — this is best-effort name
+        // detection (the fallback name below is used on any failure).
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         headers: { 'User-Agent': 'Mozilla/5.0' },
       });
       let fileName = `drive_file_${parsed.id}.xlsx`;
       if (metaRes.ok) {
-        const html = await metaRes.text();
+        // FIX (BUG-3-c SEDANG-2): bounded read — only the <title> tag is
+        // extracted from this page.
+        const html = await readTextCapped(metaRes, 2 * 1024 * 1024);
         const titleMatch = html.match(/<title>([^<]+)<\/title>/);
         if (titleMatch) {
           // Title format is usually "filename - Google Drive"

@@ -100,6 +100,44 @@ describe('buildCacheKey — sentinel collision regression (BUG-2-b / BUG-1-c #1)
   });
 });
 
+describe('buildCacheKey — PostgreSQL NUL regression (BUG-3: SQLSTATE 22021 killed every cache write)', () => {
+  // The 2026-09 production incident: the BUG-2-b sentinel carried a NUL
+  // prefix (\u0000ALL). PostgreSQL TEXT columns reject the 0x00 byte, so
+  // setCachedRaw's upsert failed silently (non-blocking) on EVERY cache
+  // write — the AggregationCache never stored a row and every request
+  // recomputed cold (export 15-17s per call, "loading lama + muter terus").
+  // The sentinels are now ESC-prefixed (\u001b) and every part is sanitized.
+  it('a full no-filter key contains NO NUL byte (PG TEXT rejects 0x00)', () => {
+    const key = buildCacheKey({ route: 'export-report', month: 'Agustus 2026', week: 'WEEK 4' });
+    expect(key.includes('\u0000')).toBe(false);
+  });
+
+  it('an all-absent key (every sentinel position) contains NO NUL byte', () => {
+    const key = buildCacheKey({ route: 'x' });
+    expect(key.includes('\u0000')).toBe(false);
+    // All 9 filter positions are present (route + 9 parts = 10 segments).
+    expect(key.split('\x1f')).toHaveLength(10);
+  });
+
+  it('control characters injected into raw filter values are stripped before the key is built', () => {
+    const key = buildCacheKey({ route: 'x', area: 'JAKARTA\u0000X', pic: 'Andi\t\u001b' });
+    expect(key.includes('\u0000')).toBe(false);
+    expect(key.includes('\t')).toBe(false);
+  });
+
+  it('an ESC-injected input cannot forge the sentinel part (stays its own literal key)', () => {
+    const forged = buildCacheKey({ route: 'x', pic: 'Andi\u001bALL' });
+    expect(forged).not.toBe(buildCacheKey({ route: 'x' })); // not the no-filter key
+    expect(forged.includes('\u0000')).toBe(false);
+  });
+
+  it('extra values are sanitized too (sections string with control chars)', () => {
+    const key = buildCacheKey({ route: 'x', extra: { sections: 'exec\u0007,growth' } });
+    expect(key.includes('\u0007')).toBe(false);
+    expect(key).toContain('sections=exec,growth');
+  });
+});
+
 describe('withCacheAndDedup — generation guard vs invalidation race (BUG-2-b / BUG-1-c #2)', () => {
   beforeEach(() => {
     mockFindUnique.mockReset().mockResolvedValue(null);

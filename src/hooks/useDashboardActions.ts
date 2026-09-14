@@ -89,10 +89,26 @@ export function useDashboardActions({
   // PERF-OPT: useCallback keeps handleExport stable across renders so
   // ExportDialog doesn't re-render unnecessarily (it's memoized via React.memo
   // in some shadcn variants; stable callback guarantees it).
+  //
+  // FIX (BUG-3-b A2/A3/A4): the export flow used to (a) wait on the fetch
+  // forever — server hang = spinner until the browser/CDN 504s, (b) accept
+  // any 200 body as a valid .docx (0-byte/HTML files were saved + a fake
+  // success toast fired), (c) revoke the object URL synchronously right after
+  // a.click() — on WebKit/Safari that races the download and can cancel it
+  // ("toast sukses tapi file tak ada"). Now: 120s AbortController timeout,
+  // blob size + content-type validation, deferred revoke, and an in-progress
+  // toast (dismissed on completion) so the user knows the wait is normal.
   const handleExport = useCallback(async (selectedSections: string[]) => {
     if (!analysisData) return;
     setExportDialogOpen(false);
     setIsExporting(true);
+    // FIX (BUG-3-b A2): in-progress feedback — the dialog closes immediately
+    // and the header spinner alone gave no expectation-setting. useToast's
+    // toast() returns { dismiss, update }; we only need dismiss-on-completion.
+    const pending = toast({
+      title: '⏳ Menyiapkan laporan...',
+      description: 'Laporan lengkap bisa memakan waktu hingga ±1 menit — jangan tutup halaman.',
+    });
     try {
       const params = new URLSearchParams({ month: monthLabel || '', week: currentWeek || '' });
       if (comparisonWeek) params.set('compareWeek', comparisonWeek);
@@ -104,12 +120,31 @@ export function useDashboardActions({
       if (pic) params.set('pic', pic);
       params.set('sections', selectedSections.join(','));
 
-      const res = await fetch(`/api/export-report?${params.toString()}`);
+      // FIX (BUG-3-b A3): AbortController + 120s timeout — a hung export no
+      // longer spins forever; the fetch is aborted and the user gets a
+      // friendly message instead of waiting for a platform 504.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120_000);
+      let res: Response;
+      try {
+        res = await fetch(`/api/export-report?${params.toString()}`, { signal: controller.signal });
+      } finally {
+        clearTimeout(timeoutId);
+      }
       if (!res.ok) {
         const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
         throw new Error(errData.error || `HTTP ${res.status}`);
       }
+      const contentType = res.headers.get('content-type') || '';
       const blob = await res.blob();
+      // FIX (BUG-3-b A4): validate the payload before declaring success —
+      // a 200 with an empty body or non-DOCX content (proxy error page,
+      // JSON error that slipped through) used to be saved as a corrupt
+      // "Laporan_*.docx" with a success toast on top.
+      if (blob.size === 0) throw new Error('File kosong dari server — coba lagi');
+      if (!contentType.includes('wordprocessingml')) {
+        throw new Error(`Server mengirim file yang bukan Word (.docx) [${contentType || 'tanpa content-type'}] — coba lagi`);
+      }
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -123,10 +158,26 @@ export function useDashboardActions({
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      // FIX (BUG-3-b A1): WebKit/Safari race — revoking the object URL
+      // synchronously after click() can cancel the download before it
+      // starts. Defer 60s (well past any browser's download-start window);
+      // no manual clear needed, the timer firing post-unmount is harmless.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      pending.dismiss();
       toast({ title: '✅ Export berhasil', description: `${selectedSections.length} section · Laporan Word telah diunduh` });
     } catch (e: unknown) {
-      toast({ title: '❌ Export gagal', description: (e instanceof Error ? e.message : 'Unknown error'), variant: 'destructive' });
+      pending.dismiss();
+      // FIX (BUG-3-b A3): map AbortError to a friendly Indonesian message
+      // (pattern: fetchAnalysis.ts) instead of "The user aborted a request".
+      if (e instanceof Error && e.name === 'AbortError') {
+        toast({
+          title: '❌ Export gagal',
+          description: 'Server timeout (120 detik). Laporan terlalu berat — coba lagi atau kurangi pilihan section.',
+          variant: 'destructive',
+        });
+      } else {
+        toast({ title: '❌ Export gagal', description: (e instanceof Error ? e.message : 'Unknown error'), variant: 'destructive' });
+      }
     } finally {
       setIsExporting(false);
     }
@@ -155,10 +206,21 @@ export function useDashboardActions({
   // reset/drive/ingest/settings/pic) which previously carried older
   // 5-6-key subsets — the missed keys stayed stale in keep-alive tabs.
   const handleRefresh = useCallback(async () => {
+    // FIX (BUG-3-b A6): check res.ok — a 429 (rate limit) or 5xx used to be
+    // reported as "Cache server dibersihkan" while the server cache was in
+    // fact still warm. Be honest about it: client queries are still
+    // invalidated (same data as before), just without the server-side clear.
+    let refreshOk = true;
+    let refreshStatus = 0;
     try {
-      await fetch('/api/refresh', { method: 'POST' });
+      const res = await fetch('/api/refresh', { method: 'POST' });
+      if (!res.ok) {
+        refreshOk = false;
+        refreshStatus = res.status;
+      }
     } catch {
       // Non-fatal — proceed to client-side invalidation regardless.
+      refreshOk = false;
     }
     invalidateAllData(queryClient);
     // PERF (H-8 QW3): hidden tabs the user never opened have no active
@@ -166,7 +228,9 @@ export function useDashboardActions({
     // only visited tabs (keep-alive mounted) refresh in background.
     toast({
       title: '🔄 Data diperbarui',
-      description: 'Cache server dibersihkan — data dihitung ulang (butuh beberapa detik).',
+      description: refreshOk
+        ? 'Cache server dibersihkan — data dihitung ulang (butuh beberapa detik).'
+        : `Cache server gagal dibersihkan${refreshStatus ? ` (HTTP ${refreshStatus})` : ''} — menampilkan data yang ada.`,
     });
   }, [queryClient, toast]);
 

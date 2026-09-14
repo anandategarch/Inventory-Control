@@ -2,7 +2,8 @@
 //  query-invalidation — single source of truth for the client-side
 //  "all dashboard data" invalidation list.
 //  --------------------------------------------------------
-//  FIX (H-14 / UIUX-REVIEW T3): this 18-key list used to live ONLY
+//  FIX (H-14 / UIUX-REVIEW T3): this list (19 keys — BUG-3-b B1 added
+//  ['change-analysis']) used to live ONLY
 //  inside handleRefresh (useDashboardActions). The six other mutation
 //  handlers (FileUploadDialog, DataManagementDialog, DriveImportDialog,
 //  FilterBar ingest, SettingsDialog save/reset/migrate, PicManagementDialog)
@@ -47,6 +48,15 @@ const ALL_DATA_QUERY_KEYS: readonly (readonly unknown[])[] = [
   ['price-effect'],
   ['item-anomali-outlets'],
   // NOTE: no ['resto-bahan-matrix'] — the orphaned route was deleted in H-10.
+  // FIX (BUG-3-b B1): CHANGE-1's "lensa Perubahan" (Prioritas Outlet +
+  // ChangeItemTable) queries /api/change-analysis and /api/change-analysis/items
+  // under the ['change-analysis'] / ['change-analysis','items',...] keys. They
+  // were missing here, so EVERY mutation (upload/delete/reset/drive/ingest/
+  // settings/PIC/refresh) left the change lens stale for up to its 5-min
+  // staleTime — the exact H-14/T3 class fixed for the 18 keys above. TanStack
+  // prefix-matching invalidates both keys from this single entry (the server
+  // side already lists 'change-analysis' in aggregation-cache/invalidate.ts).
+  ['change-analysis'],
 ];
 
 /**

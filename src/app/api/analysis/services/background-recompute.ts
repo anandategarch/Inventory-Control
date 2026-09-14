@@ -36,6 +36,7 @@ import { runQueries } from './run-queries';
 import { postProcess } from './post-process';
 import { assembleResponse } from './assemble-response';
 import { setCachedRaw, getCacheGeneration } from '@/lib/aggregation-cache';
+import { scheduleBackground } from '@/lib/background-scheduler';
 import { logger } from '@/lib/logger';
 import type { ResolvedParams } from './validate-and-resolve';
 
@@ -54,7 +55,15 @@ const recomputingKeys = new Set<string>();
 export function triggerBackgroundRecompute(cacheKey: string, params: ResolvedParams): void {
   if (recomputingKeys.has(cacheKey)) return;
   recomputingKeys.add(cacheKey);
-  void (async () => {
+  // FIX (BUG-3-c SEDANG-5): schedule via after() instead of a plain
+  // fire-and-forget `void (async ...)()` — on Vercel the function is
+  // frozen right after the response is sent, which killed the recompute
+  // mid-pipeline: the stale row was served forever (until the 90-min
+  // cleanup) and every request paid a cold recompute. after() keeps the
+  // runtime alive until the recompute + setCachedRaw land; outside a
+  // request scope (tests) it falls back to fire-and-forget. The IIFE's
+  // own try/catch guarantees the scheduled promise never rejects.
+  scheduleBackground((async () => {
     try {
       // FIX (BUG-2-b): capture the cache generation BEFORE the pipeline
       // starts. If an invalidation (ingest/settings/pic/delete/migrate)
@@ -99,5 +108,5 @@ export function triggerBackgroundRecompute(cacheKey: string, params: ResolvedPar
     } finally {
       recomputingKeys.delete(cacheKey);
     }
-  })();
+  })());
 }

@@ -35,7 +35,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
     }
 
-    const results = await processIngestion(body);
+    // FIX (BUG-3-c SEDANG-3): pass the VALIDATED payload (not the raw body)
+    // to processIngestion — the schema's filePath/dir/fileName bounds used to
+    // be decorative (every field was re-read from the raw JSON).
+    const results = await processIngestion(validation.data);
     return NextResponse.json({ success: true, results, durationMs: Date.now() - startedAt });
   } catch (e: unknown) {
     return errorResponse(e, "ingest");

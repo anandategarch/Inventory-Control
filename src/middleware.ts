@@ -5,7 +5,7 @@
 //  - Dashboard & GET endpoints (read-only): PUBLIC (no auth)
 //  - /api/setup, POST /api/ingest, GET /api/ingest (Refresh Data), POST /api/import-drive,
 //    POST/DELETE /api/settings, DELETE /api/data, POST/DELETE /api/pic,
-//    POST /api/migrate-direction: requires ADMIN_TOKEN
+//    POST /api/migrate-direction, POST /api/refresh: requires ADMIN_TOKEN
 //
 //  Client sends: Authorization: Bearer <ADMIN_TOKEN>
 //  Or: ?admin_token=<ADMIN_TOKEN> (for browser-accessible /api/setup)
@@ -38,6 +38,13 @@ const PROTECTED_PATHS = [
   '/api/data',
   '/api/pic',
   '/api/migrate-direction',
+  // FIX (BUG-3-c R-1): POST /api/refresh nukes the whole AggregationCache
+  // (invalidateAnalysisCache) — it was the ONLY destructive mutation route
+  // missing from this list, so anyone could spam cache flushes and force
+  // full cold recomputes (6-8s each) on every dashboard user. Same gating
+  // model as the siblings: POST-only + fail-open when ADMIN_TOKEN is unset
+  // (single-user mode) — no access is blocked by default.
+  '/api/refresh',
 ];
 
 const PROTECTED_METHODS = ['POST', 'PUT', 'DELETE', 'PATCH'];
@@ -112,5 +119,8 @@ export const config = {
     '/api/data/:path*',
     '/api/pic/:path*',
     '/api/migrate-direction/:path*',
+    // FIX (BUG-3-c R-1): the middleware never ran for /api/refresh, so the
+    // PROTECTED_PATHS entry above was unreachable for it.
+    '/api/refresh/:path*',
   ],
 };

@@ -40,24 +40,31 @@ export async function queryPeerComparison(
 ): Promise<{ targetSales: number; peers: PeerComparisonRow[] }> {
   // CRITICAL FIX (PEER-BACKEND-5): In month mode, weeks are CUMULATIVE
   // (W1=1-7, W2=1-14, W3=1-21, W4=1-25). Summing all weeks multi-counts.
-  // Fix: in month mode, use only the LATEST week (MAX weekLabel) for the month.
+  // Fix: in month mode, use only the LATEST week for the month.
+  // FIX (BUG-3-c R-8): the LATEST week is picked NUMERICALLY, not
+  // lexicographically — MAX("weekLabel") returns "WEEK 9" once WEEK 10+
+  // exists ('1' < '9' in text order). The subquery groups the month's
+  // distinct labels (a handful) and orders by the integer parsed from the
+  // label — NULLS LAST keeps malformed digit-less labels from winning.
+  const latestWeekSubquery = Prisma.sql`(
+        SELECT ir2."weekLabel" FROM "InventoryRecord" ir2
+        WHERE ir2."monthLabel" = ${month}
+        GROUP BY ir2."weekLabel"
+        ORDER BY SUBSTRING(ir2."weekLabel" FROM '[0-9]+')::int DESC NULLS LAST, ir2."weekLabel" DESC
+        LIMIT 1
+      )`;
   const weekFilter = mode === 'week' && week
     ? Prisma.sql`AND ir."weekLabel" = ${week}`
-    : Prisma.sql`AND ir."weekLabel" = (
-        SELECT MAX(ir2."weekLabel") FROM "InventoryRecord" ir2
-        WHERE ir2."monthLabel" = ${month}
-      )`;
+    : Prisma.sql`AND ir."weekLabel" = ${latestWeekSubquery}`;
 
   // DB-06: same weekFilter but for the OutletPeriodSales alias (`ops`).
   // Used by the refactored sales_mode CTE to select the right period's
-  // precomputed MODE value. The MAX(weekLabel) subquery still queries
-  // InventoryRecord (the source of truth for which weeks exist).
+  // precomputed MODE value. The subquery still queries InventoryRecord (the
+  // source of truth for which weeks exist) — numeric latest-week fix (R-8)
+  // preserved on both aliases.
   const weekFilterOps = mode === 'week' && week
     ? Prisma.sql`AND ops."weekLabel" = ${week}`
-    : Prisma.sql`AND ops."weekLabel" = (
-        SELECT MAX(ir2."weekLabel") FROM "InventoryRecord" ir2
-        WHERE ir2."monthLabel" = ${month}
-      )`;
+    : Prisma.sql`AND ops."weekLabel" = ${latestWeekSubquery}`;
 
   // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok filter scopes the PEER set
   // only (which outlets are considered peers). The focus outlet is ALWAYS

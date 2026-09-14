@@ -60,13 +60,26 @@ export function DrillDownDrawer() {
     }
   }, [open]);
 
+  // FIX (BUG-3-b B2): the old FE-06 race guard compared `filterSig` against
+  // `currentSig` built from the SAME render's closure — both were identical by
+  // construction, so the guard NEVER fired and records from two filter sets
+  // could mix into one table when filters changed mid-fetch. This ref holds
+  // the LIVE signature: a dedicated effect re-syncs it after every filter
+  // change (synchronously post-commit, well before any network response can
+  // arrive), so an in-flight load-more comparing its captured signature
+  // against it actually detects the change.
+  const filterSigRef = useRef('');
+  useEffect(() => {
+    filterSigRef.current = `${drilldown.outletCode}|${drilldown.itemName}|${currentWeek}|${monthLabel}|${area}|${kelompok}|${pic}`;
+  }, [drilldown.outletCode, drilldown.itemName, currentWeek, monthLabel, area, kelompok, pic]);
+
   // FIX M1: Load More — fetch next page using cursor, append to allRecords.
-  // FIX FE-06: Guard against filter-change race condition — capture filter signature
-  // at fetch start, verify before appending results.
+  // FIX FE-06 → FIX (BUG-3-b B2): race-guard now compares against the LIVE
+  // signature in filterSigRef (see above) instead of a closure snapshot.
   const handleLoadMore = useCallback(async () => {
     if (!nextCursor || loadingMore) return;
-    // Capture current filter signature to detect mid-fetch filter changes
-    const filterSig = `${drilldown.outletCode}|${drilldown.itemName}|${currentWeek}|${monthLabel}|${area}|${kelompok}|${pic}`;
+    // Capture the live filter signature at fetch start
+    const filterSig = filterSigRef.current;
     setLoadingMore(true);
     try {
       const params = new URLSearchParams();
@@ -84,9 +97,18 @@ export function DrillDownDrawer() {
       const res = await fetch(`/api/drilldown?${params.toString()}`);
       const data = await res.json();
       if (data.success) {
-        // FE-06: Verify filter hasn't changed during fetch — if it has, discard results
-        const currentSig = `${drilldown.outletCode}|${drilldown.itemName}|${currentWeek}|${monthLabel}|${area}|${kelompok}|${pic}`;
-        if (filterSig !== currentSig) return; // Filter changed mid-fetch — discard
+        // BUG-3-b B2: verify the filter hasn't changed DURING the fetch by
+        // comparing the captured signature against the LIVE ref — a mismatch
+        // means the user changed filters while this page was in flight; the
+        // records belong to the old filter set, so discard them (the new
+        // first-page query + effect above repopulates allRecords).
+        if (filterSigRef.current !== filterSig) {
+          logger.debug('[drilldown] Load More discarded — filter changed mid-fetch', {
+            filterSig,
+            currentSig: filterSigRef.current,
+          });
+          return;
+        }
         setAllRecords(prev => [...prev, ...data.records]);
         setNextCursor(data.nextCursor);
       }

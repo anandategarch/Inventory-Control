@@ -4,28 +4,43 @@
 // ============================================================
 import { z } from 'zod';
 
+// FIX (BUG-3 — root cause of "export loading lama + muter terus"):
+// control characters are REJECTED in every filter param, for two reasons:
+//  1. buildCacheKey embeds filter values into the AggregationCache.cacheKey
+//     TEXT column. A raw \u0000 makes PostgreSQL refuse the entire write
+//     (SQLSTATE 22021) and the silent non-blocking failure kills caching —
+//     exactly what the NUL sentinel of BUG-2-b did to every cache write in
+//     production (2026-09: all requests recomputed cold, export 15-17s per
+//     call). C0/DEL/C1 can never legally appear in an area name, PIC, item,
+//     month or week label — verified against production data (0 rows).
+//  2. Anti-forgery: the key sentinels are ESC-prefixed (\u001bALL /
+//     \u001bNONE — key-builder.ts). Rejecting controls at the door keeps
+//     them impossible to reproduce from user input.
+const CONTROL_CHAR = /[\u0000-\u001f\u007f-\u009f]/;
+const noControlChars = (v: string) => !CONTROL_CHAR.test(v);
+
 // Month label: "Januari 2026", "Mei 2026", "AGUSTUS 2026", etc. — Indonesian month name + 4-digit year
 // FIX (AUDIT-SECURITY-PERF C4): was /^[A-Z][a-z]+\s+20\d{2}$/ — rejected uppercase "AGUSTUS 2026".
 // monthResolver normalizes case AFTER validation, so validation must accept any case.
-export const monthLabelSchema = z.string().regex(/^[A-Za-z]+\s+20\d{2}$/).optional();
+export const monthLabelSchema = z.string().regex(/^[A-Za-z]+\s+20\d{2}$/).refine(noControlChars).optional();
 
 // Week label: "WEEK 1", "WEEK 2", "WEEK 4"
-export const weekLabelSchema = z.string().regex(/^WEEK\s+[0-9]+$/i).optional();
+export const weekLabelSchema = z.string().regex(/^WEEK\s+[0-9]+$/i).refine(noControlChars).optional();
 
 // Outlet code: "1016.MLGJAK", "1251.CBIPAS" — alphanumeric + dot
-export const outletCodeSchema = z.string().min(1).max(50).optional();
+export const outletCodeSchema = z.string().min(1).max(50).refine(noControlChars).optional();
 
 // Item name: free text, max 200 chars
-export const itemNameSchema = z.string().min(1).max(200).optional();
+export const itemNameSchema = z.string().min(1).max(200).refine(noControlChars).optional();
 
 // Area name: "JAWA TIMUR 1", "BANTEN" — uppercase + optional number
-export const areaSchema = z.string().min(1).max(50).optional();
+export const areaSchema = z.string().min(1).max(50).refine(noControlChars).optional();
 
 // PIC name: free text, max 100 chars
-export const picSchema = z.string().min(1).max(100).optional();
+export const picSchema = z.string().min(1).max(100).refine(noControlChars).optional();
 
 // Compare week: "WEEK 1" or "WEEK 1|||Juli 2026" (cross-month)
-export const compareWeekSchema = z.string().min(3).max(100).optional();
+export const compareWeekSchema = z.string().min(3).max(100).refine(noControlChars).optional();
 
 // Limit: positive integer, max 500
 export const limitSchema = z.coerce.number().int().min(1).max(500).optional();
@@ -40,7 +55,7 @@ export const cursorSchema = z.coerce.number().int().positive().optional();
 // Kelompok: 3-char prefix from outlet code name segment (e.g. "BDG", "MLG")
 // FIX (BUG-BE-8 / BUG-EDGE-3 / BUG-PERF-6): was missing from these schemas —
 // a 1000-char kelompok would pass through unvalidated.
-export const kelompokSchema = z.string().min(1).max(50).optional();
+export const kelompokSchema = z.string().min(1).max(50).refine(noControlChars).optional();
 
 // /api/analysis?month=&week=&compareWeek=&area=&kelompok=&outlet=&item=&pic=
 export const analysisQuerySchema = z.object({
@@ -177,10 +192,18 @@ export const changeAnalysisItemsQuerySchema = changeAnalysisQuerySchema.extend({
 });
 
 // /api/export-report?month=&week=&sections=&area=&kelompok=&outlet=&item=&pic=
+// FIX (BUG-3-a C6): unknown section keys used to vanish silently
+// (?sections=exec,topitems → section 3 just missing from the report, no
+// error). Keep this list in sync with SECTIONS in ExportDialog.tsx and the
+// hasSection() keys in docx-builder.ts.
+const EXPORT_SECTION_KEYS = ['exec', 'growth', 'topItems', 'breakdown', 'variance', 'trend'] as const;
 export const exportReportQuerySchema = z.object({
   month: monthLabelSchema,
   week: weekLabelSchema,
-  sections: z.string().optional(),
+  sections: z.string().refine(
+    (v) => v.split(',').every((s) => s === '' || (EXPORT_SECTION_KEYS as readonly string[]).includes(s)),
+    { message: `sections must be a comma-separated subset of: ${EXPORT_SECTION_KEYS.join(', ')}` },
+  ).optional(),
   area: areaSchema,
   kelompok: kelompokSchema,
   outlet: outletCodeSchema,
@@ -250,7 +273,13 @@ export const ingestUploadBodySchema = z.object({
   fileSize: z.coerce.number().int().min(0).optional(),
 });
 
-// /api/ingest-process POST body: { mode, fileName, fileHash, fileSize?, ext?, manualFileName?, numberLocale?, weekLabel?, monthLabel? }
+// /api/ingest-process POST body: { mode, fileName, fileHash, fileSize?, ext?, manualFileName?, numberLocale?, weekLabel?, weeksToImport?, monthLabel? }
+// FIX (BUG-3-c SEDANG-3): the route used to read `weekLabel` / `weeksToImport`
+// from the RAW body even though this schema existed — the schema's bounds
+// were decorative. weekLabel now reuses the shared weekLabelSchema (regex +
+// no-control-chars) and weeksToImport is explicitly bounded (≤12 entries of
+// ≤20 chars — the CFG_RECON week model is W1–W5 per file, 12 is a generous
+// ceiling against row-key abuse via oversized arrays).
 export const ingestProcessBodySchema = z.object({
   mode: z.string().min(1).max(50),
   fileName: z.string().min(1).max(255),
@@ -259,7 +288,8 @@ export const ingestProcessBodySchema = z.object({
   ext: z.string().max(20).optional(),
   manualFileName: z.string().max(255).optional(),
   numberLocale: z.enum(['auto', 'id', 'us']).optional(),
-  weekLabel: z.string().max(30).optional(),
+  weekLabel: weekLabelSchema,
+  weeksToImport: z.array(z.string().max(20)).max(12).optional(),
   monthLabel: z.string().max(30).optional(),
 });
 
@@ -278,7 +308,11 @@ export const ingestProcessDeleteBodySchema = z.object({
 // /api/import-drive POST body: { url, manualFileName?, numberLocale? }
 export const importDriveBodySchema = z.object({
   url: z.string().url(),
-  manualFileName: z.string().optional(),
+  // FIX (BUG-3-c SEDANG-4): manualFileName had NO bound — a multi-megabyte
+  // string passed Zod and flowed into validateManualFileName/logging. Bound
+  // to 255 (filename ceiling, matching ingestPostBodySchema) + reject control
+  // characters (they can never be legal in a filename).
+  manualFileName: z.string().max(255).refine(noControlChars).optional(),
   numberLocale: z.enum(['auto', 'id', 'us']).optional(),
 });
 

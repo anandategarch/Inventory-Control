@@ -9,6 +9,7 @@
 // ============================================================
 import { db } from '../db';
 import { logger } from '../logger';
+import { scheduleBackground } from '../background-scheduler';
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -24,10 +25,18 @@ export async function getCached<T>(cacheKey: string, ttlMs: number = DEFAULT_TTL
     if (!row) return null;
     const ageMs = Date.now() - row.computedAt.getTime();
     if (ageMs > ttlMs) {
-      // Expired — delete stale entry (fire-and-forget)
-      db.aggregationCache.delete({ where: { cacheKey } }).catch((e) => {
-        logger.error('[cache] expired entry delete failed', { error: e instanceof Error ? e.message : String(e) });
-      });
+      // Expired — delete stale entry (fire-and-forget so the table
+      // doesn't accumulate dead entries between cleanup cycles).
+      // FIX (BUG-3-c SEDANG-5): scheduled via after() — a plain floating
+      // promise was frozen by Vercel right after the response, so the
+      // delete never landed and dead rows survived until the 90-min
+      // bulk cleanup. scheduleBackground keeps it alive past response
+      // completion (and falls back to fire-and-forget outside requests).
+      scheduleBackground(
+        db.aggregationCache.delete({ where: { cacheKey } }).catch((e) => {
+          logger.error('[cache] expired entry delete failed', { error: e instanceof Error ? e.message : String(e) });
+        }),
+      );
       return null;
     }
     return JSON.parse(row.payload) as T;
@@ -143,10 +152,17 @@ export async function setCachedRaw(cacheKey: string, rawJson: string, awaitWrite
         logger.error('[cache] setCachedRaw (awaited) error', { error: e instanceof Error ? e.message : String(e) });
       });
     } else {
-      // Fire-and-forget — non-blocking
-      writePromise.catch((e) => {
-        logger.error('[cache] setCachedRaw error (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
-      });
+      // Fire-and-forget — non-blocking for the caller, but STILL scheduled
+      // via after() (FIX BUG-3-c SEDANG-5): Vercel freezes the function right
+      // after the response is sent, which killed the floating upsert — the
+      // cache never stored the row and the next request recomputed cold.
+      // scheduleBackground keeps the write alive past response completion
+      // (plain fire-and-forget fallback outside a request scope, e.g. tests).
+      scheduleBackground(
+        writePromise.then(() => undefined, (e) => {
+          logger.error('[cache] setCachedRaw error (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
+        }),
+      );
     }
   } catch (e) {
     // Synchronous error — non-blocking

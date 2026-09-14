@@ -11,6 +11,12 @@ import type {
 // FIX (AUDIT-FRONTEND-V2): was TOAST_LIMIT=1 (silent replacement) + DELAY=1000000 (16.7min memory leak)
 const TOAST_LIMIT = 3
 const TOAST_REMOVE_DELAY = 5000
+// FIX (BUG-3-b A7): destructive (error) toasts carry long actionable messages
+// (upload errors, export failures, validation issues) — 5s was not enough to
+// read them before Radix auto-closed. The default duration stays 5000
+// (Radix Root's own default) for every other variant; an explicit duration
+// passed by the caller always wins.
+const TOAST_DESTRUCTIVE_DURATION = 10_000
 
 type ToasterToast = ToastProps & {
   id: string
@@ -77,11 +83,21 @@ const addToRemoveQueue = (toastId: string) => {
 
 export const reducer = (state: State, action: Action): State => {
   switch (action.type) {
-    case "ADD_TOAST":
+    case "ADD_TOAST": {
+      // FIX (BUG-3-b A7): variant-aware default duration — destructive
+      // toasts stay on screen 10s (long error messages need reading time);
+      // everything else keeps Radix's default (undefined → 5s). The Toaster
+      // spreads the toast object onto <Toast>, so Root receives this
+      // duration and auto-closes accordingly. Caller-provided duration wins.
+      const toast: ToasterToast =
+        action.toast.variant === "destructive" && action.toast.duration == null
+          ? { ...action.toast, duration: TOAST_DESTRUCTIVE_DURATION }
+          : action.toast
       return {
         ...state,
-        toasts: [action.toast, ...state.toasts].slice(0, TOAST_LIMIT),
+        toasts: [toast, ...state.toasts].slice(0, TOAST_LIMIT),
       }
+    }
 
     case "UPDATE_TOAST":
       return {

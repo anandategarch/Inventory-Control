@@ -107,8 +107,11 @@ export async function processIngestion(body: IngestRequestBody, fastMode?: boole
         }
       }
 
-      // P1-4 fix: skip hashFile if already provided (avoid double-read)
-      const fileHash = body.precomputedHash || await hashFile(filePath);
+      // P1-4 fix note: the file hash is ALWAYS computed here (hashFile) —
+      // the old `body.precomputedHash` shortcut had no caller that ever set it
+      // (verified via grep: only this file + the type existed), so it was dead
+      // weight on the request type. Removed in FIX (BUG-3-c SEDANG-3).
+      const fileHash = await hashFile(filePath);
 
       // Check if already ingested (by hash)
       const existing = await db.sourceFile.findUnique({

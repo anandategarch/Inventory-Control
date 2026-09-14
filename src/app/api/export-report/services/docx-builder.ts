@@ -17,6 +17,9 @@
 //         - Section 6: Trend across periods
 //         - Footer
 //       Returns { bufferBase64, fileName } for the cache wrapper (P3-HYG-4).
+//       FIX (BUG-3-a P2): the data-fetcher now fetches ONLY what the
+//       selected ?sections= actually render — the section list above is the
+//       source of truth for that mapping (see data-fetcher.ts header).
 //
 //       H-5: "5. Analisis Korelasi BOM" (aggregate alignment table + 5.1
 //       per-record rule-fire table) REMOVED per user request — same removal
@@ -222,6 +225,12 @@ export async function buildDocxReport(
   ctx: DocxContext,
 ): Promise<{ bufferBase64: string; fileName: string }> {
   // Local section-filter helper — matches route.ts:316 verbatim.
+  // FIX (BUG-3-a C4): an EMPTY sections list (from `?sections=`) now means
+  // "NO section active" — every hasSection() check below returns false and
+  // the document degrades to title + footer only (verified crash-free: all
+  // section bodies sit behind these guards, and the data-fetcher feeds
+  // zero-value placeholders for the sections it skipped). `null` (param
+  // absent) still means ALL sections.
   const hasSection = (key: string) => !ctx.sections || ctx.sections.includes(key);
 
   // ============================================================
@@ -421,7 +430,11 @@ export async function buildDocxReport(
   });
 
   const buffer = await Packer.toBuffer(doc);
-  const fileName = `Laporan_Deviasi_${currLabel.replace(/\s+/g, '_')}.docx`;
+  // FIX (BUG-3-a C5): sanitize the filename down to the RFC 2183/5987-safe
+  // charset [A-Za-z0-9._-]. currLabel is a DB month label ("AGUSTUS 26") so
+  // this is belt-and-braces, but a weird month label can never again smuggle
+  // quotes/CR/LF into the Content-Disposition header downstream.
+  const fileName = `Laporan_Deviasi_${currLabel.replace(/\s+/g, '_').replace(/[^A-Za-z0-9._-]/g, '_')}.docx`;
 
   // PERF-CACHE-06: withCacheAndDedup handles setCached(awaitWrite=true) +
   // in-flight Promise resolution. Return { bufferBase64, fileName } —

@@ -7,7 +7,7 @@
 //  import progress, result display.
 // ============================================================
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
@@ -44,7 +44,6 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
   const [driveUrl, setDriveUrl] = useState('');
   const [driveImporting, setDriveImporting] = useState(false);
   const [driveResult, setDriveResult] = useState<DriveImportResult[] | null>(null);
-  const [progressLog, setProgressLog] = useState<string[]>([]);
   const [driveRenameMode, setDriveRenameMode] = useState<'auto' | 'manual'>('auto');
   const [driveManualName, setDriveManualName] = useState('');
   // FIX (BUG2-INGEST-4): changed 'eu' → 'id' to match backend Zod schema ('auto' | 'id' | 'us').
@@ -54,11 +53,18 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  // FIX (BUG-3-b B4): driveImporting used to stay true when the dialog was
+  // closed/hidden mid-request (parent toggles `open`) — the next open showed
+  // a spinning "Importing..." button + disabled Batal with nothing running.
+  // Effect cleanup resets the flag whenever the dialog closes.
+  useEffect(() => {
+    if (!open) setDriveImporting(false);
+  }, [open]);
+
   function handleCloseDialog() {
     onOpenChange(false);
     setDriveUrl('');
     setDriveResult(null);
-    setProgressLog([]);
     setDriveRenameMode('auto');
     setDriveManualName('');
     setDriveNumberLocale('us');
@@ -68,7 +74,6 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
     if (!driveUrl.trim()) return;
     setDriveImporting(true);
     setDriveResult(null);
-    setProgressLog([]);
     try {
       const body = JSON.stringify({
         url: driveUrl,
@@ -77,6 +82,14 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
         numberLocale: driveNumberLocale,
       });
       const res = await fetch('/api/import-drive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      // FIX (BUG-3-b B4): check content-type before res.json() — a server
+      // crash / proxy error returns HTML, and the old path surfaced a cryptic
+      // "Unexpected token '<'..." parse error (pattern: FilterBar handleIngest).
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await res.text();
+        throw new Error(`Server error (HTTP ${res.status}). ${text.slice(0, 200)}`);
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       // FIX (BUG-HUNT-RECENT P0): API returns 'ingestResults', not 'results'
@@ -230,15 +243,6 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
             )}
           </Button>
         </div>
-
-        {/* Progress log */}
-        {progressLog.length > 0 && (
-          <div className="rounded-md border bg-muted/30 p-2 space-y-1 max-h-32 overflow-y-auto">
-            {progressLog.map((log, i) => (
-              <p key={i} className="text-[11px] text-muted-foreground">{log}</p>
-            ))}
-          </div>
-        )}
 
         {/* Results */}
         {driveResult && driveResult.length > 0 && (

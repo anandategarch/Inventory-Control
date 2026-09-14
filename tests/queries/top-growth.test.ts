@@ -12,7 +12,8 @@
 //     ALSO carrying its Δ nominal ("ada nominal juga").
 //
 // Mock invocation: a single $queryRaw (its withStatementTimeout
-// transaction also fires 2 SET LOCAL $executeRaw calls).
+// transaction also fires 1 merged set_config $executeRaw call — FIX
+// BUG-3-a P3 merged the two SET LOCALs into one round-trip).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { queryTopGrowth } from '@/lib/queries/growth-drivers';
 
@@ -74,9 +75,9 @@ describe('queryTopGrowth (TASK H-7 — nominal-deviasi ranking + qty-deviasi dri
     ]);
     const r = await queryTopGrowth('WEEK 2', 'Agustus 2026', 'WEEK 2', 'Juli 2026', {});
 
-    // ONE scan; its withStatementTimeout transaction = 2 SET LOCALs.
+    // ONE scan; its withStatementTimeout transaction = 1 merged set_config.
     expect(mockQueryRaw).toHaveBeenCalledTimes(1);
-    expect(mockExecuteRaw).toHaveBeenCalledTimes(2);
+    expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
 
     // Scan routing: the (outlet × item) deviation matrix (curr_agg/prev_agg
     // + the nd/qd coalesce lines in the OUTER template — vitest strips

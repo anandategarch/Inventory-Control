@@ -81,22 +81,27 @@ export async function queryPeerComparisonItems(
   kelompok?: string | null,
 ): Promise<{ items: GroupedItem[] }> {
     // Same week filter logic as queryPeerComparison (outlets.ts)
+    // FIX (BUG-3-c R-8): NUMERIC latest-week selection in month mode — see the
+    // identical comment on queryPeerComparison. MAX("weekLabel") is
+    // lexicographic and returns "WEEK 9" once WEEK 10+ exists.
+    const latestWeekSubquery = Prisma.sql`(
+          SELECT ir2."weekLabel" FROM "InventoryRecord" ir2
+          WHERE ir2."monthLabel" = ${month}
+          GROUP BY ir2."weekLabel"
+          ORDER BY SUBSTRING(ir2."weekLabel" FROM '[0-9]+')::int DESC NULLS LAST, ir2."weekLabel" DESC
+          LIMIT 1
+        )`;
     const weekFilter = mode === 'week' && week
       ? Prisma.sql`AND ir."weekLabel" = ${week}`
-      : Prisma.sql`AND ir."weekLabel" = (
-          SELECT MAX(ir2."weekLabel") FROM "InventoryRecord" ir2
-          WHERE ir2."monthLabel" = ${month}
-        )`;
+      : Prisma.sql`AND ir."weekLabel" = ${latestWeekSubquery}`;
 
     // DB-06: same weekFilter but for the OutletPeriodSales alias (`ops`).
     // Used by the refactored sales_mode CTE to select the right period's
-    // precomputed MODE value. Mirrors queryPeerComparison's pattern.
+    // precomputed MODE value. Mirrors queryPeerComparison's pattern (numeric
+    // latest-week fix R-8 preserved on both aliases).
     const weekFilterOps = mode === 'week' && week
       ? Prisma.sql`AND ops."weekLabel" = ${week}`
-      : Prisma.sql`AND ops."weekLabel" = (
-          SELECT MAX(ir2."weekLabel") FROM "InventoryRecord" ir2
-          WHERE ir2."monthLabel" = ${month}
-        )`;
+      : Prisma.sql`AND ops."weekLabel" = ${latestWeekSubquery}`;
 
     // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok filter scopes the PEER set
     // only (peer_outlets CTE). The focus outlet is ALWAYS included via

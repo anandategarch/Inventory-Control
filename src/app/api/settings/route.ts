@@ -20,6 +20,51 @@ import { validateBody, settingsUpdateSchema } from '@/lib/validation';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30; // FIX Phase 1: prevent Vercel timeout
 
+// ============================================================
+//  FIX (BUG-3-c R-7): per-key numeric ranges for Settings values.
+//  dataType 'number' previously accepted ANY finite number — e.g.
+//  HISTORICAL_MIN_WEEKS=0 silently disabled the min-weeks guard (the
+//  historical benchmark then computed Z-scores against 0 baseline
+//  weeks), TOP_N_ITEMS=100000 ballooned every top-N query, and negative
+//  weights inverted rankings. Ranges are deliberately generous — they
+//  only catch pathological values, not legitimate tuning. Inline map per
+//  the task note (avoid restructuring SETTING_DEFINITIONS).
+// ============================================================
+const SETTING_NUMBER_RANGES: Record<string, { min: number; max: number }> = {
+  // Detection factors (multipliers) — 1..100
+  SALES_DEVIATION_FACTOR: { min: 1, max: 100 },
+  BOM_DEVIATION_FACTOR: { min: 1, max: 100 },
+  BOM_DISPROPORTIONATE_FACTOR: { min: 1, max: 5 }, // documented range 1.0–5.0
+  // Benchmark factors
+  BENCHMARK_AREA_FACTOR: { min: 1, max: 100 },
+  BENCHMARK_NETWORK_FACTOR: { min: 1, max: 100 },
+  HISTORICAL_ZSCORE_WARN: { min: 0, max: 10 },
+  HISTORICAL_ZSCORE_HIGH: { min: 0, max: 10 },
+  HISTORICAL_MIN_WEEKS: { min: 2, max: 52 }, // 0/1 defeats the guard; 52 = a year of weeks
+  // CHANGE-1 thresholds
+  CHANGE_ANOMALY_RATIO: { min: 1, max: 100 },
+  CHANGE_MIN_PAIRS: { min: 1, max: 24 }, // ~2 years of month pairs
+  CHANGE_MIN_NOMINAL: { min: 0, max: 1_000_000_000 },
+  // Priority scoring weights (any non-negative weight is legitimate)
+  WEIGHT_DEV_BOM: { min: 0, max: 100 },
+  WEIGHT_GROWTH: { min: 0, max: 100 },
+  WEIGHT_RESIDUAL: { min: 0, max: 100 },
+  WEIGHT_TOLERANCE: { min: 0, max: 100 },
+  WEIGHT_HISTORY: { min: 0, max: 100 },
+  // Health score weights
+  HEALTH_WEIGHT_DEV_BOM: { min: 0, max: 100 },
+  HEALTH_WEIGHT_RESIDUAL: { min: 0, max: 100 },
+  HEALTH_WEIGHT_LOSS_TO_SALES: { min: 0, max: 100 },
+  HEALTH_WEIGHT_ABNORMAL: { min: 0, max: 100 },
+  // Ranking sizes
+  TOP_N_ITEMS: { min: 1, max: 100 },
+  TOP_N_OUTLETS: { min: 1, max: 100 },
+  TOP_N_DEVIASI_RANK: { min: 1, max: 200 },
+  // Nominal thresholds (IDR) — non-negative, sane upper bound
+  HIGH_LOSS_NOMINAL_THRESHOLD: { min: 0, max: 100_000_000_000 },
+  P2_NOMINAL_THRESHOLD: { min: 0, max: 100_000_000_000 },
+};
+
 interface SettingWithMeta extends SettingDefinition {
   value: string;
   updatedAt: Date | null;
@@ -91,8 +136,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
     }
 
-    const values: Record<string, string> = body.values || {};
-    const updatedBy: string | undefined = body.updatedBy;
+    // FIX (BUG-3-c SEDANG-3): read from the VALIDATED payload (not the raw
+    // body) — settingsUpdateSchema's value-type bounds (string/number/boolean
+    // per key) used to be decorative because both fields were re-read from
+    // the raw JSON.
+    const values: Record<string, string | number | boolean> = validation.data.values ?? {};
+    const updatedBy: string | undefined = validation.data.updatedBy;
 
     if (Object.keys(values).length === 0) {
       return NextResponse.json(
@@ -120,6 +169,18 @@ export async function POST(req: NextRequest) {
         if (isNaN(n)) {
           errors.push({ key, error: `${def.label} must be a number` });
           continue;
+        }
+        // FIX (BUG-3-c R-7): per-key numeric range — reject out-of-range values
+        // with a clear per-key error (a lone bad key yields a 400 below; mixed
+        // batches keep the existing partial-success + errors contract).
+        // Applies to dataType 'number' only: 'percent' is already normalized
+        // to 0–1 below (its own well-defined range).
+        if (def.dataType === 'number') {
+          const range = SETTING_NUMBER_RANGES[key];
+          if (range && (n < range.min || n > range.max)) {
+            errors.push({ key, error: `${def.label} harus di antara ${range.min} dan ${range.max} (diterima: ${n})` });
+            continue;
+          }
         }
         // BUG 1.4 fix: percent values must be 0-1. If user enters 0-100, normalize.
         // Previously the if-body was EMPTY — value 50 was stored as "50" (5000%),

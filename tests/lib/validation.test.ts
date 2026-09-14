@@ -194,13 +194,37 @@ describe('peerComparisonItemsQuerySchema + peerComparisonTrendQuerySchema', () =
 });
 
 describe('exportReportQuerySchema', () => {
-  it('accepts valid params with sections', () => {
+  // FIX (BUG-3-a C6, test left stale by the validation.ts change — verified
+  // pre-existing red before BUG-3-FIX-A via git stash): sections are now
+  // validated against the 6 real keys (exec/growth/topItems/breakdown/
+  // variance/trend). The old fixture used 'summary,pareto', which the
+  // strict refine correctly REJECTS now. Fixture updated to the new contract
+  // + a rejection case for the old silent-typo behavior.
+  it('accepts valid params with known section keys', () => {
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      sections: 'exec,topItems',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('accepts an empty sections token (?sections= = no section)', () => {
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      sections: '',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects unknown section keys (typo guard — BUG-3-a C6)', () => {
     const r = exportReportQuerySchema.safeParse({
       month: 'Agustus 2026',
       week: 'WEEK 1',
       sections: 'summary,pareto',
     });
-    expect(r.success).toBe(true);
+    expect(r.success).toBe(false);
   });
 
   it('accepts compareWeek + compareMonth', () => {

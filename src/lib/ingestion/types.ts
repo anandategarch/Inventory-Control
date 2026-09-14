@@ -27,8 +27,9 @@ export interface IngestRequestBody {
   fileName?: string;
   /** Optional user-provided override for the original filename */
   manualFileName?: string;
-  /** Pre-computed file hash (skip recomputation when provided) */
-  precomputedHash?: string;
+  // FIX (BUG-3-c SEDANG-3): `precomputedHash` removed — no caller ever set it
+  // (the hash is always computed inside processIngestion via hashFile), so the
+  // field was dead weight on the request type.
   /** Number format locale ('auto' | 'id' | 'us') for CSV separator parsing */
   numberLocale?: NumberLocale;
 }

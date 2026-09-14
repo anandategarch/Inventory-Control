@@ -19,7 +19,7 @@
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Upload, AlertCircle, Loader2, ArrowRight } from 'lucide-react';
+import { Upload, AlertCircle, Loader2, ArrowRight, XCircle } from 'lucide-react';
 import { useUploadPipeline } from './use-upload-pipeline';
 import { FileDropZone } from './FileDropZone';
 import { RenameModeSection } from './RenameModeSection';
@@ -57,6 +57,9 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
     handleRunImport,
     handleEditName,
     clearFile,
+    // FIX (BUG-3-b B3): aborts the in-flight upload/detect/import phase —
+    // wired to the "Batalkan" button that now appears while busy.
+    cancel,
     isBusy,
     showConfirm,
   } = useUploadPipeline({ onOpenChange });
@@ -152,9 +155,18 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
             </Button>
           ) : showConfirm ? (
             <>
-              <Button variant="ghost" onClick={handleClose} disabled={importing}>
-                Batal
-              </Button>
+              {/* FIX (BUG-3-b B3): while importing, Batal becomes an enabled
+                  "Batalkan Import" (abort + unlock) instead of a disabled
+                  ghost — a hung import no longer locks the dialog. */}
+              {importing ? (
+                <Button variant="outline" onClick={cancel} className="gap-1.5 text-destructive hover:text-destructive">
+                  <XCircle className="h-4 w-4" /> Batalkan Import
+                </Button>
+              ) : (
+                <Button variant="ghost" onClick={handleClose}>
+                  Batal
+                </Button>
+              )}
               <Button onClick={handleRunImport} disabled={importing} className="gap-2">
                 {importing ? (
                   <>
@@ -170,9 +182,16 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
             </>
           ) : (
             <>
-              <Button variant="ghost" onClick={handleClose} disabled={isBusy}>
-                Batal
-              </Button>
+              {/* FIX (BUG-3-b B3): same unlock for the upload+detect phase. */}
+              {isBusy ? (
+                <Button variant="outline" onClick={cancel} className="gap-1.5 text-destructive hover:text-destructive">
+                  <XCircle className="h-4 w-4" /> Batalkan
+                </Button>
+              ) : (
+                <Button variant="ghost" onClick={handleClose}>
+                  Batal
+                </Button>
+              )}
               <Button
                 onClick={handleUploadAndDetect}
                 disabled={!file || isBusy || (renameMode === 'manual' && !manualValidation.ok)}

@@ -14,24 +14,29 @@
 //     zero-snapshot closure, dormant-item skip, new-item semantics.
 //
 // Mock @/lib/db (same vi.hoisted pattern as top-growth.test.ts). Each
-// withStatementTimeout query fires 2 SET LOCAL $executeRaw calls.
+// withStatementTimeout query fires 1 merged set_config $executeRaw call
+// (FIX BUG-3-a P3: was 2 SET LOCAL statements, merged into one
+// SELECT set_config(...) round-trip).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   computeChangeStats,
   classifyChange,
   queryOutletChangeAnalysis,
   queryOutletChangeItems,
+  resolveChangeAnalysisContext,
   type ChangeSeriesPoint,
 } from '@/lib/queries/outlets/change-analysis';
 
-const { mockQueryRaw, mockExecuteRaw } = vi.hoisted(() => ({
+const { mockQueryRaw, mockExecuteRaw, mockSourceFileFindFirst } = vi.hoisted(() => ({
   mockQueryRaw: vi.fn(),
   mockExecuteRaw: vi.fn(),
+  mockSourceFileFindFirst: vi.fn(),
 }));
 
 vi.mock('@/lib/db', () => ({
   db: {
     $queryRaw: mockQueryRaw,
+    sourceFile: { findFirst: mockSourceFileFindFirst },
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({
       $queryRaw: mockQueryRaw,
       $executeRaw: mockExecuteRaw,
@@ -188,9 +193,9 @@ describe('queryOutletChangeAnalysis', () => {
       month: 'Agustus 2026', week: 'WEEK 4', currentMonthKey: CUR, filters: {}, thresholds: T,
     });
 
-    // ONE scan (withStatementTimeout = 2 SET LOCALs).
+    // ONE scan (withStatementTimeout = 1 merged set_config executeRaw).
     expect(mockQueryRaw).toHaveBeenCalledTimes(1);
-    expect(mockExecuteRaw).toHaveBeenCalledTimes(2);
+    expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
     const sql = sqlText(mockQueryRaw.mock.calls[0]?.[0]);
     expect(sql).toContain('ir."weekLabel" =');
     expect(sql).toContain('sf."monthKey" <=');
@@ -311,5 +316,44 @@ describe('queryOutletChangeItems', () => {
     });
     expect(r.outlet).toBeNull();
     expect(r.items).toEqual([]);
+  });
+});
+
+describe('resolveChangeAnalysisContext — FIX (BUG-3-c R-8) numeric week fallback', () => {
+  beforeEach(() => {
+    mockQueryRaw.mockReset();
+    mockExecuteRaw.mockReset();
+    mockSourceFileFindFirst.mockReset().mockResolvedValue({ monthKey: CUR });
+  });
+
+  it('week fallback orders the month\'s weeks NUMERICALLY, not lexicographically', async () => {
+    // The week-fallback query returns the label of the month's LATEST week.
+    // With WEEK 10+ present, the old MAX("weekLabel") would pick "WEEK 9"
+    // ('1' < '9' in text order). Pin the new SQL shape: GROUP BY + numeric
+    // SUBSTRING ordering + NULLS LAST, so "WEEK 10" wins.
+    mockQueryRaw.mockResolvedValueOnce([{ w: 'WEEK 10' }]);
+    const r = await resolveChangeAnalysisContext('Agustus 2026', null);
+    expect(r.week).toBe('WEEK 10');
+    expect(r.currentMonthKey).toBe(CUR);
+
+    const sql = sqlText(mockQueryRaw.mock.calls[0]?.[0]);
+    expect(sql).not.toContain('MAX(ir."weekLabel")');
+    expect(sql).toContain('SUBSTRING(ir."weekLabel" FROM \'[0-9]+\')::int DESC NULLS LAST');
+    expect(sql).toContain('GROUP BY ir."weekLabel"');
+    expect(sql).toContain('LIMIT 1');
+  });
+
+  it('an explicit week param skips the fallback query entirely', async () => {
+    const r = await resolveChangeAnalysisContext('Agustus 2026', 'WEEK 3');
+    expect(r.week).toBe('WEEK 3');
+    expect(mockQueryRaw).not.toHaveBeenCalled();
+    expect(mockSourceFileFindFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it('a month with no rows yields week=null (and monthKey still resolves)', async () => {
+    mockQueryRaw.mockResolvedValueOnce([]);
+    const r = await resolveChangeAnalysisContext('Desember 2026', null);
+    expect(r.week).toBeNull();
+    expect(r.currentMonthKey).toBe(CUR);
   });
 });

@@ -84,10 +84,14 @@ describe('resolveKelompokOutletCodes', () => {
     expect(result).toEqual(['__NO_MATCH__']);
   });
 
-  it('returns empty array on DB error (graceful fallback)', async () => {
+  it('returns __NO_MATCH__ sentinel on DB error (FIX BUG-3-c R-3 — filter is never silently dropped)', async () => {
+    // Old contract: the catch path returned [] — callers normalize [] to
+    // "no kelompok filter" (resolveOutletCodeFilters → codes:null), so a
+    // transient DB error widened the query to ALL outlets silently. The
+    // sentinel makes the failure VISIBLE (empty result) instead.
     mockQueryRaw.mockRejectedValueOnce(new Error('connection refused'));
     const result = await resolveKelompokOutletCodes('BDG');
-    expect(result).toEqual([]);
+    expect(result).toEqual(['__NO_MATCH__']);
   });
 
   it('passes kelompok to SQL as parameter (case-insensitive UPPER())', async () => {

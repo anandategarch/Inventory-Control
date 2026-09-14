@@ -96,6 +96,9 @@ export interface UploadPipeline {
   handleRunImport: () => void;
   handleEditName: () => void;
   clearFile: () => void;
+  // FIX (BUG-3-b B3): abort every in-flight phase request + unlock the
+  // busy flags — wired to the "Batalkan" button shown while busy.
+  cancel: () => void;
   // Derived
   isBusy: boolean;
   showConfirm: boolean;
@@ -129,6 +132,48 @@ export function useUploadPipeline({ onOpenChange }: { onOpenChange: (open: boole
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  // ============================================================
+  // FIX (BUG-3-b B3): per-phase fetch timeouts + user cancellation.
+  // ------------------------------------------------------------
+  // The 3-phase pipeline had NO timeouts: one hung request (chunk upload,
+  // detect, or import) locked the dialog shut — handleClose refused to
+  // close while busy and every Batal button was disabled, so the user's
+  // only escape was a page reload. Every pipeline fetch now goes through
+  // fetchWithTimeout with a phase-appropriate budget, and cancel() aborts
+  // ALL in-flight requests (chunks upload with bounded concurrency) and
+  // unlocks the busy flags immediately.
+  // ============================================================
+  const UPLOAD_CHUNK_TIMEOUT_MS = 120_000; // per 4MB chunk request
+  const DETECT_TIMEOUT_MS = 60_000;        // parse + week detection
+  const IMPORT_TIMEOUT_MS = 300_000;       // import-all (large files are legit slow)
+
+  const abortControllersRef = useRef<Set<AbortController>>(new Set());
+  const cancelRequestedRef = useRef(false);
+
+  const fetchWithTimeout = useCallback((url: string, init: RequestInit, timeoutMs: number): Promise<Response> => {
+    const controller = new AbortController();
+    abortControllersRef.current.add(controller);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(url, { ...init, signal: controller.signal }).finally(() => {
+      clearTimeout(timer);
+      abortControllersRef.current.delete(controller);
+    });
+  }, []);
+
+  const cancel = useCallback(() => {
+    cancelRequestedRef.current = true;
+    for (const c of abortControllersRef.current) c.abort();
+    abortControllersRef.current.clear();
+    // Unlock immediately — the aborted phase's catch path sees
+    // cancelRequestedRef and stays quiet (no fake "Upload gagal" toast).
+    setUploading(false);
+    setImporting(false);
+  }, []);
+
+  /** FIX (BUG-3-b B3): AbortError → friendly Indonesian message (timeout vs
+   * user cancel), following the fetchAnalysis.ts pattern. */
+  const isAbortError = (e: unknown): boolean => e instanceof Error && e.name === 'AbortError';
+
   const reset = useCallback(() => {
     setFile(null);
     setUploading(false);
@@ -145,7 +190,11 @@ export function useUploadPipeline({ onOpenChange }: { onOpenChange: (open: boole
   }, []);
 
   const handleClose = () => {
-    if (uploading || importing) return; // Don't close during processing
+    // FIX (BUG-3-b B3): the dialog no longer locks shut while busy — now that
+    // an abort mechanism exists, closing mid-phase aborts the in-flight
+    // requests first (their catch paths stay quiet via cancelRequestedRef),
+    // then resets and closes like any other close.
+    if (uploading || importing) cancel();
     reset();
     onOpenChange(false);
   };
@@ -211,6 +260,9 @@ export function useUploadPipeline({ onOpenChange }: { onOpenChange: (open: boole
       return;
     }
 
+    // FIX (BUG-3-b B3): fresh run — clear any stale cancel flag from a
+    // previous aborted attempt.
+    cancelRequestedRef.current = false;
     setUploading(true);
     setProgress(0);
     setStatusLog([`⏳ Mengupload ${file.name} (${(file.size / 1024 / 1024).toFixed(1)}MB)...`]);
@@ -218,6 +270,10 @@ export function useUploadPipeline({ onOpenChange }: { onOpenChange: (open: boole
     setResult(null);
     setDetectData(null);
 
+    // FIX (BUG-3-b B3): tracks the CURRENT phase's timeout budget so the
+    // catch block can report the right number (chunk 120s vs detect 60s).
+    // Declared OUTSIDE the try — catch needs to read it.
+    let phaseTimeoutMs = UPLOAD_CHUNK_TIMEOUT_MS;
     try {
       // ===== PHASE 1: Upload chunks (fast, each <5s) =====
       const fileBuffer = await file.arrayBuffer();
@@ -255,10 +311,10 @@ export function useUploadPipeline({ onOpenChange }: { onOpenChange: (open: boole
         formData.append('fileHash', fileHash);
         formData.append('fileSize', String(file.size));
 
-        const res = await fetch('/api/ingest-upload', {
+        const res = await fetchWithTimeout('/api/ingest-upload', {
           method: 'POST',
           body: formData,
-        });
+        }, UPLOAD_CHUNK_TIMEOUT_MS);
 
         const contentType = res.headers.get('content-type') || '';
         if (!contentType.includes('application/json')) {
@@ -322,10 +378,11 @@ export function useUploadPipeline({ onOpenChange }: { onOpenChange: (open: boole
         : {};
 
       // ===== PHASE 2: Detect weeks (parse Excel, 1 request) =====
+      phaseTimeoutMs = DETECT_TIMEOUT_MS;
       setProgress(50);
       setStatusLog(prev => [...prev, '🔍 Parsing Excel, mendeteksi week...']);
 
-      const detectRes = await fetch('/api/ingest-process', {
+      const detectRes = await fetchWithTimeout('/api/ingest-process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -337,7 +394,7 @@ export function useUploadPipeline({ onOpenChange }: { onOpenChange: (open: boole
           numberLocale,
           ...manualPayload,
         }),
-      });
+      }, DETECT_TIMEOUT_MS);
 
       const ct = detectRes.headers.get('content-type') || '';
       if (!ct.includes('application/json')) {
@@ -393,11 +450,22 @@ export function useUploadPipeline({ onOpenChange }: { onOpenChange: (open: boole
       setUploading(false);
       // Keep progress at 55% — import will fill 60-100%
     } catch (e: unknown) {
-      setError((e instanceof Error ? e.message : 'Upload gagal'));
-      setStatusLog(prev => [...prev, `❌ Error: ${(e instanceof Error ? e.message : 'unknown')}`]);
+      // FIX (BUG-3-b B3): user-initiated cancel stays quiet (the cancel()
+      // action already reset the busy flags) — no error state, no toast.
+      if (cancelRequestedRef.current) {
+        setUploading(false);
+        return;
+      }
+      // FIX (BUG-3-b B3): timeout abort → friendly message, not
+      // "The user aborted a request".
+      const msg = isAbortError(e)
+        ? `Timeout — server tidak merespons dalam ${phaseTimeoutMs / 1000}s. Coba lagi.`
+        : (e instanceof Error ? e.message : 'Upload gagal');
+      setError(msg);
+      setStatusLog(prev => [...prev, `❌ Error: ${msg}`]);
       toast({
         title: '❌ Upload gagal',
-        description: (e instanceof Error ? e.message : 'Unknown error'),
+        description: msg,
         variant: 'destructive',
       });
       setUploading(false);
@@ -415,6 +483,8 @@ export function useUploadPipeline({ onOpenChange }: { onOpenChange: (open: boole
       return;
     }
 
+    // FIX (BUG-3-b B3): fresh run — clear any stale cancel flag.
+    cancelRequestedRef.current = false;
     setImporting(true);
     setError(null);
     setProgress(60);
@@ -432,7 +502,7 @@ export function useUploadPipeline({ onOpenChange }: { onOpenChange: (open: boole
       setStatusLog(prev => [...prev, `⏳ Import semua week (${totalRows.toLocaleString()} rows total)...`]);
       setProgress(70);
 
-      const importRes = await fetch('/api/ingest-process', {
+      const importRes = await fetchWithTimeout('/api/ingest-process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -445,7 +515,7 @@ export function useUploadPipeline({ onOpenChange }: { onOpenChange: (open: boole
           numberLocale,
           ...(detectData.manualMode ? { manualFileName: fileName } : {}),
         }),
-      });
+      }, IMPORT_TIMEOUT_MS);
 
       const contentType = importRes.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
@@ -516,11 +586,20 @@ export function useUploadPipeline({ onOpenChange }: { onOpenChange: (open: boole
         description: `${totalInserted.toLocaleString()} rows dari ${fileName}`,
       });
     } catch (e: unknown) {
-      setError((e instanceof Error ? e.message : 'Import gagal'));
-      setStatusLog(prev => [...prev, `❌ Error: ${(e instanceof Error ? e.message : 'unknown')}`]);
+      // FIX (BUG-3-b B3): user-initiated cancel stays quiet — the server may
+      // still finish a partial import; the "week sudah ada" guard makes a
+      // retry safe. No fake error toast for a deliberate cancel.
+      if (cancelRequestedRef.current) {
+        return;
+      }
+      const msg = isAbortError(e)
+        ? `Timeout — import tidak selesai dalam ${IMPORT_TIMEOUT_MS / 1000}s. Coba lagi (week yang sudah masuk akan di-skip) atau gunakan Import dari Drive.`
+        : (e instanceof Error ? e.message : 'Import gagal');
+      setError(msg);
+      setStatusLog(prev => [...prev, `❌ Error: ${msg}`]);
       toast({
         title: '❌ Import gagal',
-        description: (e instanceof Error ? e.message : 'Unknown error'),
+        description: msg,
         variant: 'destructive',
       });
     } finally {
@@ -575,6 +654,8 @@ export function useUploadPipeline({ onOpenChange }: { onOpenChange: (open: boole
     handleRunImport,
     handleEditName,
     clearFile,
+    // FIX (BUG-3-b B3): exposed for the "Batalkan" button in the dialog footer.
+    cancel,
     isBusy,
     showConfirm,
   };

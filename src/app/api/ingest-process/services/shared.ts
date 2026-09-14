@@ -9,12 +9,21 @@
 //  them via `ctx.*`.
 // ============================================================
 import { parseMonthFromFilename, type ParsedMonth } from '@/lib/excel';
+import type { z } from 'zod';
+import type { ingestProcessBodySchema } from '@/lib/validation';
+
+// FIX (BUG-3-c SEDANG-3): `body` used to be the RAW `Record<string, unknown>`
+// JSON — mode handlers read weekLabel/weeksToImport/fileSize straight from
+// it, so every bound in ingestProcessBodySchema was decorative (an attacker
+// could bypass the ≤12-weeks / week-format limits entirely). It now carries
+// the Zod-VALIDATED payload only (route.ts passes `validation.data`).
+export type IngestProcessBody = z.infer<typeof ingestProcessBodySchema>;
 
 export interface IngestProcessContext {
   /** Request start timestamp — mode responses report `durationMs` from it. */
   startedAt: number;
-  /** Raw JSON request body — mode handlers read mode-specific fields (weekLabel, weeksToImport). */
-  body: Record<string, unknown>;
+  /** Zod-VALIDATED request body (FIX BUG-3-c SEDANG-3) — mode handlers read mode-specific fields (weekLabel, weeksToImport, fileSize). */
+  body: IngestProcessBody;
   /** Original client-supplied fileName (pre manual-rename / placeholder fix). */
   rawFileName: string;
   /**

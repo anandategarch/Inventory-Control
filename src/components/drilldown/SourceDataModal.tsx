@@ -98,7 +98,11 @@ export function SourceDataModal() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    // FIX (BUG-3-b A1): WebKit/Safari race — revoking the object URL
+    // synchronously after click() can cancel the download before it starts
+    // (toast sukses tapi file tak ada). Defer 60s; the timer firing after
+    // the modal unmounts is harmless.
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
   }
 
   return (

@@ -51,6 +51,12 @@ const CATEGORY_DESCRIPTIONS: Record<string, string> = {
 
 async function fetchSettings(): Promise<SettingsData> {
   const res = await fetch('/api/settings');
+  // FIX (BUG-3-b B8): check res.ok before parsing — a 429/5xx (or an HTML
+  // error page from a crash) used to hit res.json() and surface a cryptic
+  // "Unexpected token '<'..." parse error instead of the real status.
+  if (!res.ok) {
+    throw new Error(`Gagal memuat pengaturan (HTTP ${res.status})`);
+  }
   return res.json();
 }
 
@@ -160,14 +166,26 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
       return res.json();
     },
     onSuccess: (data, key) => {
-      toast({
-        title: '↺ Reset ke default',
-        description: key ? `Reset ${key}` : 'Semua pengaturan direset ke default',
-      });
-      queryClient.invalidateQueries({ queryKey: ['settings'] });
-      // FIX (H-14/T3): same shared 18-key invalidation as save (reset changes
-      // the same threshold-dependent data).
-      invalidateAllData(queryClient);
+      // FIX (BUG-3-b B8): the DELETE /api/settings response can carry
+      // success:false (e.g. rate-limited / DB error) — the old handler
+      // ALWAYS toasted "Reset ke default" + invalidated, so a failed reset
+      // looked like a successful one. Mirror saveMutation's check.
+      if (data.success) {
+        toast({
+          title: '↺ Reset ke default',
+          description: key ? `Reset ${key}` : 'Semua pengaturan direset ke default',
+        });
+        queryClient.invalidateQueries({ queryKey: ['settings'] });
+        // FIX (H-14/T3): same shared 19-key invalidation as save (reset changes
+        // the same threshold-dependent data).
+        invalidateAllData(queryClient);
+      } else {
+        toast({
+          title: '❌ Reset gagal',
+          description: data.error || 'Error tidak diketahui',
+          variant: 'destructive',
+        });
+      }
     },
   });
 

@@ -21,7 +21,7 @@
 //    import type { HeatmapMetric, HeatmapCell } from '@/components/dashboard/AreaItemHeatmap';
 // ============================================================
 
-import { memo, useMemo, useState, useCallback, useRef } from 'react';
+import { memo, useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { useShallow } from 'zustand/shallow';
 import dynamic from 'next/dynamic';
@@ -83,6 +83,16 @@ function AreaItemHeatmapInner() {
     } else {
       setHoveredCell(null);
     }
+  }, []);
+
+  // FIX (BUG-3-b B7): the 80ms hover-debounce timer survived unmount —
+  // switching tabs (keep-alive) right after hovering a cell fired
+  // setHoveredCell on an unmounted component. Clear the pending timer on
+  // unmount.
+  useEffect(() => {
+    return () => {
+      if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    };
   }, []);
 
   const params = useMemo(() => {

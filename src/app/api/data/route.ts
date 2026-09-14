@@ -167,9 +167,26 @@ export async function DELETE(req: NextRequest) {
       // InventoryRecord — truncating InventoryRecord is allowed without
       // touching them, and they are master data, not imported data).
       // Table names are static identifiers — no injection surface.
-      await db.$executeRawUnsafe(
-        'TRUNCATE TABLE "DQIssue", "InventoryRecord", "Week", "SourceFile", "OutletPeriodSales"',
-      );
+      //
+      // FIX (BUG-3-c R-6a): "FileChunk" added to the TRUNCATE list. FileChunk
+      // holds raw upload chunks (up to 50MB per hash) with NO FK to the other
+      // tables — a full reset used to leave every chunk row behind, so the
+      // only cleanup was DB-SIZE-1's 24h orphan TTL. After a "reset semua"
+      // the table should genuinely be empty (matches the month/fileId DELETE
+      // branches, whose delete-mode counterparts clean their chunks).
+      //
+      // FIX (BUG-3-c R-6b): same pg_advisory_xact_lock pattern as the month /
+      // fileId branches — serialize a full reset against concurrent imports
+      // (chunk upserts + week imports) so a racing import can't resurrect
+      // rows into freshly truncated tables. The lock key is a fixed literal
+      // ("data-delete-all") — separate key space from per-month locks, and
+      // xact-scoped so it auto-releases at COMMIT/ROLLBACK.
+      await db.$transaction([
+        db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('data-delete-all'))`,
+        db.$executeRawUnsafe(
+          'TRUNCATE TABLE "DQIssue", "InventoryRecord", "Week", "SourceFile", "OutletPeriodSales", "FileChunk"',
+        ),
+      ]);
     } else if (data.monthKey || data.month) {
       // Delete all SourceFiles for this month — cascade.
       // FIX (DEEP-AUDIT-API-3, DEEP-AUDIT-FLOW-7): query by monthKey, NOT monthLabel.

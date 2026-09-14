@@ -104,6 +104,30 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // FIX (BUG-3-c R-5): guard the ACCUMULATED size of a fileHash BEFORE the
+    // last chunk arrives. The old flow only summed the bytes on the LAST
+    // chunk — an attacker could stream chunks 0..N-1 of a claimed
+    // totalChunks=1000 and simply never send the final one, growing
+    // FileChunk rows (each up to MAX_CHUNK_SIZE) with the 24h orphan TTL as
+    // the only bound (DB-SIZE-1's cleanup). We re-check the running total
+    // every 5th chunk (cheap: SUM over the ~k rows of this hash only),
+    // capping the worst-case overshoot at MAX_TOTAL_SIZE + 4×5MB before the
+    // next check rejects the upload with 413 + deletes the stored chunks.
+    if (chunkIndex % 5 === 0) {
+      const [acc] = await db.$queryRaw<Array<{ total_bytes: bigint }>>`
+        SELECT COALESCE(SUM(octet_length("data")), 0)::bigint AS total_bytes
+        FROM "FileChunk"
+        WHERE "fileHash" = ${fileHash}`;
+      const accumulatedBytes = Number(acc?.total_bytes ?? 0);
+      if (accumulatedBytes > MAX_TOTAL_SIZE) {
+        await db.fileChunk.deleteMany({ where: { fileHash } }).catch(() => {});
+        return NextResponse.json(
+          { success: false, error: `File terlalu besar: ${(accumulatedBytes / 1024 / 1024).toFixed(1)}MB terakumulasi. Maks ${MAX_TOTAL_SIZE / 1024 / 1024}MB.` },
+          { status: 413 }
+        );
+      }
+    }
+
     // If not last chunk, return progress
     if (chunkIndex < totalChunks - 1) {
       return NextResponse.json({

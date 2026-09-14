@@ -98,4 +98,10 @@ export const RATE_LIMITS = {
   settings: { maxRequests: 10, windowMs: 60_000 },
   // Setup: 2 req/min per IP (destructive)
   setup: { maxRequests: 2, windowMs: 60_000 },
+  // FIX (BUG-3-a C7): dedicated export bucket. /api/export-report previously
+  // rode the analysis bucket (60/min) — far too loose for the heaviest route
+  // in the app (seconds of SQL + docx assembly per call, plus a 5-min response
+  // cache). 10/min per IP still allows legitimate re-exports with different
+  // filters/sections while capping retry-hammering.
+  export: { maxRequests: 10, windowMs: 60_000 },
 } as const;

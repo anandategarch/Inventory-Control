@@ -49,15 +49,26 @@ export function ExportDialog({ open, onOpenChange, onExport, isExporting }: Expo
   const selectAll = () => setSelected(new Set(SECTIONS.map(s => s.key)));
   const deselectAll = () => setSelected(new Set());
 
+  // FIX (BUG-3-b A5): handleExport in the parent (useDashboardActions) closes
+  // the dialog PROGRAMMATICALLY via setExportDialogOpen(false) — that path
+  // never ran the reset in handleOpenChange, so a reduced selection
+  // ("2/6 section") silently persisted to the next open. Reset on every
+  // open→false transition (user-initiated AND programmatic) so the next open
+  // starts fresh. Uses the React-recommended "adjust state during render"
+  // pattern (same as SettingsDialog BUG FIX #005) — no setState-in-effect.
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (!open) {
+      setSelected(new Set(SECTIONS.filter(s => s.default).map(s => s.key)));
+    }
+  }
+
   const handleExport = () => {
     onExport([...selected]);
   };
 
   const handleOpenChange = (next: boolean) => {
-    if (!next) {
-      // Reset to default selection on close so the next open starts fresh
-      setSelected(new Set(SECTIONS.filter(s => s.default).map(s => s.key)));
-    }
     onOpenChange(next);
   };
 

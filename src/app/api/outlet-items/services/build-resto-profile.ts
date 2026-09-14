@@ -33,6 +33,8 @@ import {
   computeGrowthResult,
   computeNominalDeviationGrowth,
   type AggregateInput,
+  type HealthScoreWeights,
+  type HealthScoreThresholds,
 } from '@/lib/metrics';
 import { toNum } from '@/lib/format';
 import type { RuntimeThresholds } from '@/lib/settings';
@@ -153,7 +155,26 @@ export function buildRestoProfile(params: {
   const residualPctAggregate = computeResidualPctAggregate(aggregateInput);
   const explainedPctAggregate = computeExplainedPctAggregate(aggregateInput);
   const lossToSales = computeLossToSales(aggregateInput);
-  const healthScore = computeHealthScore(aggregateInput);
+  // FIX (BUG-3-c SEDANG-1): pass the RUNTIME health score weights + thresholds
+  // from Settings — same pattern as the analysis route's post-process-health-
+  // ranking.ts (weights HEALTH_WEIGHT_* + thresholds HEALTH_THRESH_*). This used
+  // to call computeHealthScore(aggregateInput) with NO weights/thresholds, so
+  // the health ring on the Resto tab kept scoring against the compiled-in
+  // defaults and silently DIVERGED from /api/analysis after the user changed
+  // any HEALTH_* setting (two different scores for the same outlet).
+  const healthScoreWeights: HealthScoreWeights = {
+    devBom: thresholds.HEALTH_WEIGHT_DEV_BOM,
+    residual: thresholds.HEALTH_WEIGHT_RESIDUAL,
+    lossToSales: thresholds.HEALTH_WEIGHT_LOSS_TO_SALES,
+    abnormal: thresholds.HEALTH_WEIGHT_ABNORMAL,
+  };
+  const healthScoreThresholds: HealthScoreThresholds = {
+    devBom: { good: thresholds.HEALTH_THRESH_DEV_BOM_GOOD, bad: thresholds.HEALTH_THRESH_DEV_BOM_BAD },
+    residual: { good: thresholds.HEALTH_THRESH_RESIDUAL_GOOD, bad: thresholds.HEALTH_THRESH_RESIDUAL_BAD },
+    lossToSales: { good: thresholds.HEALTH_THRESH_LOSS_TO_SALES_GOOD, bad: thresholds.HEALTH_THRESH_LOSS_TO_SALES_BAD },
+    abnormal: { good: thresholds.HEALTH_THRESH_ABNORMAL_GOOD, bad: thresholds.HEALTH_THRESH_ABNORMAL_BAD },
+  };
+  const healthScore = computeHealthScore(aggregateInput, healthScoreWeights, healthScoreThresholds);
 
   // Metric Engine: growth
   const salesGrowth = calcGrowth(bestSales, prevBestSales);
