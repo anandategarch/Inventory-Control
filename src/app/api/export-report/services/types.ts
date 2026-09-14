@@ -4,8 +4,14 @@
 //  Extracted from the original 1120-line route.ts (Task 4-c refactor).
 //
 //  EXPORT-PDF: the output format switched .docx → .pdf (pdf-builder.ts);
-//  DocxContext renamed → ReportContext. The report grew 9 → 13 sections
-//  (+ pareto / itemTrend / flip / peer).
+//  DocxContext renamed → ReportContext.
+//
+//  EXPORT-TRIM (user request): report trimmed 13 → 6 sections —
+//  GrowthMetrics / BreakdownEnriched / DeviationCost / CoverageInfo and the
+//  ReportData fields they fed (growthComparison / deviationBreakdown /
+//  deviationCost / areaAnalysis / outletRanking / coverage / paretoItem /
+//  paretoOutlet / flipRanking / peerComparison) were removed together with
+//  their sections (verified 0 reads in pdf-builder.ts).
 //
 //  Contains:
 //    - PrevMetrics + ExecSummaryWithPrev (helper-types for the
@@ -15,8 +21,7 @@
 //    - ReportContext (auxiliary state passed to buildPdfReport that
 //      doesn't belong in ReportData — section filter + historicalPeriods
 //      for the header "Hist (Jan-Jul 26)" label)
-//    - Derived row shapes (TopCatItem*, BreakdownEnriched, TrendRow,
-//      GrowthMetrics)
+//    - Derived row shapes (TopCatItem*, TrendRow)
 //
 //  FIX (BUG-3-a P1) — dead shapes removed together with the dead compute
 //  that fed them (verified 0 reads in the builder): AreaAnalysisMappedRow
@@ -33,12 +38,7 @@
 // ============================================================
 import type { ExecutiveSummary } from '@/types/inventory';
 import type { queryVarianceAnalysis } from '@/lib/queries/health-ranking';
-import type { queryOutletHealthRanking } from '@/lib/queries/health-ranking';
-import type { queryAreaAnalysis } from '@/lib/queries/areas';
-import type { FlipRankResult } from '@/lib/queries/items/flip-ranking';
 import type { ItemTrendMatrixRow } from '@/lib/queries/items/item-trend-matrix';
-import type { ParetoResult } from '@/lib/queries/pareto';
-import type { PeerComparisonRow } from '@/lib/queries/outlets/peer-comparison';
 
 // PERF-CACHE-06: helper used to short-circuit the cache wrapper for early-return
 // error paths (404 No records found). Throwing this error propagates through
@@ -165,19 +165,6 @@ export interface TopCatItemLossSurplus {
   histAvgQty: number | null;
 }
 
-// breakdownEnriched — derived at route.ts:581-582 from queryDeviationBreakdown
-// output. Adds explained (sum) + explainedPct + netPct.
-export interface BreakdownEnriched {
-  waste: number;
-  susut: number;
-  trial: number;
-  residual: number;
-  total: number;
-  explained: number;
-  explainedPct: number | null;
-  netPct: number | null;
-}
-
 // trend row — derived at route.ts:600-603 from trendAggRows (queryTrendAgg).
 // `sortKey` is stripped by the destructure `({ sortKey, ...rest }) => rest`.
 // EXPAND-1: + lossNominal / surplusNominal (TrendAggRow already carries them —
@@ -192,57 +179,9 @@ export interface TrendRow {
   surplusNominal: number;
 }
 
-// Growth metrics object (route.ts:586-592) — the Section 2 "Perubahan
-// (Growth)" table payload. FIX (BUG-3-a P1): `multiPeriodComparison` removed
-// (verified 0 reads in docx-builder.ts — the analysis payload keeps its own
-// copy for the frontend; the export computed it on every run for nothing).
-export interface GrowthMetrics {
-  salesGrowth: number | null;
-  bomGrowth: number | null;
-  qtyDeviasiGrowth: number | null;
-  nominalDeviasiGrowth: number | null;
-  // USER-POLISH: Section 2 "Perubahan (Growth)" additions — single MoM step,
-  // same calcGrowth values the Section 1 rows render.
-  qtyWasteGrowth: number | null;
-  qtySusutGrowth: number | null;
-  qtyTrialGrowth: number | null;
-  deviationToSalesRatio: number | null;
-  deviationToBomRatio: number | null;
-}
-
-// EXPAND-1 — nominal (cost) composition + record counts, derived from the
-// same q-kpis row that feeds deviationBreakdown (DashboardKpisRow already
-// carries wasteCost/susutCost/trialCost/residualCost/totalCost/lossCount/
-// surplusCount). Zero-value when the kpis sections are all off.
-export interface DeviationCost {
-  wasteCost: number;
-  susutCost: number;
-  trialCost: number;
-  residualCost: number;
-  totalCost: number;
-  lossCount: number;
-  surplusCount: number;
-}
-
-// EXPAND-1 — Lampiran: Cakupan Data & Filter. outletCount/itemCount come from
-// ONE raw COUNT(DISTINCT) scan (null when the coverage section is off);
-// recordCount reuses the 404-check COUNT; periodCount/historicalPeriodCount
-// come from the already-loaded weeks metadata; generatedAt is captured at
-// fetch time (the route-level 5-min cache pins it to the cache-write moment).
-export interface CoverageInfo {
-  recordCount: number;
-  outletCount: number | null;
-  itemCount: number | null;
-  periodCount: number;
-  historicalPeriodCount: number;
-  generatedAt: string;
-}
-
 // ============================================================
 // ReportData — the full data object built by fetchReportData
 //  --------------------------------------------------------
-//  Shape mirrors the `data` literal built at route.ts:651-667 verbatim,
-//  minus the dead fields removed by FIX (BUG-3-a P1) — see the file header.
 //  SQL-return fields use `Awaited<ReturnType<typeof ...>>` so a signature
 //  drift in the underlying query surfaces here as a tsc error.
 //
@@ -251,15 +190,12 @@ export interface CoverageInfo {
 //  hasSection() gates rendering with the SAME `sections` list that gated
 //  the fetch, so a placeholder is never rendered.
 //
-//  EXPAND-1: + areaAnalysis (q-area — SAME shared cache id as the analysis
-//  pipeline's Area tab), outletRanking (queryOutletHealthRanking, which rides
-//  the shared q-outlet-agg cached scan), deviationCost (from the same q-kpis
-//  row as deviationBreakdown), coverage (Lampiran metadata).
-//
-//  EXPORT-PDF: + paretoItem/paretoOutlet (q-pareto-item / q-pareto-outlet),
-//  itemTrendMatrix (q-item-trend-matrix), flipRanking (q-flip-rank),
-//  peerComparison (q-peer-cmp + resolved target outlet — the outletCode
-//  param, or auto top-1 resto prioritas when no outlet filter is active).
+//  EXPORT-TRIM (user request): trimmed 13 → 6 sections. Removed fields:
+//  growthComparison (dead in pdf-builder — the growth section reads
+//  executiveSummary directly), deviationBreakdown + deviationCost
+//  ('breakdown'), areaAnalysis ('area'), outletRanking ('outlets'),
+//  paretoItem/paretoOutlet ('pareto'), flipRanking ('flip'),
+//  peerComparison ('peer'), coverage ('coverage').
 // ============================================================
 export interface ReportData {
   period: { monthLabel: string; weekLabel: string; comparisonWeek: string | null; comparisonMonth: string | null };
@@ -267,38 +203,16 @@ export interface ReportData {
   // FIX (BUG-PERF-11): include pic too — was missing, inconsistent with pareto route.
   filters: { area: string | null; kelompok: string | null; outletCode: string | null; itemName: string | null; pic: string | null };
   executiveSummary: ExecSummaryWithPrev;
-  growthComparison: GrowthMetrics;
   topItemsByNominal: TopItemByNominalRow[];
   topItemsByDevBom: TopItemByDevBomRow[];
   topItemsByWaste: TopCatItemWaste[];
   topItemsBySusut: TopCatItemSusut[];
   topItemsByTrial: TopCatItemTrial[];
   topItemsByLossSurplus: TopCatItemLossSurplus[];
-  deviationBreakdown: BreakdownEnriched;
-  deviationCost: DeviationCost;
   varianceAnalysis: Awaited<ReturnType<typeof queryVarianceAnalysis>>;
   trend: TrendRow[];
-  areaAnalysis: Awaited<ReturnType<typeof queryAreaAnalysis>>;
-  outletRanking: Awaited<ReturnType<typeof queryOutletHealthRanking>>;
-  coverage: CoverageInfo | null;
-  // EXPORT-PDF — section 'pareto': item-level + outlet-level Pareto
-  // (zero-value placeholders when the section is off).
-  paretoItem: ParetoResult;
-  paretoOutlet: ParetoResult;
   // EXPORT-PDF — section 'itemTrend': per-(month × item) rows ([] when off).
   itemTrendMatrix: ItemTrendMatrixRow[];
-  // EXPORT-PDF — section 'flip': top flip-risk items ({ items: [],
-  // totalItemsScanned: 0 } when off).
-  flipRanking: FlipRankResult;
-  // EXPORT-PDF — section 'peer': target outlet vs similar-sales peers.
-  // null when the section is off OR no peer data could be computed.
-  peerComparison: {
-    targetOutlet: { code: string; name: string; area: string };
-    /** true when the target was auto-picked (top-1 Resto Prioritas) because no outlet filter was active. */
-    autoTarget: boolean;
-    targetSales: number;
-    peers: PeerComparisonRow[];
-  } | null;
   durationMs: number;
 }
 

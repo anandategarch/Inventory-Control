@@ -16,27 +16,21 @@ interface SectionOption {
 
 // H-5: '5. Analisis Korelasi BOM' removed per user request (same removal
 // series as Loss-to-Sales / Kepatuhan).
-// EXPAND-1: report grew 6 → 9 sections — + Analisis per Area, + Resto
-// Prioritas, + Lampiran Cakupan Data & Filter.
-// EXPORT-PDF: output switched .docx → .pdf (full design + charts); report
-// grew 9 → 13 sections — + Konsentrasi & Pareto, Trend Item Multi-Periode,
-// Analisis Flip-Flop, Pembanding Peer-to-Peer. Section numbering is FIXED
-// (stable across ?sections= selections — mirrors pdf-builder.ts). Keep the
-// keys in sync with EXPORT_SECTION_KEYS (validation.ts).
+// EXPAND-1: report grew 6 → 9 sections.
+// EXPORT-PDF: output switched .docx → .pdf (full design + charts).
+// EXPORT-TRIM (user request): report trimmed 13 → 6 sections — only
+// Ringkasan (renamed from "Ringkasan Eksekutif"), Perubahan vs Periode
+// Pembanding, Item Prioritas, Perubahan Item, Trend Item Multi-Periode,
+// Trend Antar Periode remain. Section numbering is FIXED (stable across
+// ?sections= selections — mirrors pdf-builder.ts). Keep the keys in sync
+// with EXPORT_SECTION_KEYS (validation.ts).
 const SECTIONS: SectionOption[] = [
-  { key: 'exec', label: '1. Ringkasan Eksekutif', description: 'Kartu KPI + tabel 16 metrik: Penjualan, Nominal Deviasi, QTY, LOSS/SURPLUS, rasio — dengan growth vs pembanding', default: true },
+  { key: 'exec', label: '1. Ringkasan', description: 'Kartu KPI + tabel 16 metrik: Penjualan, Nominal Deviasi, QTY, LOSS/SURPLUS, rasio — dengan growth vs pembanding', default: true },
   { key: 'growth', label: '2. Perubahan vs Periode Pembanding', description: 'Tabel nilai vs pembanding (selisih absolut / pp / growth %) + grafik batang growth per metrik', default: true },
-  { key: 'breakdown', label: '3. Rincian Komposisi Selisih', description: 'Komposisi QTY + Nominal (Rp) + grafik donat + jumlah record LOSS/SURPLUS', default: true },
-  { key: 'area', label: '4. Analisis per Area', description: 'Per area: resto, penjualan, nominal deviasi, rasio + grafik batang — dengan baris TOTAL', default: true },
-  { key: 'outlets', label: '5. Resto Prioritas', description: '10 resto nominal deviasi terbesar + grafik batang bertanda (merah = LOSS)', default: true },
-  { key: 'pareto', label: '6. Konsentrasi & Analisis Pareto', description: 'Aturan 80/20: grafik pareto item + tabel item/resto teratas + statistik konsentrasi', default: true },
-  { key: 'topItems', label: '7. Item Prioritas (Top Items)', description: '6 ranking: Nominal, Dev/BOM, Waste, Susut, Trial, Loss/Surplus — dengan QTY prev, rata-rata historis, vs Hist', default: true },
-  { key: 'variance', label: '8. Perubahan Item (vs Pembanding)', description: 'Memburuk + Membaik: selisih nominal terbesar vs periode pembanding + grafik batang', default: true },
-  { key: 'itemTrend', label: '9. Trend Item Multi-Periode', description: 'Matriks 15 item teratas × periode (maks 7 bulan) dengan sel warna panas + trend terakhir', default: true },
-  { key: 'flip', label: '10. Analisis Flip-Flop', description: 'Item dengan pembalikan arah deviasi antar periode sejenis: sempurna/dominan/parsial + grafik pasangan flip', default: true },
-  { key: 'peer', label: '11. Pembanding Peer-to-Peer', description: 'Resto target vs resto sejenis (penjualan ±10%): tabel + grafik Dev/BOM + komposisi Loss/Surplus', default: true },
-  { key: 'trend', label: '12. Trend Antar Periode', description: 'Nominal Deviasi, % Dev/BOM, Loss, Surplus, % to Sales per periode + grafik batang & garis', default: true },
-  { key: 'coverage', label: '13. Lampiran: Cakupan Data & Filter', description: 'Periode, jumlah record/resto/item, filter aktif, waktu dibuat, definisi metrik', default: true },
+  { key: 'topItems', label: '3. Item Prioritas (Top Items)', description: '6 ranking: Nominal, Dev/BOM, Waste, Susut, Trial, Loss/Surplus — dengan QTY prev, rata-rata historis, vs Hist', default: true },
+  { key: 'variance', label: '4. Perubahan Item (vs Pembanding)', description: 'Memburuk + Membaik: selisih nominal terbesar vs periode pembanding + grafik batang', default: true },
+  { key: 'itemTrend', label: '5. Trend Item Multi-Periode', description: 'Matriks 15 item teratas × periode (maks 7 bulan) dengan sel warna panas + trend terakhir', default: true },
+  { key: 'trend', label: '6. Trend Antar Periode', description: 'Nominal Deviasi, % Dev/BOM, Loss, Surplus, % to Sales per periode + grafik batang & garis', default: true },
 ];
 
 interface ExportDialogProps {

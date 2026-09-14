@@ -196,12 +196,11 @@ export const changeAnalysisItemsQuerySchema = changeAnalysisQuerySchema.extend({
 // (?sections=exec,topitems → section 3 just missing from the report, no
 // error). Keep this list in sync with SECTIONS in ExportDialog.tsx and the
 // hasSection() keys in pdf/pdf-builder.ts.
-// EXPAND-1: + 'area' (Analisis per Area), 'outlets' (Resto Prioritas),
-// 'coverage' (Lampiran: Cakupan Data & Filter) — report grew 6 → 9 sections.
-// EXPORT-PDF: + 'pareto' (Konsentrasi & Pareto), 'itemTrend' (Trend Item
-// multi-periode), 'flip' (Analisis Flip-Flop), 'peer' (Pembanding
-// Peer-to-Peer) — report grew 9 → 13 sections; output switched .docx → .pdf.
-const EXPORT_SECTION_KEYS = ['exec', 'growth', 'topItems', 'breakdown', 'area', 'outlets', 'pareto', 'variance', 'itemTrend', 'flip', 'peer', 'trend', 'coverage'] as const;
+// EXPORT-TRIM: user request — report trimmed 13 → 6 sections. Removed:
+// 'breakdown', 'area', 'outlets', 'pareto', 'flip', 'peer', 'coverage'.
+// Kept: exec (renamed "Ringkasan"), growth, topItems, variance, itemTrend,
+// trend.
+const EXPORT_SECTION_KEYS = ['exec', 'growth', 'topItems', 'variance', 'itemTrend', 'trend'] as const;
 export const exportReportQuerySchema = z.object({
   month: monthLabelSchema,
   week: weekLabelSchema,

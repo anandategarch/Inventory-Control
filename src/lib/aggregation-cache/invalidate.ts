@@ -138,13 +138,15 @@ export async function invalidateAnalysisCache(): Promise<void> {
     // analysis + export-report pipelines both compute is now behind a q-* row.
     'q-exec-summary', 'q-top-nominal', 'q-top-devbom', 'q-area',
     'q-hist-stats', 'q-hist-critical', 'q-hist-catavg',
-    // EXPORT-PDF: export-report's 4 new sections (PDF pipeline) — same
-    // invalidation rule as the q-* above: a mutation that invalidates the
-    // analysis payload must invalidate these query rows too, otherwise
-    // export could serve a pre-mutation Pareto / trend-matrix / flip /
-    // peer row for up to 30 min.
-    'q-pareto-item', 'q-pareto-outlet', 'q-item-trend-matrix',
-    'q-flip-rank', 'q-peer-cmp',
+    // EXPORT-PDF: the export's item-trend matrix query — same invalidation
+    // rule as the q-* above: a mutation that invalidates the analysis
+    // payload must invalidate this query row too, otherwise export could
+    // serve a pre-mutation trend-matrix row for up to 30 min.
+    // EXPORT-TRIM: 'q-pareto-item' / 'q-pareto-outlet' / 'q-flip-rank' /
+    // 'q-peer-cmp' removed — their export sections are gone and no other
+    // pipeline uses those cache ids (the /api/pareto, /api/flip-ranking and
+    // /api/peer-comparison routes cache at route level under their own keys).
+    'q-item-trend-matrix',
   ];
   await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }

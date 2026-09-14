@@ -22,17 +22,18 @@
 //    9. 404 short-circuit (throw EarlyHttpResponse if the current period
 //       has 0 records) — first data query for EVERY sections combination
 //   10. Sections-aware parallel fetch (FIX BUG-3-a P2) — verified against
-//       docx-builder.ts, `?sections=` now gates the FETCHING too:
-//         exec / growth / breakdown → q-kpis (+ prev q-exec-summary for
-//                                     exec/growth growth columns)
-//         topItems                  → q-top-nominal + q-top-devbom +
-//                                     q-topcat + prev q-topcat (limit 100)
-//                                     + 4× q-hist-catavg
-//         variance                  → q-variance
-//         trend                     → q-trend
+//       pdf-builder.ts, `?sections=` now gates the FETCHING too
+//       (EXPORT-TRIM: 6 sections remain):
+//         exec / growth → q-kpis (+ prev q-exec-summary for the growth
+//                          columns) — also feeds the cover KPI cards
+//         topItems      → q-top-nominal + q-top-devbom + q-topcat +
+//                         prev q-topcat (limit 100) + 4× q-hist-catavg
+//         variance      → q-variance
+//         itemTrend     → q-item-trend-matrix
+//         trend         → q-trend
 //   11. Build prev lookup maps + enrich topWaste/Susut/Trial/LossSurplus
-//   12. Build execSummary + breakdownEnriched + growthMetrics + trend
-//   13. Assemble ReportData + DocxContext, return both
+//   12. Build execSummary + trend
+//   13. Assemble ReportData + ReportContext, return both
 //
 //  FIX (BUG-3-a P1) — DEAD COMPUTE REMOVED: q-rules (evaluateRulesSql),
 //  q-hist-rules (evaluateHistoricalRulesSql), q-hist-stats
@@ -74,29 +75,21 @@ import {
   queryTrendAgg,
   queryExecSummary,
   queryDashboardKpis,
-  kpisToBreakdown,
   queryTopItemsByNominal,
   queryTopItemsByDevBom,
   queryTopItemsByAllCategories,
   queryHistoricalCategoryAvg,
-  // EXPORT-PDF: the item-trend matrix + peer comparison section queries
-  // (re-exported via the queries barrel).
+  // EXPORT-PDF: the item-trend matrix section query (re-exported via the
+  // queries barrel).
   queryItemTrendMatrix,
-  queryPeerComparison,
 } from '@/lib/queries';
-import { queryVarianceAnalysis, queryOutletHealthRanking } from '@/lib/queries/health-ranking';
-import { queryAreaAnalysis } from '@/lib/queries/areas';
-// EXPORT-PDF: the remaining new section queries (not re-exported via the
-// barrel — pareto + flip-ranking live under their own module paths).
-import { queryParetoByItem, queryParetoByOutlet } from '@/lib/queries/pareto';
-import { queryFlipRanking } from '@/lib/queries/items/flip-ranking';
-import type { ItemTrendMatrixRow } from '@/lib/queries/items/item-trend-matrix';
+import { queryVarianceAnalysis } from '@/lib/queries/health-ranking';
 import { cachedSharedQuery, cachedSharedQueryMap, histPeriodsKeyParts } from '@/lib/queries/query-cache';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import { buildInventoryWhere } from '@/lib/build-where';
 import { resolveComparePeriod } from '@/lib/period-resolver';
-import { withStatementTimeout, buildSqlFilters } from '@/lib/queries/shared';
+import { withStatementTimeout } from '@/lib/queries/shared';
 import { logger } from '@/lib/logger';
 import type { ExecSummaryRow } from '@/lib/queries/dashboard';
 import { EarlyHttpResponse } from '@/lib/early-http-response';
@@ -180,47 +173,31 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   //  Keep this list in sync with EXPORT_SECTION_KEYS (validation.ts),
   //  ExportDialog.tsx and the hasSection() keys in pdf/pdf-builder.ts.
   // ============================================================
-  // EXPORT-PDF: + 'pareto' / 'itemTrend' / 'flip' / 'peer' — 13 sections.
-  const ALL_EXPORT_SECTIONS = ['exec', 'growth', 'topItems', 'breakdown', 'area', 'outlets', 'pareto', 'variance', 'itemTrend', 'flip', 'peer', 'trend', 'coverage'] as const;
+  // EXPORT-TRIM (user request): trimmed 13 → 6 sections — the removed keys
+  // ('breakdown'/'area'/'outlets'/'pareto'/'flip'/'peer'/'coverage') are now
+  // 400-rejected by validation.ts before this pipeline ever runs.
+  const ALL_EXPORT_SECTIONS = ['exec', 'growth', 'topItems', 'variance', 'itemTrend', 'trend'] as const;
   const need = new Set<string>(sections ?? ALL_EXPORT_SECTIONS);
-  // Section → data dependencies (verified against docx-builder.ts, not
-  // assumed): exec renders executiveSummary (q-kpis + prev q-exec-summary);
-  // growth renders growthComparison (derived from the SAME execSummary —
-  // growth values + _prevMetrics need the prev-period row); breakdown
-  // renders deviationBreakdown + deviationCost (derived from the same q-kpis
+  // Section → data dependencies (verified against pdf-builder.ts, not
+  // assumed; EXPORT-TRIM: only the 6 kept sections): exec renders
+  // executiveSummary (q-kpis + prev q-exec-summary); growth renders the
+  // SAME execSummary (growth values + _prevMetrics need the prev-period
   // row); topItems renders the 6 top tables (q-top-nominal / q-top-devbom /
-  // q-topcat + prev q-topcat + 4× q-hist-catavg); area → q-area; outlets →
-  // q-outlet-agg (via queryOutletHealthRanking); variance → q-variance;
-  // trend → q-trend; coverage → ONE COUNT(DISTINCT) scan + the metadata the
-  // pipeline already loaded. The header/footer need metadata only (no SQL).
+  // q-topcat + prev q-topcat + 4× q-hist-catavg); variance → q-variance;
+  // itemTrend → q-item-trend-matrix; trend → q-trend. The header/footer
+  // need metadata only (no SQL).
   const needExec = need.has('exec');
   const needGrowth = need.has('growth');
   const needTopItems = need.has('topItems');
-  const needBreakdown = need.has('breakdown');
-  const needArea = need.has('area');
-  const needOutlets = need.has('outlets');
   const needVariance = need.has('variance');
   const needTrend = need.has('trend');
-  const needCoverage = need.has('coverage');
-  // EXPORT-PDF — new section fetch gates:
-  //   pareto    → q-pareto-item + q-pareto-outlet
-  //   itemTrend → q-item-trend-matrix
-  //   flip      → q-flip-rank
-  //   peer      → q-peer-cmp (+ outletRanking when the target must be
-  //               auto-picked — see the peer block after the Promise.all)
-  const needPareto = need.has('pareto');
+  // EXPORT-TRIM: sections 'breakdown' / 'area' / 'outlets' / 'pareto' /
+  // 'flip' / 'peer' / 'coverage' removed — their need* gates + fetches went
+  // with them (see the section map above).
   const needItemTrend = need.has('itemTrend');
-  const needFlip = need.has('flip');
-  const needPeer = need.has('peer');
-  // EXPORT-PDF: the peer section's auto-target fallback reads the SAME
-  // outletRanking rows the 'outlets' section renders — when 'outlets' is off
-  // but 'peer' is on and no outlet filter is active, fetch the ranking
-  // anyway (rides the shared q-outlet-agg cached scan — cheap when warm).
-  const needOutletRanking = needOutlets || (needPeer && !(outletCode && outletCode !== 'all'));
-  // EXPAND-1: 'area' also needs the q-kpis row — its TOTAL row renders the
-  // overall % Dev/BOM + Loss-to-Sales ratios (execSummary derivations), so
-  // the kpis fetch is gated on needArea too. Cheap: shared cached q-* row.
-  const needKpis = needExec || needGrowth || needBreakdown || needArea;
+  // The kpis row feeds executiveSummary (exec + growth sections + the cover
+  // KPI cards). Cheap: shared cached q-* row.
+  const needKpis = needExec || needGrowth;
   const needPrevSummary = needExec || needGrowth;
 
   // PERF-CACHE-06: monthParam + week are `const` (narrowed to `string` by the
@@ -393,16 +370,14 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   const [kpis, prevSummary, topNominal, topDevBom, topCategories, prevTopCategories, trendAggRows,
     // Historical category averages (Rev 2)
     histWasteMap, histSusutMap, histTrialMap, histLossSurplusMap,
-    // EXPAND-1: area analysis + outlet ranking + coverage counts
-    areaAnalysisRows, outletRankingRows, coverageCounts,
-    // EXPORT-PDF: pareto (item + outlet), item-trend matrix, flip ranking
-    // FIX (found in runtime verify): queryItemTrendMatrix returns
-    // { rows: ItemTrendMatrixRow[] } (the whole result object), NOT the bare
-    // array — the old `as ItemTrendMatrixRow[]` cast silenced tsc while the
-    // object landed in ReportData.itemTrendMatrix, whose `.length` was
-    // undefined → the section silently never rendered even with 743 cached
-    // rows. Unwrap .rows here; `[]` stays the off-section placeholder.
-    paretoItemRes, paretoOutletRes, itemTrendMatrixRes, flipRankingRes,
+    // EXPORT-PDF: item-trend matrix. FIX (found in runtime verify):
+    // queryItemTrendMatrix returns { rows: ItemTrendMatrixRow[] } (the whole
+    // result object), NOT the bare array — the old `as ItemTrendMatrixRow[]`
+    // cast silenced tsc while the object landed in ReportData.itemTrendMatrix,
+    // whose `.length` was undefined → the section silently never rendered
+    // even with 743 cached rows. Unwrap .rows here; `[]` stays the
+    // off-section placeholder.
+    itemTrendMatrixRes,
   ] = await Promise.all([
     // PERF (TAHAP-2 / P2-9): kpis + trendAgg + category tops use the shared
     // per-query cache (same queryIds as the analysis pipeline).
@@ -503,48 +478,6 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
       { ...histPeriodsKeyParts(historicalPeriodsList), filters: filterOpts, extra: { metric: 'lossSurplus' } },
       () => queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'lossSurplus'),
     ) : Promise.resolve(new Map<string, { avgQty: number; avgNominal: number }>()),
-    // EXPAND-1 (section 'area'): q-area — SAME queryId + key as the analysis
-    // pipeline's Area tab (run-queries.ts:245-249), so "view dashboard →
-    // export" reads the warm row instead of rescanning the period.
-    needArea ? cachedSharedQuery(
-      'q-area',
-      { month, week, filters: filterOpts },
-      () => queryAreaAnalysis(week, month, filterOpts),
-    ) : Promise.resolve([]),
-    // EXPAND-1 (section 'outlets'): queryOutletHealthRanking rides the shared
-    // q-outlet-agg cached scan (superset also used by /api/recommendations +
-    // the analysis pipeline) — the threshold is passed explicitly so the
-    // cache key converges with those callers (both load the same runtime
-    // settings value). EXPORT-PDF: also gated on needOutletRanking (the
-    // peer section's auto-target fallback reads the same rows).
-    needOutletRanking ? queryOutletHealthRanking(week, month, filterOpts, thresholds.HIGH_LOSS_NOMINAL_THRESHOLD)
-      : Promise.resolve([]),
-    // EXPAND-1 (section 'coverage'): ONE COUNT(DISTINCT) scan for the Lampiran
-    // outlet/item counts — the record count itself reuses the 404-check
-    // COUNT above (currRecordCount, always fetched). buildSqlFilters keeps
-    // the filter semantics identical to the rest of the pipeline (alias 'ir').
-    needCoverage ? withStatementTimeout((tx) => tx.$queryRaw<Array<{ outletCount: number | bigint; itemCount: number | bigint }>>`
-      SELECT CAST(COUNT(DISTINCT ir."outletId") AS INTEGER) as "outletCount",
-             CAST(COUNT(DISTINCT ir."itemId") AS INTEGER) as "itemCount"
-      FROM "InventoryRecord" ir
-      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
-        ${buildSqlFilters(filterOpts)}
-    `) : Promise.resolve(null),
-    // EXPORT-PDF (section 'pareto'): item-level + outlet-level 80/20
-    // concentration. Same underlying queries as the dashboard's Pareto tab
-    // (queryParetoByItem/ByOutlet), but behind dedicated q-* cache ids so
-    // mutations invalidate them (the /api/pareto route caches at route level
-    // with a different key shape — not reusable here).
-    needPareto ? cachedSharedQuery(
-      'q-pareto-item',
-      { month, week, filters: filterOpts },
-      () => queryParetoByItem(week, month, filterOpts),
-    ) : Promise.resolve(null),
-    needPareto ? cachedSharedQuery(
-      'q-pareto-outlet',
-      { month, week, filters: filterOpts },
-      () => queryParetoByOutlet(week, month, filterOpts),
-    ) : Promise.resolve(null),
     // EXPORT-PDF (section 'itemTrend'): per-(month × item) ABS-nominal matrix
     // for the same weekLabel across ALL months. The query's only inputs are
     // weekLabel + filters — month is NOT one of them, so the cache key uses
@@ -555,15 +488,6 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
       'q-item-trend-matrix',
       { month: 'ALL', week, filters: { ...filterOpts, itemName: null }, extra: { weekLabel: week } },
       () => queryItemTrendMatrix(week, { ...filterOpts, itemName: null }),
-    ) : Promise.resolve(null),
-    // EXPORT-PDF (section 'flip'): flip-pattern risk ranking. monthLabel
-    // scopes the pairs to those involving the exported month (same param
-    // semantics as /api/flip-ranking's month filter). limit 15 → the PDF
-    // renders the top 10 + pair details for the top 5.
-    needFlip ? cachedSharedQuery(
-      'q-flip-rank',
-      { month, week, filters: { ...filterOpts, itemName: null }, extra: { weekLabel: week, limit: 15 } },
-      () => queryFlipRanking({ ...filterOpts, itemName: null }, week, month, 15),
     ) : Promise.resolve(null),
   ]);
   const topWasteRows = topCategories.waste;
@@ -613,34 +537,14 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     return { itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, qtyLossSurplus: r.qty, nominalLossSurplus: r.nominal, direction: r.direction, prevQty: prev?.qty ?? null, histAvgQty: hist?.avgQty ?? null };
   });
 
-  // FIX (BUG-3-a P2): kpis/prevSummary are null when the exec/growth/
-  // breakdown sections are all off — kpisToBreakdown + buildExecSummaryFromSql
-  // degrade to their zero-value shapes (never rendered; hasSection gates
-  // rendering with the SAME sections list that gated the fetch).
+  // FIX (BUG-3-a P2): kpis/prevSummary are null when the exec/growth
+  // sections are both off — buildExecSummaryFromSql degrades to its
+  // zero-value shape (never rendered; hasSection gates rendering with the
+  // SAME sections list that gated the fetch).
+  // EXPORT-TRIM: breakdown/breakdownEnriched + growthMetrics REMOVED —
+  // their sections ('breakdown') are gone and pdf-builder reads
+  // executiveSummary directly for the growth section (verified 0 reads).
   const execSummary = buildExecSummaryFromSql(kpis, prevSummary, month, week, prevWeek);
-  const breakdown = kpisToBreakdown(kpis);
-
-  const explainedTotal = (breakdown.waste ?? 0) + (breakdown.susut ?? 0) + (breakdown.trial ?? 0);
-  const breakdownEnriched = { ...breakdown, explained: explainedTotal, explainedPct: breakdown.total > 0 ? explainedTotal / breakdown.total : null, netPct: breakdown.total > 0 ? (breakdown.residual ?? 0) / breakdown.total : null };
-
-  // Growth metrics
-  const nominalDeviasiGrowthMagnitude = computeNominalDeviationGrowth(execSummary.nominalDeviasi.current, execSummary.nominalDeviasi.previous ?? null);
-  // FIX (BUG-3-a P1): multiPeriodComparison REMOVED from growthMetrics —
-  // hunt BUG-3-a verified 0 reads in docx-builder.ts (the Section 2 table
-  // renders only the 7 scalar growth fields; the analysis payload keeps its
-  // own copy for the frontend). It was rebuilt from trendAggRows on every
-  // export for nothing.
-  const growthMetrics = {
-    salesGrowth: execSummary.sales.growth, bomGrowth: execSummary.qtyBom.growth,
-    qtyDeviasiGrowth: execSummary.qtyDeviasi.growth, nominalDeviasiGrowth: nominalDeviasiGrowthMagnitude,
-    // USER-POLISH: waste/susut/trial growth surfaced for the export's Section 2
-    // (same calcGrowth-based MoM values the Section 1 rows already render).
-    qtyWasteGrowth: execSummary.qtyWaste.growth,
-    qtySusutGrowth: execSummary.qtySusut.growth,
-    qtyTrialGrowth: execSummary.qtyTrial.growth,
-    deviationToSalesRatio: execSummary.sales.current > 0 ? execSummary.nominalDeviasi.current / execSummary.sales.current : null,
-    deviationToBomRatio: execSummary.deviationToBom,
-  };
 
   const trend = trendAggRows.map(r => {
     const mk = monthKeyByLabel.get(r.monthLabel) || '0000-00';
@@ -650,122 +554,24 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     return { weekLabel: `${r.weekLabel} ${r.monthLabel?.split(' ')[0].slice(0, 3)}`, sortKey: `${mk}|${String(parseInt(r.weekLabel?.replace(/\D/g, '')) || 0).padStart(2, '0')}`, devBom: r.devBom, sales: r.sales, nominal: r.nominal, lossNominal: r.lossNominal, surplusNominal: r.surplusNominal };
   }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).map(({ sortKey, ...rest }) => rest);
 
-  // EXPAND-1: nominal (cost) composition from the SAME q-kpis row that fed
-  // `breakdown` — zero-value when the kpis sections are all off (placeholder,
-  // never rendered: docx-builder gates on the same sections list).
-  const deviationCost = {
-    wasteCost: kpis?.wasteCost ?? 0,
-    susutCost: kpis?.susutCost ?? 0,
-    trialCost: kpis?.trialCost ?? 0,
-    residualCost: kpis?.residualCost ?? 0,
-    totalCost: kpis?.totalCost ?? 0,
-    lossCount: kpis?.lossCount ?? 0,
-    surplusCount: kpis?.surplusCount ?? 0,
-  };
 
-  // EXPAND-1: Lampiran coverage object — record count reuses the 404-check
-  // COUNT, period/historical counts come from the already-loaded weeks
-  // metadata, generatedAt is captured here (the route-level 5-min docx cache
-  // pins it to the cache-write moment — factual, deterministic per cache row).
-  const coverage = needCoverage ? {
-    recordCount: currRecordCount,
-    outletCount: coverageCounts ? Number(coverageCounts[0]?.outletCount ?? 0) : null,
-    itemCount: coverageCounts ? Number(coverageCounts[0]?.itemCount ?? 0) : null,
-    periodCount: allPeriods.length,
-    historicalPeriodCount: historicalPeriods.length,
-    generatedAt: new Date().toISOString(),
-  } : null;
-
-  // ============================================================
-  //  EXPORT-PDF (section 'peer'): target outlet vs similar-sales peers.
-  //  --------------------------------------------------------
-  //  The target follows the Resto Analysis filter convention (the frontend
-  //  sends focusOutlet || outletCode as the `outlet` param): when an outlet
-  //  filter is active, THAT outlet is the target. When none is active, the
-  //  top-1 Resto Prioritas in the filtered scope is auto-picked so the
-  //  section always has a concrete target (labeled in the report — factual,
-  //  not a generated narrative).
-  //
-  //  Dependent fetch (AFTER the Promise.all): the auto-target reads
-  //  outletRankingRows, and queryPeerComparison itself takes the resolved
-  //  target code — both only exist at this point, so the peer section is the
-  //  one intentionally-serial wave in the pipeline (≤2 extra RTTs, only
-  //  when the section is selected).
-  //  Non-fatal by design: a failure (or a target with no records) leaves
-  //  peerComparison = null → the builder renders a factual "data tidak
-  //  tersedia" note instead of killing the whole export.
-  // ============================================================
-  let peerComparison: ReportData['peerComparison'] = null;
-  if (needPeer) {
-    try {
-      const resolvedOutlet = outletCode && outletCode !== 'all' ? outletCode : null;
-      let targetCode: string | null = resolvedOutlet;
-      let autoTarget = false;
-      if (!targetCode) {
-        const topOutlet = outletRankingRows.length > 0 ? outletRankingRows[0] : null;
-        if (topOutlet) {
-          targetCode = topOutlet.outletCode;
-          autoTarget = true;
-        }
-      }
-      if (targetCode) {
-        const kelompokParam = kelompok && kelompok !== 'all' ? kelompok : null;
-        const peerRes = await cachedSharedQuery(
-          'q-peer-cmp',
-          { month, week, filters: filterOpts, extra: { target: targetCode, limit: 10 } },
-          () => queryPeerComparison(targetCode as string, month, week, 'week', 10, kelompokParam),
-        );
-        const targetRow = peerRes.peers.find((p) => p.isTarget);
-        // Only attach when the target actually has data in this period —
-        // otherwise the peer set degenerates (see the target_fallback CTE in
-        // peer-comparison.ts) and the section would mislead.
-        if (targetRow) {
-          peerComparison = {
-            targetOutlet: { code: targetRow.outletCode, name: targetRow.outletName, area: targetRow.area },
-            autoTarget,
-            targetSales: peerRes.targetSales,
-            peers: peerRes.peers,
-          };
-        }
-      }
-    } catch (e) {
-      logger.error('[export-report] peer comparison failed:', { error: e instanceof Error ? e.message : String(e) });
-      peerComparison = null;
-    }
-  }
-
-  // (PERF H-8 QUICK WIN 1: the outletHealthRanking fetch was removed — its
-  // DOCX section (restoPriority) no longer exists, so the query was pure
-  // dead compute. topItemForCrossOutlet + queryGlobalItemSearch were removed
-  // along with the GlobalItemSearchModal — the cross-outlet section was
-  // already removed from the report per earlier user request.)
-  // EXPAND-1: outletRanking is BACK — but as a section-gated fetch ('outlets'
-  // key, new Resto Prioritas section) riding the shared cached q-outlet-agg
-  // scan instead of the old uncached bespoke query.
+  // (EXPORT-TRIM: the outletRanking fetch + the EXPAND-1 comment blocks that
+  // explained it were removed with the 'outlets' section; the peer section's
+  // auto-target fallback went with the 'peer' section.)
   const data: ReportData = {
     period: { monthLabel: month, weekLabel: week, comparisonWeek: prevWeek, comparisonMonth: prevMonth },
     // FIX (BUG-KELOMPOK-GLOBAL): include kelompok in response filters
     // FIX (BUG-PERF-11): include pic too — was missing, inconsistent with pareto route.
     filters: { area, kelompok, outletCode, itemName, pic },
     executiveSummary: execSummary,
-    growthComparison: growthMetrics,
     topItemsByNominal: topNominal, topItemsByDevBom: topDevBom,
     topItemsByWaste: topWaste, topItemsBySusut: topSusut, topItemsByTrial: topTrial, topItemsByLossSurplus: topLossSurplus,
-    deviationBreakdown: breakdownEnriched,
-    deviationCost,
     varianceAnalysis,
     trend,
-    areaAnalysis: areaAnalysisRows,
-    outletRanking: outletRankingRows,
-    coverage,
-    // EXPORT-PDF — the four new sections (placeholders when off: null →
-    // zero-value shapes below; never rendered — the builder gates on the
-    // SAME sections list that gated these fetches).
-    paretoItem: paretoItemRes ?? { drivers: [], remainderCount: 0, remainderPct: 0, totalAbsNominal: 0, totalCount: 0 },
-    paretoOutlet: paretoOutletRes ?? { drivers: [], remainderCount: 0, remainderPct: 0, totalAbsNominal: 0, totalCount: 0 },
+    // EXPORT-PDF — section 'itemTrend' ([] placeholder when off; never
+    // rendered — the builder gates on the SAME sections list that gated
+    // the fetch).
     itemTrendMatrix: itemTrendMatrixRes?.rows ?? [],
-    flipRanking: flipRankingRes ?? { items: [], totalItemsScanned: 0 },
-    peerComparison,
     durationMs: Date.now() - startedAt,
   };
 

@@ -3,9 +3,11 @@
 //  GET: ?month=&week=&compareWeek=&compareMonth=&area=&outlet=&item=&pic=&kelompok=&sections=
 //  Fetches analysis data server-side, generates a .pdf, returns as download.
 //
-//  EXPORT-PDF: output switched .docx → .pdf (13 sections, full design +
-//  vector charts — services/pdf/*). The old docx-builder.ts was removed;
-//  the pipeline shape (cache → fetch → build → base64) is unchanged.
+//  EXPORT-PDF: output switched .docx → .pdf (full design + vector charts
+//  — services/pdf/*). The old docx-builder.ts was removed; the pipeline
+//  shape (cache → fetch → build → base64) is unchanged.
+//  EXPORT-TRIM (user request): report trimmed 13 → 6 sections — the removed
+//  sections' fetches + builder blocks went with them.
 //
 //  PERF-FASE3-BE04: Migrated from legacy JS rule evaluator (35K-record loop
 //  calling evaluateRules per record) to SQL-pushed evaluators. Matches the
@@ -164,13 +166,13 @@ export async function GET(req: NextRequest) {
         };
         const { data, ctx } = await fetchReportData(params);
 
-        // Stage 2 — assemble the PDF document (cover band + 13 numbered
+        // Stage 2 — assemble the PDF document (cover band + numbered
         // section blocks (filtered by ?sections=) + running header/footer +
         // vector charts). Returns { bufferBase64, fileName } for the cache
         // wrapper — P3-HYG-4: base64 keeps the cache row compact +
         // JSON-serializable (see pdf-builder.ts).
-        // EXPORT-PDF: 9 → 13 sections (pareto / itemTrend / flip / peer
-        // added); output switched .docx → .pdf.
+        // EXPORT-TRIM: 6 sections remain (exec/growth/topItems/variance/
+        // itemTrend/trend).
         return buildPdfReport(data, ctx);
       },
     );

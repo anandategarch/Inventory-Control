@@ -196,10 +196,10 @@ describe('peerComparisonItemsQuerySchema + peerComparisonTrendQuerySchema', () =
 describe('exportReportQuerySchema', () => {
   // FIX (BUG-3-a C6, test left stale by the validation.ts change — verified
   // pre-existing red before BUG-3-FIX-A via git stash): sections are now
-  // validated against the 6 real keys (exec/growth/topItems/breakdown/
-  // variance/trend). The old fixture used 'summary,pareto', which the
-  // strict refine correctly REJECTS now. Fixture updated to the new contract
-  // + a rejection case for the old silent-typo behavior.
+  // validated against the real keys. EXPORT-TRIM: the 6 keys are
+  // exec/growth/topItems/variance/itemTrend/trend. The old fixture used
+  // 'summary,pareto', which the strict refine correctly REJECTS. Fixture
+  // kept + a rejection case for the old silent-typo behavior.
   it('accepts valid params with known section keys', () => {
     const r = exportReportQuerySchema.safeParse({
       month: 'Agustus 2026',
