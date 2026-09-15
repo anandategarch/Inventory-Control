@@ -216,6 +216,16 @@ export interface PeerItemRow {
 //  columns revised — "Top di" shows resto names, ranking = per-item
 //  cross-outlet, +QTY Deviasi (nilai asli, minus → merah), rata-rata
 //  absolute berbasis |kuantiti deviasi|, kolom Arah dihapus.
+//  PEERTOP-R2 (user feedback): headers that referenced the generic
+//  "target" now carry the outlet's own NAME ("Rangking KWGGAL",
+//  "Nominal KWGGAL", "QTY Deviasi (KWGGAL)" — user: "Ganti istilah
+//  target jadi nama resto target itu sendiri ... Misal aku lagi
+//  filter kwggal berarti pakai nama kwggal aja daripada Resto"), the
+//  subhead became "Item di Resto lain (yang setara penjualan KWGGAL)
+//  jika dilihat dari TOP Item nya", and "Top di" shows the TOP-3
+//  resto names by |nominal| (target included when it ranks among
+//  them — user: "TOP DI ini isi top 3 aja resto aja dan jika resto
+//  target termasuk masukan juga").
 // ============================================================
 
 /** 8.3 row — cross-peer union of every resto setara's top items
@@ -229,9 +239,13 @@ export interface PeerTopItemRow {
   satuan: string | null;
   /** Non-target resto setara carrying this item in THEIR top-N. */
   peerTopCount: number;
-  /** PEERTOP-R1: NAMES of those restos ("Top di" column — user:
-   *  "TOP DI ganti jadi Nama Resto nya & TOP Di"). */
-  peerTopNames: string[];
+  /** PEERTOP-R2 (user: "TOP DI ini isi top 3 aja resto aja dan jika
+   *  resto target termasuk masukan juga"): "Top di" display — the
+   *  TOP-3 resto NAMES by SUM(|nominal deviasi|) DESC for this item
+   *  (the item's top-N peer carriers + the target's own row when it
+   *  records the item — the target's name appears exactly when it
+   *  ranks among the top 3). Replaces peerTopNames (all carriers). */
+  topDiNames: string[];
   /** PEERTOP-R1: rata-rata |kuantiti deviasi| across those restos
    *  ("Rata-rata Absolute" — user: "pakai kuantiti deviasi aja
    *  diabsolute"). */
@@ -263,7 +277,9 @@ export interface PeerComparisonData {
   items: PeerItemRow[];
   /** PEERTOP-2-b — 8.3 cross-peer union of top items (undefined = fetch
    *  failed/skipped; [] = no deviation records → section skips).
-   *  PEERTOP-R1: 8.4 per-outlet table removed by user request. */
+   *  PEERTOP-R1: 8.4 per-outlet table removed by user request.
+   *  PEERTOP-R2: rows carry topDiNames (top-3 resto names, target
+   *  included when it ranks among them). */
   topItems?: PeerTopItemRow[];
 }
 

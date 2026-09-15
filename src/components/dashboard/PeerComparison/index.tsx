@@ -205,6 +205,7 @@ export function PeerComparison() {
         error={topItemsError}
         totalPeers={otherPeers.length}
         topN={5}
+        targetName={targetRow?.outletName ?? null}
       />
 
       {/* ============ 7. ITEM-LEVEL COMPARISON (Feature 3) ============ */}
@@ -214,6 +215,7 @@ export function PeerComparison() {
         data={itemsData}
         isLoading={itemsLoading}
         error={itemsError}
+        targetName={targetRow?.outletName ?? null}
       />
 
       {/* ============ 8. TREND CHART (Feature 6) ============ */}

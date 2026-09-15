@@ -401,7 +401,14 @@ export class Rpt {
   subhead(t: string, opts: { color?: string; size?: number; gapAfter?: number } = {}): void {
     const { color = C.ink, size = 9.5, gapAfter = 4 } = opts;
     this.ensure(size + 6 + gapAfter);
-    this.text(t, PAGE.M, this.y, { font: 'Helvetica-Bold', size, color });
+    // FIX (SUBHEAD-FIT, found while verifying PEERTOP-R2): subhead passed NO
+    // width — an over-long subhead (e.g. 8.1's auto-target note) rendered at
+    // full size and SILENTLY overflowed the right page edge (the REFINE-2
+    // phantom-wrap fix removed doc.text's width, so nothing clipped it).
+    // `fit` shrinks the font in 0.1 steps instead of truncating — doc.text
+    // still receives NO width (no phantom-wrap regression); subheads that
+    // already fit are byte-identical (fit is a no-op when narrow enough).
+    this.text(t, PAGE.M, this.y, { font: 'Helvetica-Bold', size, color, width: PAGE.W - PAGE.M * 2, fit: true });
     this.y += size + 4 + gapAfter;
   }
 

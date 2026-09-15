@@ -20,9 +20,14 @@
 //  Result grain:
 //    items[]  — union of every outlet's top-N items, aggregated:
 //               peerTopCount (how many non-target peers carry the
-//               item in THEIR top-N), peer averages on the
-//               ABSOLUTE basis (PEERTOP-R1 user: "rata-rata absolute
-//               pakai kuantiti deviasi aja diabsolute" → |qtyDeviasi|),
+//               item in THEIR top-N), topDiNames (PEERTOP-R2 user:
+//               "TOP DI ini isi top 3 aja resto aja dan jika resto
+//               target termasuk masukan juga" — the TOP-3 outlet
+//               NAMES by SUM(absNominal) DESC among the item's
+//               top-N carriers + the target's own row when it
+//               records the item), peer averages on the ABSOLUTE
+//               basis (PEERTOP-R1 user: "rata-rata absolute pakai
+//               kuantiti deviasi aja diabsolute" → |qtyDeviasi|),
 //               and the target's own row (qtyDeviasi = SIGNED raw
 //               quantity deviation — "nilai asli", minus = kekurangan;
 //               itemRank = the target's rank among ALL band outlets
@@ -70,6 +75,13 @@ export interface PeerTopItemUnionRow {
   peerTopCount: number;
   /** Those peers' outlet codes (FE maps codes → names via perPeer). */
   peerTopCodes: string[];
+  /** PEERTOP-R2 (user: "TOP DI ini isi top 3 aja resto aja dan jika resto
+   *  target termasuk masukan juga"): the "Top di" display — the TOP-3
+   *  outlet NAMES by SUM(absNominal) DESC among the item's top-N peer
+   *  carriers PLUS the target's own row (any rank) when it records the
+   *  item, so the target's name appears exactly when it ranks among the
+   *  top 3. Ties broken by name asc for determinism. */
+  topDiNames: string[];
   /** Rata-rata |kuantiti deviasi| across those peers — PEERTOP-R1 user:
    *  "RATA-RATA ABSOLUTE RESTO SETARA ... pakai kuantiti deviasi aja
    *  diabsolute" (was avg |nominal|). ABSOLUTE basis kept (label
@@ -294,6 +306,9 @@ export async function queryPeerTopItems(
   const perPeerMap = new Map<string, PeerTopItemsPerOutlet>();
   // Target's full item index (any rank) — for union target info.
   const targetRows = new Map<number, NonNullable<PeerTopItemUnionRow['target']>>();
+  // PEERTOP-R2: the target outlet's NAME (from any target row — the
+  // band CTE always names the target; captured for topDiNames).
+  let targetOutletName: string | null = null;
   // Union accumulator over rn <= topN rows.
   const unionMap = new Map<number, {
     itemId: number;
@@ -303,6 +318,9 @@ export async function queryPeerTopItems(
     peerDevBomSum: number;
     peerMaxAbsNominal: number;
     peerTopCodes: string[];
+    // PEERTOP-R2: per-item peer top-N carriers with the fields the
+    // topDiNames computation needs (name + magnitude).
+    peerCarriers: Array<{ name: string; absNominal: number }>;
     targetTop: NonNullable<PeerTopItemUnionRow['target']> | null;
   }>();
 
@@ -319,8 +337,11 @@ export async function queryPeerTopItems(
     const rank = Number(r.rn) || 0;
     const isTarget = Boolean(r.isTarget);
 
-    if (isTarget && !targetRows.has(itemId)) {
-      targetRows.set(itemId, { rank, absNominal, devBom, qtyDeviasi, itemRank, itemOutletCount });
+    if (isTarget) {
+      if (!targetRows.has(itemId)) {
+        targetRows.set(itemId, { rank, absNominal, devBom, qtyDeviasi, itemRank, itemOutletCount });
+      }
+      if (targetOutletName == null) targetOutletName = r.outletName;
     }
 
     if (rank <= topN) {
@@ -344,6 +365,7 @@ export async function queryPeerTopItems(
           peerDevBomSum: 0,
           peerMaxAbsNominal: 0,
           peerTopCodes: [],
+          peerCarriers: [],
           targetTop: null,
         };
         unionMap.set(itemId, u);
@@ -356,6 +378,8 @@ export async function queryPeerTopItems(
         u.peerDevBomSum += devBom;
         u.peerMaxAbsNominal = Math.max(u.peerMaxAbsNominal, absNominal);
         u.peerTopCodes.push(r.outletCode);
+        // PEERTOP-R2: carrier kept with name + magnitude for topDiNames.
+        u.peerCarriers.push({ name: r.outletName, absNominal });
       }
     }
   }
@@ -364,18 +388,32 @@ export async function queryPeerTopItems(
     const n = u.peerTopCodes.length;
     // ABSOLUTE-basis averages ("Rata-Rata Absolute" label downstream) —
     // PEERTOP-R1: |kuantiti deviasi| basis (user request).
+    // PEERTOP-R2: "Top di" display — top-3 outlet NAMES by |nominal|
+    // DESC. Candidates = the item's top-N peer carriers + the target's
+    // own row for the item (ANY rank — targetRows holds the full index,
+    // so the target still competes even when the item sits outside its
+    // own top-N). The target's name appears exactly when it ranks among
+    // the top 3 (user: "jika resto target termasuk masukan juga"); ties
+    // broken by name asc so the output is deterministic.
+    const targetInfo = u.targetTop ?? targetRows.get(u.itemId) ?? null;
+    const candidates = [...u.peerCarriers];
+    if (targetInfo && targetOutletName != null) {
+      candidates.push({ name: targetOutletName, absNominal: targetInfo.absNominal });
+    }
+    candidates.sort((a, b) => (b.absNominal - a.absNominal) || a.name.localeCompare(b.name));
     return {
       itemId: u.itemId,
       itemName: u.itemName,
       satuan: u.satuan,
       peerTopCount: n,
       peerTopCodes: u.peerTopCodes,
+      topDiNames: candidates.slice(0, 3).map((c) => c.name),
       peerAvgAbsQty: n > 0 ? u.peerAbsQtySum / n : 0,
       peerAvgDevBom: n > 0 ? u.peerDevBomSum / n : 0,
       peerMaxAbsNominal: u.peerMaxAbsNominal,
       // Prefer the target's top-N row (same object as targetRows anyway);
       // fall back to the full index (rank may exceed topN), else null.
-      target: u.targetTop ?? targetRows.get(u.itemId) ?? null,
+      target: targetInfo,
     };
   });
 

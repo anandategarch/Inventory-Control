@@ -167,7 +167,14 @@ export async function GET(req: NextRequest) {
         // PEERTOP/PEERTOP-R1 landed — the stale SWR row under the old key
         // kept serving the PRE-PEERTOP PDF after the deploy (user: "kok di
         // laporan PDF tidak ada perubahan?"). rv 7 → 8, both sides.
-        rv: '8',
+        // PEERTOP-R2: 8.3 re-titled "Item di Resto lain (yang setara
+        // penjualan <nama resto>) jika dilihat dari TOP Item nya"; every
+        // header referencing the generic "target" now carries the outlet's
+        // own NAME ("Rangking KWGGAL" / "Nominal KWGGAL" / "QTY Deviasi
+        // (KWGGAL)" — user: "Ganti istilah target jadi nama resto target itu
+        // sendiri"); "Top di" shows the TOP-3 resto names by |nominal|
+        // (target included when it ranks among them). rv 8 → 9, both sides.
+        rv: '9',
         // FIX (STALE-PDF, systematic hardening — same incident as the missing
         // PEERTOP rv bump): the SWR store serves EXPIRED rows unbounded (see
         // swr.ts 3b), so a forgotten `rv` bump means a pre-deploy PDF can be

@@ -80,6 +80,12 @@ export interface PeerTopItemsResponse {
     peerTopCount: number;
     /** Those peers' outlet codes (map → names via perPeer below). */
     peerTopCodes: string[];
+    /** PEERTOP-R2 (user: "TOP DI ini isi top 3 aja resto aja dan jika
+     *  resto target termasuk masukan juga"): "Top di" display — the
+     *  TOP-3 resto NAMES by |nominal deviasi| DESC for this item (peer
+     *  top-N carriers + the target's own row when it records the item;
+     *  the target's name appears exactly when it ranks among the top 3). */
+    topDiNames: string[];
     /** Rata-rata |kuantiti deviasi| across those peers — PEERTOP-R1:
      *  "Rata-Rata Absolute" kini berbasis |qty deviasi| (user request),
      *  bukan |nominal|. */

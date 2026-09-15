@@ -3,6 +3,10 @@
 // ============================================================
 //  Feature 3: Item-Level Peer Comparison
 //  Top items at target outlet vs peer avg & peer best.
+//  PEERTOP-R2 (user: "Ganti istilah target jadi nama resto target itu
+//  sendiri ... Misal aku lagi filter kwggal berarti pakai nama kwggal
+//  aja daripada Resto"): the "Target" column header (and the subtitle)
+//  carries the outlet's own NAME instead of the generic word.
 // ============================================================
 
 import { memo } from 'react';
@@ -17,11 +21,18 @@ export const ItemLevelComparison = memo(function ItemLevelComparison({
   data,
   isLoading,
   error,
+  targetName,
 }: {
   data: ItemComparisonResponse | undefined;
   isLoading: boolean;
   error: Error | null;
+  /** PEERTOP-R2: the target outlet's NAME (e.g. "KWGGAL" — from the
+   *  main query's target row) — replaces the generic "Target" header;
+   *  falls back to "Target" while the main query is still loading. */
+  targetName?: string | null;
 }) {
+  // PEERTOP-R2: headers/subtitle reference the outlet's own name.
+  const tn = targetName || 'Target';
   return (
     <Card className="overflow-visible shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-2">
@@ -32,7 +43,7 @@ export const ItemLevelComparison = memo(function ItemLevelComparison({
           Item-Level Comparison
         </CardTitle>
         <p className="text-[11px] text-muted-foreground ml-9">
-          Top 5 item di target outlet, dibandingkan dengan peer avg &amp; peer best.
+          Top 5 item di {tn}, dibandingkan dengan peer avg &amp; peer best.
         </p>
       </CardHeader>
       <CardContent>
@@ -57,7 +68,7 @@ export const ItemLevelComparison = memo(function ItemLevelComparison({
         ) : (
           <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
             {data.items.map((item) => (
-              <ItemComparisonBlock key={item.itemId} item={item} />
+              <ItemComparisonBlock key={item.itemId} item={item} targetName={tn} />
             ))}
           </div>
         )}
@@ -68,8 +79,12 @@ export const ItemLevelComparison = memo(function ItemLevelComparison({
 
 const ItemComparisonBlock = memo(function ItemComparisonBlock({
   item,
+  targetName,
 }: {
   item: ItemComparisonResponse['items'][number];
+  /** PEERTOP-R2: the target outlet's NAME — replaces the generic
+   *  "Target" column header (user: "pakai nama kwggal aja"). */
+  targetName: string;
 }) {
   const fmtPctRatio = (v: number) => `${(v * 100).toFixed(1).replace('.', ',')}%`;
   const rows = [
@@ -91,7 +106,7 @@ const ItemComparisonBlock = memo(function ItemComparisonBlock({
         <TableHeader>
           <TableRow className="border-b hover:bg-transparent">
             <TableHead className="text-xs font-semibold uppercase tracking-wider h-7">Metrik</TableHead>
-            <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-right">Target</TableHead>
+            <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-right">{targetName}</TableHead>
             <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-right">Rata-rata Peer</TableHead>
             <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-right">Peer Terbaik</TableHead>
             <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-right">Gap</TableHead>

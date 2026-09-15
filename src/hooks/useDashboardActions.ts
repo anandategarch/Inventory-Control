@@ -150,7 +150,11 @@ export function useDashboardActions({
       // 8.4 removed. This bump was MISSING when PEERTOP landed — same URL
       // hit the CDN's old cached response AND the server's stale SWR row
       // (user: "kok di laporan PDF tidak ada perubahan?").
-      params.set('rv', '8');
+      // PEERTOP-R2: rv 9 — 8.3 re-titled "Item di Resto lain (yang setara
+      // penjualan <nama resto>) jika dilihat dari TOP Item nya"; headers
+      // pakai NAMA resto (Rangking/Nominal/QTY Deviasi (KWGGAL), 8.2 juga);
+      // "Top di" = top-3 resto by |nominal|, target ikut bila termasuk.
+      params.set('rv', '9');
 
       // FIX (BUG-3-b A3): AbortController + 120s timeout — a hung export no
       // longer spins forever; the fetch is aborted and the user gets a

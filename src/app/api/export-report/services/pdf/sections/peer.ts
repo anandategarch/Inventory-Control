@@ -10,18 +10,23 @@
 //  (peer band = sales within ±10% of the target — same-period mode).
 //  8.2 = the per-item breakdown for the target's top items: kuantitas +
 //        % to BOM, vs the peer average.
-//  8.3 (PEERTOP, revised PEERTOP-R1) = the cross-peer union of top items
-//        — which items are a SHARED top item at many resto setara
-//        (bersama) vs only at the target (khusus), plus target blind
-//        spots (top at peers, absent at the target → rank cell "—").
-//        PEERTOP-R1 columns: "Top di" = NAMA resto setara (user: "TOP DI
-//        ganti jadi Nama Resto nya & TOP Di"); "Ranking Resto di antara
-//        Resto yang Selevel per Item" = #peringkat/total (user wording
-//        verbatim); "QTY Deviasi" = kuantiti deviasi NILAI ASLI (signed;
-//        minus = kekurangan → merah — user: "ARAH gak perlu kolom ini
-//        hapus aja. langsung aja jika nilai minus merah"); "Rata-rata
-//        Absolute Resto Setara" = rata-rata |kuantiti deviasi| (user:
-//        "pakai kuantiti deviasi aja diabsolute").
+//  8.3 (PEERTOP, revised PEERTOP-R1 + PEERTOP-R2) = the cross-peer union
+//        of top items — which items are a SHARED top item at many resto
+//        setara (bersama) vs only at the target (khusus), plus target
+//        blind spots (top at peers, absent at the target → rank cell
+//        "—").
+//        PEERTOP-R2 (user): "Ganti istilah target jadi nama resto target
+//        itu sendiri" — every header that referenced the generic "target"
+//        now carries the outlet's own NAME ("Rangking KWGGAL", "Nominal
+//        KWGGAL", "QTY Deviasi (KWGGAL)", 8.2's "QTY Deviasi (KWGGAL)"
+//        / "% Deviasi To BOM (KWGGAL)" — user example: "QTY DEVIASI
+//        (SBMOTI) jadi ada nama resto nya langsung"); the subhead became
+//        the user's wording "Item di Resto lain (yang setara penjualan
+//        KWGGAL) jika dilihat dari TOP Item nya"; and "Top di" shows
+//        the TOP-3 resto names by |nominal deviasi| of the item (user:
+//        "TOP DI ini isi top 3 aja resto aja dan jika resto target
+//        termasuk masukan juga") — the target's name appears exactly
+//        when it ranks among the top 3.
 //  8.4 was REMOVED in PEERTOP-R1 (user: "Hapus 8.4 Top Item per Resto
 //        Setara (masing-masing sampai 5 item) di laporan PDF") — the FE
 //        Peer Table expand-row keeps the per-outlet view.
@@ -41,10 +46,20 @@ export function drawPeerSection(env: SectionEnv): void {
     return;
   }
   const targetLabel = `${pc.targetOutlet.name} (${pc.targetOutlet.code})`;
+  // PEERTOP-R2 (user: "Ganti istilah target jadi nama resto target itu
+  // sendiri ... Misal aku lagi filter kwggal berarti pakai nama kwggal
+  // aja daripada Resto"): every 8.x header/subhead that referenced the
+  // generic "target" carries the outlet's own NAME instead — short form
+  // (no code) so the headers stay narrow.
+  const tn = pc.targetOutlet.name;
   // 8.1 — peers' nominal deviations, biggest first; the target row is
   // bold (named in the subhead — factual, no legend needed).
+  // PEERTOP-R2: the subhead uses the outlet's NAME only (no code — the
+  // 8.1 table rows carry "KWGGAL (1042.KWGGAL)" anyway) + a compact
+  // auto-target note, so it renders at full size (the old code-label +
+  // note combo overflowed the page width — see SUBHEAD-FIT).
   const sortedPeers = [...pc.peers].sort((a, b) => Math.abs(b.nominalDeviasi) - Math.abs(a.nominalDeviasi));
-  rpt.subhead(`8.1 Nominal Deviasi per Resto (penjualan kurang lebih sama dengan ${targetLabel}${pc.autoTarget ? ' \u2014 target otomatis: resto deviasi terbesar' : ''})`, { size: 8.5 });
+  rpt.subhead(`8.1 Nominal Deviasi per Resto (penjualan kurang lebih sama dengan ${tn}${pc.autoTarget ? ' \u2014 terpilih otomatis (deviasi terbesar)' : ''})`, { size: 8.5 });
   rpt.table({
     cols: [
       { header: '#', align: 'center' },
@@ -82,8 +97,11 @@ export function drawPeerSection(env: SectionEnv): void {
         // REFINE-2 ("section yang belum punya satuan tambahain"): unit of
         // measure per item — the QTY columns are satuan-denominated.
         { header: 'Satuan' },
-        { header: 'QTY Deviasi', align: 'right' },
-        { header: '% Deviasi To BOM', align: 'right' },
+        // PEERTOP-R2 (user: "QTY DEVIASI (SBMOTI) jadi ada nama resto nya
+        // langsung"): target-owned columns carry the outlet's NAME so
+        // whose numbers they are is explicit.
+        { header: `QTY Deviasi (${tn})`, align: 'right' },
+        { header: `% Deviasi To BOM (${tn})`, align: 'right' },
         { header: 'Rata-rata QTY Resto Setara', align: 'right' },
         { header: 'Rata-rata % Dev/BOM Resto Setara', align: 'right' },
       ],
@@ -99,47 +117,48 @@ export function drawPeerSection(env: SectionEnv): void {
   }
 
   // 8.3 — PEERTOP (user: "tambahkan top item tiap resto setara ke section
-  // peer DAN PDF"), revised PEERTOP-R1 per user feedback: the cross-peer
+  // peer DAN PDF"), revised PEERTOP-R1 per user feedback, re-titled
+  // PEERTOP-R2 (user: "8.3 Item di Resto lain (yang setara penjualan Resto
+  // Target) jika dilihat dari TOP Item nya" — with "Resto Target" itself
+  // replaced by the outlet's name per the same feedback). The cross-peer
   // union — items that are top at MANY resto setara (bersama) vs top only
   // at the target (khusus). Rows are server-sorted (peerTopCount desc →
   // target absNominal desc → …), so they render in arrival order; the
   // target is a COLUMN here, not a row (no rowBold). Same guard style as
-  // 8.2. Column notes:
-  //   - "Top di": NAMA resto setara (was "m dari n resto setara") — the
-  //     cell text WRAPS (left-aligned col → pdf-primitives isWrap).
-  //   - "Ranking … per Item": #peringkat/total — the long header wraps
-  //     (wrap: true beats the right/center non-wrap default).
-  //   - "QTY Deviasi": signed "nilai asli" — negative → C.danger (the
-  //     Arah column was REMOVED; direction rides on the sign).
+  // 8.2. Column notes (PEERTOP-R2):
+  //   - "Top di": the TOP-3 resto NAMES by |nominal deviasi| of the item
+  //     (target included when it ranks among them — user: "TOP DI ini isi
+  //     top 3 aja resto aja dan jika resto target termasuk masukan
+  //     juga"); the cell text WRAPS (left-aligned col → pdf-primitives
+  //     isWrap); '—' = top nowhere in the band (defensive — cannot happen
+  //     with union rows).
+  //   - "Rangking <nama>": #peringkat/total — the user's replacement for
+  //     the old long header (user: "RANKING RESTO DI ANTARA RESTO YANG
+  //     SELEVEL PER ITEM ganti jadi Rangking (Nama Resto Langsung)").
+  //   - "QTY Deviasi (<nama>)": signed "nilai asli" — negative → C.danger
+  //     (the Arah column was REMOVED in R1; direction rides on the sign).
   //   - "Rata-rata Absolute …": |kuantiti deviasi| basis — wrap: true so
   //     the (QTY Deviasi) suffix never blows the column width.
   if (pc.topItems && pc.topItems.length > 0) {
     const topItems = pc.topItems;
-    rpt.subhead(`8.3 Top Item Resto Setara \u2014 bersama vs khusus (top item = jumlah |nominal deviasi| per item; resto setara = penjualan \u00b110%)`, { size: 8.5 });
+    rpt.subhead(`8.3 Item di Resto lain (yang setara penjualan ${tn}) jika dilihat dari TOP Item nya`, { size: 8.5 });
     rpt.table({
       cols: [
         { header: '#', align: 'center' },
         { header: 'Item' },
         { header: 'Top di' },
-        // PEERTOP-R1 user label, verbatim: "Rangking Resto di antara Resto
-        // yang Selevel per Item" (cells "#3/9" = peringkat di antara resto
-        // selevel yang mencatat deviasi item ini, urut |nominal| terbesar).
-        { header: 'Ranking Resto di antara Resto yang Selevel per Item', align: 'center', wrap: true },
-        { header: 'Nominal Target', align: 'right' },
-        // PEERTOP-R1: kuantiti deviasi NILAI ASLI (signed) — replaces the
-        // Arah column; minus = kekurangan → merah (cellColor below).
-        { header: 'QTY Deviasi', align: 'right' },
-        // REFINE-4/master context: the average is on the ABSOLUTE basis —
-        // the header must say "Rata-rata Absolute" (PEERTOP-R1: the basis
-        // is |kuantiti deviasi| per user request — spelled out inline).
+        { header: `Rangking ${tn}`, align: 'center' },
+        { header: `Nominal ${tn}`, align: 'right' },
+        { header: `QTY Deviasi (${tn})`, align: 'right' },
         { header: 'Rata-rata Absolute Resto Setara (QTY Deviasi)', align: 'right', wrap: true },
       ],
       rows: topItems.map((it, i) => [
         String(i + 1),
         it.itemName,
-        // PEERTOP-R1: NAMA resto setara where the item is top (count kept
-        // as the prefix — "bersama" degree; '—' = khusus resto target).
-        it.peerTopCount > 0 ? `${it.peerTopCount} resto: ${it.peerTopNames.join(', ')}` : '\u2014',
+        // PEERTOP-R2: top-3 resto names by |nominal| of THIS item — the
+        // target's own name appears when it ranks among the top 3 (the
+        // query pre-computes the list; ties broken deterministically).
+        it.topDiNames.length > 0 ? it.topDiNames.join(', ') : '\u2014',
         it.target == null ? '\u2014' : `#${it.target.itemRank}/${it.target.itemOutletCount}`,
         fmtIDR(it.target?.absNominal),
         it.target?.qtyDeviasi == null ? '\u2014' : fmtNum(it.target.qtyDeviasi),
@@ -148,7 +167,7 @@ export function drawPeerSection(env: SectionEnv): void {
       // PEERTOP-R1 (user: "ARAH gak perlu kolom ini hapus aja. langsung aja
       // jika nilai minus merah"): negative QTY Deviasi (kekurangan side)
       // prints red — same convention as 8.1's rowText('-') rule. The
-      // Nominal Target column stays neutral (ABSOLUTE magnitude).
+      // Nominal column stays neutral (ABSOLUTE magnitude).
       cellColor: (_row, ri, ci) => {
         if (ci !== 5) return undefined;
         const q = topItems[ri]?.target?.qtyDeviasi;

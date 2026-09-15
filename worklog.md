@@ -40645,3 +40645,25 @@ Stage Summary:
 - Jawaban user: PDF lama BUKAN karena perubahan gagal — kode PEERTOP-R1 terbukti merender benar (verifikasi runtime mock); yang terjadi adalah 3 lapis cache (deploy timing + CDN URL sama + SWR DB tanpa batas usia) menyajikan byte PDF lama.
 - Setelah deploy fix ini: export baru → URL rv=8 (CDN miss) + key deploy-SHA (DB miss) → PDF di-generate ulang dgn kode baru, PASTI menampilkan 8.3 versi revisi tanpa 8.4. Tab dashboard yang masih terbuka dari sebelum deploy tetap aman dalam ≤15 menit (CDN must-revalidate → origin fresh via deploy-SHA key).
 - Ke depan: lapisan DB kini self-healing per deploy — insiden kelas ini (REFINE-3 dulu, PEERTOP sekarang) tidak bisa terulang.
+
+---
+Task ID: PEERTOP-R2
+Agent: Main (Z.ai Code)
+Task: User feedback atas PEERTOP-R1 (PDF 8.3 + surface selevel): (1) judul 8.3 → "Item di Resto lain (yang setara penjualan Resto Target) jika dilihat dari TOP Item nya"; (2) SEMUA istilah "target" di header diganti NAMA resto target itu sendiri ("Misal aku lagi filter kwggal berarti pakai nama kwggal aja daripada Resto"); (3) "RANKING RESTO DI ANTARA RESTO YANG SELEVEL PER ITEM" → "Rangking (Nama Resto Langsung)"; (4) "TOP DI" isi TOP-3 resto saja, resto target dimasukkan juga jika termasuk; (5) contoh: "QTY DEVIASI (SBMOTI)" — kolom milik target diberi suffix nama resto.
+
+Work Log:
+- QUERY peer-top-items.ts: union row +topDiNames (TOP-3 nama outlet urut SUM(|nominal|) DESC; kandidat = peer top-N carriers + baris target sendiri ANY-rank via targetRows → nama target muncul TEPAT saat masuk top-3; tie-break nama asc; menggantikan pemakaian peerTopNames di render — peerTopCodes tetap di kontrak). Pure JS grouping — SQL tidak berubah.
+- VERIFIKASI QUERY (harness .tmp-render + bun mock.module utk stub withStatementTimeout → rows palsu): 5/5 asersi PASS — target masuk saat peringkat-3 (SMRAHM,MLGJAK,KWGGAL), target EXCLUDE saat peringkat-4, blind-spot top-3 by magnitude, khusus=[target], tie 100vs100 → JAPSEN sebelum KWGGAL (nama asc); sort union tak berubah.
+- PDF sections/peer.ts: 8.3 subhead = kata user verbatim dgn nama ("8.3 Item di Resto lain (yang setara penjualan KWGGAL) jika dilihat dari TOP Item nya"); header → "Rangking KWGGAL" / "Nominal KWGGAL" / "QTY Deviasi (KWGGAL)"; Top di cell = topDiNames.join(', '); 8.2 header → "QTY Deviasi (KWGGAL)" + "% Deviasi To BOM (KWGGAL)"; 8.1 subhead → nama saja (tanpa kode) + note ringkas "— terpilih otomatis (deviasi terbesar)".
+- BUG NYATA DITEMUKAN & DIPERBAIKI (SUBHEAD-FIT): Rpt.subhead TIDAK meneruskan width → subhead kepanjangan (8.1 + note auto-target, sejak REFINE-1) meluber melewati tepi kanan halaman SENYAP (pdftotext memotong di "resto devia"); FIX: subhead kini width=PAGE.W-2M + fit (shrink 0.1 step, tanpa truncation; doc.text tetap tanpa width → tidak menghidupkan kembali phantom-wrap REFINE-2); diverifikasi pixel-scan: 0 ink melewati tepi konten (dulu meluber).
+- FE: top-items-card.tsx header → "Rangking {tn}" / "Nominal ({tn})" / "QTY Deviasi ({tn})" (prop targetName dari targetRow via index.tsx; fallback "Resto Kamu" saat main query loading); Top di = topDiNames (tooltip = daftar 3 nama); nameByCode map dihapus (dead); InfoTooltip+footnote pakai nama. items-table.tsx kolom "Target" → {tn} + subtitle "Top 5 item di {tn}" (prop targetName, fallback "Target").
+- KONTRAK & CACHE: route /api/peer-comparison/top-items +sv:2 di cache key (shape berubah — sekaligus flush row stale pre-R1 yang tak ter-versioning, kelas insiden STALE-PDF); data-fetcher q-peer-topitems sv 2→3 + mapping topDiNames langsung (nameByCode dihapus); rv 8→9 kedua sisi (route.ts + useDashboardActions) — lapisan DB sudah auto-fork per deploy via deploy-SHA (STALE-PDF).
+- MASTER_CONTEXT.md: entri route top-items +PEERTOP-R2 (topDiNames, header nama resto, sv:2).
+- GERBANG: tsc 0 error · eslint 0 error/377 warning (= baseline; sempat 384 karena file harness .tmp-render ikut ter-lint — dihapus → 377, diff bersih) · vitest 512/512.
+- VERIFIKASI RENDER (mock payload PEERTOP-R2, sections=['peer']): pdftotext — subhead 8.3 kata user UTUH; "RANGKING KWGGAL"/"NOMINAL KWGGAL"/"QTY DEVIASI (KWGGAL)" (8.2+8.3); "QTY DEVIASI TO BOM (KWGGAL)"; Top di "SMRAHM, MLGJAK, KWGGAL" (target masuk) / "MLGJAK, KWGGAL2, KWGGAL" / "KWGGAL" (khusus) / "SMRAHM, MLGJAK, JAPSEN" (blind spot); NOL hit "Nominal Target|Ranking Resto di antara|Top Item Resto Setara|target otomatis|bersama vs khusus|resto: "; 8.1 subhead UTUH dgn closing paren; pixel-scan 429 danger-red px (minus merah) + 0 overflow.
+- PAT tersimpan (sesi sebelumnya) → commit + push origin main.
+
+Stage Summary:
+- Semua header yang merefer target kini memakai NAMA outlet (PDF 8.1/8.2/8.3 + FE card + items-table); "Top di" = top-3 resto by |nominal| dgn nama target ikut bila masuk; judul 8.3 = kata user verbatim.
+- Bug pre-existing SUBHEAD-FIT (subhead meluber halaman) diperbaiki di akar + dipersingkat teks 8.1.
+- Cache versioning lengkap semua lapis (sv route+fetcher, rv CDN, deploy-SHA DB) — tidak ada kemungkinan PDF stale.

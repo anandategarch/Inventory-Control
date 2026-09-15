@@ -122,27 +122,29 @@ export async function fetchPeerComparison(ctx: FetcherContext): Promise<PeerComp
         // qtyDeviasi/itemRank/itemOutletCount, loses direction;
         // peerAvgAbsNominal → peerAvgAbsQty; +peerTopNames) so a stale
         // cached entry can never be served under the new contract.
+        // PEERTOP-R2: sv 2 → 3 — row shape changed again (peerTopNames
+        // → topDiNames: "Top di" kini TOP-3 nama resto by |nominal|,
+        // target ikut bila masuk — user: "TOP DI ini isi top 3 aja
+        // resto aja dan jika resto target termasuk masukan juga").
         const topRes = await cachedSharedQuery(
           'q-peer-topitems',
-          { month, week, filters: filterOpts, extra: { target: targetCode, topN: 5, limit: 10, sv: 2 } },
+          { month, week, filters: filterOpts, extra: { target: targetCode, topN: 5, limit: 10, sv: 3 } },
           () => queryPeerTopItems(targetCode as string, month, week, 'week', 5, 10, kelompokParam),
         );
-        // PEERTOP-R1: resolve outlet CODES → NAMES for the "Top di"
-        // column (user: "TOP DI ganti jadi Nama Resto nya & TOP Di").
-        // A peer carrying an item in its top-N by definition has a
-        // perPeer entry, so the lookup always hits (code = fallback).
-        const nameByCode = new Map(topRes.perPeer.map((p) => [p.outletCode, p.outletName]));
         // 8.3 — cross-peer union, capped at 10 rows; rendered in the
         // server's sort order (rowBold not needed — the target is a
         // COLUMN here, not a row). Mapped WITHOUT sales values (SALES
         // SECRECY — the query rows carry none anyway).
-        // PEERTOP-R1: 8.4 per-outlet table REMOVED by user request —
-        // perPeer is now used ONLY for the code→name map above.
+        // PEERTOP-R2: topDiNames arrives PRE-COMPUTED by the query (the
+        // TOP-3 resto names by |nominal| for the item — target included
+        // when it ranks among them), so no code→name map is needed here
+        // anymore; PEERTOP-R1's 8.4 removal already left perPeer unused
+        // by the export pipeline.
         const topItems: PeerTopItemRow[] = topRes.items.slice(0, 10).map((u) => ({
           itemName: u.itemName,
           satuan: u.satuan ?? null,
           peerTopCount: u.peerTopCount,
-          peerTopNames: u.peerTopCodes.map((c) => nameByCode.get(c) ?? c),
+          topDiNames: u.topDiNames,
           peerAvgAbsQty: u.peerAvgAbsQty,
           target: u.target,
         }));

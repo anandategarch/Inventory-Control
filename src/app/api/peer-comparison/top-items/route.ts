@@ -73,13 +73,19 @@ export async function GET(req: NextRequest) {
     // Cache key covers every response-affecting param: the standard filter
     // set (month/week/outletCode/kelompok) + mode/topN/limit as extras
     // (each changes the result grain).
+    // PEERTOP-R2: +sv — the union row shape changed (peerTopNames →
+    // topDiNames; "Top di" now shows the TOP-3 resto names by |nominal|,
+    // target included). NOTE: sv was also missing for PEERTOP-R1's shape
+    // change — sv:2 flushes any stale pre-R2/pre-R1 row the unbounded SWR
+    // store would otherwise keep serving under the unchanged key (same
+    // stale-PDF incident class as export-report's rv).
     const cacheKey = buildCacheKey({
       route: 'peer-comparison-top-items',
       month,
       week,
       outletCode,
       kelompok: kelompokParam,
-      extra: { mode, topN, limit },
+      extra: { mode, topN, limit, sv: 2 },
     });
 
     type PeerTopItemsData = Awaited<ReturnType<typeof queryPeerTopItems>>;
