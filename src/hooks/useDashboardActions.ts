@@ -142,7 +142,9 @@ export function useDashboardActions({
       // REFINE-4: rv 6 — Rata-rata Absolute + magnitude comparisons, 6.2
       // flip detection, section 5 signed cells + abs heat, section 9
       // per-pair grouping, 8.2 resto setara terms, plain-percent Selisih.
-      params.set('rv', '6');
+      // HEAT-SIGN: rv 7 — section 5 heat cells encode the SIGN (red ramp =
+      // loss side, green ramp = surplus side; magnitude picks the step).
+      params.set('rv', '7');
 
       // FIX (BUG-3-b A3): AbortController + 120s timeout — a hung export no
       // longer spins forever; the fetch is aborted and the user gets a

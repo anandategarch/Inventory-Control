@@ -283,29 +283,40 @@ function periodFull(monthLabel: string | null | undefined, weekLabel: string | n
   return `${titleCase(monthLabel)} ${prettyWeek(weekLabel)}`;
 }
 
-/** Heat color for the item-trend matrix cells — DESAIN-SIMPEL: light-red
- *  intensity scale (deviation magnitude = further into the red; the only
- *  chromatic family besides the change green).
+/** Heat color for the item-trend matrix cells — DESAIN-SIMPEL: light
+ *  intensity scale (deviation magnitude = further into the color; the only
+ *  chromatic families besides the change green/red).
  *  REFINE-1 ("warna heat map buat lebih akurat lagi"): the scale max is
  *  now the 90th PERCENTILE of the non-zero cells (computed by the caller),
  *  not the global max — one outlier row no longer compresses every other
  *  cell into the palest bucket — and the ramp has 6 steps instead of 5, so
  *  adjacent magnitudes are easier to tell apart. Values above the p90
- *  saturate at the deepest red.
+ *  saturate at the deepest step.
  *  REFINE-3 (user: "Trend Item Multi-Periode warna nya konflik dengan
  *  warna text"): the top step deepened #EF4444 → #DC2626 so the DEEPEST
  *  cells can carry WHITE text at 4.8:1 contrast (dark ink on #EF4444 was
  *  only 2.7:1 with the old body ink). Every step now pairs with its text
- *  color at ≥ 4.5:1 — see heatText. */
+ *  color at ≥ 4.5:1 — see heatText.
+ *  HEAT-SIGN (user: "Warna minus di heat map aku pengen diberi warna beda,
+ *  jangan sampai konflik"): TWO-HUE ramp — the CELL VALUE's sign picks the
+ *  family, |value|/scale picks the step. Negative (net loss side) keeps
+ *  the red ramp; positive (net surplus side) goes GREEN — mirroring the
+ *  report-wide convention (Loss = red, Surplus = green: section 7's line
+ *  chart, 6.2, 9). Before this, a −7.500 and a +7.500 cell rendered the
+ *  SAME red at the same intensity — the sign was only in the digits. The
+ *  green ramp mirrors the red step-for-step (Tailwind green-50…400, then
+ *  green-700 #15803D as the saturating top: white ink lands at 5.0:1,
+ *  vs #DC2626's 4.8:1 — heatText's luminance rule handles both). */
 function heatColor(v: number, scale: number): string | undefined {
-  if (scale <= 0 || v <= 0) return undefined;
-  const r = Math.min(1, v / scale);
-  if (r < 1 / 6) return '#FEF2F2';
-  if (r < 2 / 6) return '#FEE2E2';
-  if (r < 3 / 6) return '#FECACA';
-  if (r < 4 / 6) return '#FCA5A5';
-  if (r < 5 / 6) return '#F87171';
-  return '#DC2626';
+  if (scale <= 0 || v === 0) return undefined;
+  const neg = v < 0;
+  const r = Math.min(1, Math.abs(v) / scale);
+  if (r < 1 / 6) return neg ? '#FEF2F2' : '#F0FDF4';
+  if (r < 2 / 6) return neg ? '#FEE2E2' : '#DCFCE7';
+  if (r < 3 / 6) return neg ? '#FECACA' : '#BBF7D0';
+  if (r < 4 / 6) return neg ? '#FCA5A5' : '#86EFAC';
+  if (r < 5 / 6) return neg ? '#F87171' : '#4ADE80';
+  return neg ? '#DC2626' : '#15803D';
 }
 
 /** REFINE-3 (user: "warna nya konflik dengan warna text, perbaiki dan cari
@@ -910,7 +921,12 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       // columns start at ci 2.
       if (ci <= 1 || ci > shownMonths.length + 1) return undefined;
       const ml = shownMonths[ci - 2];
-      const val = byItem.get(row[0])?.get(ml)?.abs ?? 0;
+      // HEAT-SIGN: the fill takes the SIGNED value — heatColor picks the
+      // family (red = loss side / green = surplus side) from the sign, and
+      // the step from |value| / heatScale (heatScale itself stays the p90
+      // of the ABSOLUTE cells — REFINE-4 "ukuran pemberian warna pakai
+      // absolute agar akurat").
+      const val = byItem.get(row[0])?.get(ml)?.signed ?? 0;
       return heatColor(val, heatScale);
     };
     rpt.table({

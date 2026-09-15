@@ -80,3 +80,4 @@ tool-results/
 data/inventory/*.csv
 data/inventory/*.tmp
 .zscripts/dev.pid
+.tmp-render/

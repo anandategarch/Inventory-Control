@@ -157,7 +157,10 @@ export async function GET(req: NextRequest) {
         // magnitude comparisons, section 6.2 flip detection, section 5
         // signed cells + abs heat, section 9 per-pair grouping, 8.2 resto
         // setara terms, plain-percent Selisih).
-        rv: '6',
+        // HEAT-SIGN: section 5 heat cells now encode the SIGN — red ramp for
+        // the loss side, green ramp for the surplus side (magnitude still
+        // picks the step; scale still p90 of the abs cells).
+        rv: '7',
       },
     });
     const EXPORT_CACHE_TTL = 5 * 60 * 1000; // 5 min
