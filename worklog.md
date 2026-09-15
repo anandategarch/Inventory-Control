@@ -40530,3 +40530,22 @@ Stage Summary:
 - HEAT-SIGN: sel minus (loss) = ramp merah, sel plus (surplus) = ramp hijau — intensitas tetap magnitude/p90; konflik minus-vs-plus di heat map section 5 tuntas; rv 7.
 - SPLIT-GOD-FILE: 13 file, +1.279/−1.101; god file 1.341 baris jadi 14 modul (terbesar pdf-primitives 663 — tidak disentuh; pdf-builder 324; section terbesar 160); output PDF terbukti byte-identik.
 - Kedua commit ter-push ke origin/main: 6f02849 (HEAT-SIGN), b4b37d2 (SPLIT-GOD-FILE); lokal = remote; worklog entry ini ikut ter-commit.
+
+---
+Task ID: SPLIT-2 (batch 7 domain paralel)
+Agent: Main (Z.ai Code) + 4 subagent selesai mandiri (C, D, E, F) + 3 subagent context-deadline (A, B, G — hasilnya diverifikasi Main)
+Task: User: "Cari file file besar lainnya yang masih bisa displit, sebar agent di seluruh tempat" — lanjutan SPLIT-GOD-FILE (b4b37d2) ke seluruh codebase.
+
+Work Log:
+- Analisis kandidat: wc -l seluruh src/scripts → 15+ file >500 baris. Dibagi 7 domain TANPA overlap file agar aman paralel: (A) export-report data-fetcher, (B) ItemTrendTab, (C) upload-pipeline+FilterBar, (D) lib settings/drive-import/process-ingestion, (E) queries by-other-metric/change-analysis, (F) scripts audit CLI, (G) 4 kartu dashboard.
+- 7 subagent full-stack/general diluncurkan serentak dengan batasan keras: pure code motion, barrel/folder-index supaya import caller TIDAK berubah, domain read-only bagi agent lain, tanpa commit/push (Main yang commit), laporan ke agent-ctx/SPLIT-*-split.md.
+- Hasil: 4 subagent selesai penuh dengan laporan (C: bukti mekanis pure-motion via sekuens setState/fetch/JSX; D: vitest full 512/512; E: test change-analysis 17/17 + paritas export 10/10 & 13/13; F: paritas statis label/SELECT/q()/addIssue + transpile-only exit 0). 3 subagent (A, B, G) mencapai context deadline TEPAT sebelum pelaporan — hasil kerjanya utuh di working tree, diverifikasi Main: paritas export data-fetcher 1/1 (fetchReportData), 'use client' di semua entry, tidak ada file yatim, tidak ada duplikasi modul (item-peer-compute vs card-compute berbeda peran).
+- Gerbang global pasca-gabung: bunx tsc --noEmit --incremental false → 0 error seluruh repo; bun run lint → 0 error (382 warning = baseline pre-existing, 0 baru); bunx vitest run → 31 file / 512/512 PASS; secret-scan rentang diff (ghp_/password/secret/api_key) → CLEAN.
+- 7 commit atomik per domain (d7e316b SPLIT-A, 1be2a3f SPLIT-B, b8fb813 SPLIT-C, 56e9fd7 SPLIT-D, 6ed84d1 SPLIT-E, 70733f0 SPLIT-F, 7e0e0d4 SPLIT-G) + entri worklog ini.
+- Catatan lingkungan: dev server platform berjalan untuk /home/z/my-project (proyek terpisah) — audit-inventory diverifikasi statis (tsc+lint+vitest), pola standar sesi sebelumnya untuk pure motion. scripts/ memang di-exclude tsconfig proyek (pre-existing); SPLIT-F diverifikasi via tsc standalone + bun transpile-only.
+
+Stage Summary:
+- 11 file besar (8.694 baris) dipecah menjadi ±95 modul kecil (≤~264 baris per file) lintas 7 domain; SEMUA import caller tidak berubah (barrel + folder-index); nol perubahan perilaku (gerbang: tsc 0 err, eslint 0 err, vitest 512/512, test change-analysis 17/17 tanpa edit test).
+- pdf-primitives.ts (663) SENGAJA tidak disentuh (kohesif sebagai pustaka primitive; preseden b4b37d2).
+- Laporan per domain: agent-ctx/SPLIT-{A..G}-split.md.
+- Batch ini ter-push ke origin/main pada sesi ini (lihat git log; token PAT tidak pernah ditulis ke file mana pun — secret-scan CLEAN).
