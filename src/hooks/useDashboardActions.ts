@@ -144,7 +144,13 @@ export function useDashboardActions({
       // per-pair grouping, 8.2 resto setara terms, plain-percent Selisih.
       // HEAT-SIGN: rv 7 — section 5 heat cells encode the SIGN (red ramp =
       // loss side, green ramp = surplus side; magnitude picks the step).
-      params.set('rv', '7');
+      // PEERTOP/PEERTOP-R1: rv 8 — NEW PDF section 8.3 (Top Item Resto
+      // Setara — bersama vs khusus; Ranking Resto di antara Resto yang
+      // Selevel per Item; QTY Deviasi signed; Rata-rata Absolute |QTY|) +
+      // 8.4 removed. This bump was MISSING when PEERTOP landed — same URL
+      // hit the CDN's old cached response AND the server's stale SWR row
+      // (user: "kok di laporan PDF tidak ada perubahan?").
+      params.set('rv', '8');
 
       // FIX (BUG-3-b A3): AbortController + 120s timeout — a hung export no
       // longer spins forever; the fetch is aborted and the user gets a

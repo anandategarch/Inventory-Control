@@ -40629,3 +40629,19 @@ Stage Summary:
 - Kolom "Top Items Across Peers" (UI + PDF 8.3) kini: nama resto tempat item jadi top, ranking resto di antara resto selevel per item (#peringkat/total via RANK window), kuantiti deviasi nilai asli (minus merah), rata-rata absolute berbasis |kuantiti deviasi|; kolom Arah/Dir dihapus; PDF 8.4 dihapus (expand-row FE tetap).
 - Satu definisi "top item" tetap terjaga (agregat per item); master context tetap terjaga (label "Rata-Rata Absolute", tanpa nominal sales di PDF, tanpa pp, tanpa akhiran P1/P2).
 - CATATAN: verifikasi statis saja (DB produksi tak terjangkau) — window RANK + render PDF perlu dicek saat data live.
+
+---
+Task ID: STALE-PDF
+Agent: Main (Z.ai Code)
+Task: User: "kok di laporan PDF tidak ada perubahan?" — setelah PEERTOP/PEERTOP-R1 (f927969/acc4f4d) ter-deploy, export PDF user masih menampilkan layout lama.
+
+Work Log:
+- ROOT CAUSE (bukan bug render): bump `rv` TIDAK dilakukan saat PEERTOP & PEERTOP-R1 mendarat — URL export tetap rv=7 dan cache key server tetap rv:'7'. Tiga lapis stale menumpuk: (1) deploy baru (push acc4f4d 14:50 UTC, user export ±menit kemudian — build Vercel belum tentu hidup), (2) CDN menyimpan respons lama pada URL rv=7 YANG SAMA (s-maxage=300 + swr=600), (3) PALING PARAH: AggregationCache SWR menyajikan row PDF EXPIRED TANPA BATAS USIA (swr.ts 3b — row tidak dihapus saat expiry; recompute background hanya menolong request BERIKUTNYA) → klik export pertama user = PDF pra-PEERTOP.
+- BUKTI KODE BENAR (runtime, bukan statis — menutup CATATAN PEERTOP-R1): harness mock .tmp-render (gitignored, dihapus setelah dipakai) memanggil buildPdfReport langsung dgn sections=['peer'] + topItems shape PEERTOP-R1 → pdftotext: 8.3 utuh (header "Ranking Resto di antara Resto yang Selevel per Item" wrap 2 baris, "Top di" = "3 resto: SMRAHM, MLGJAK, JAPSEN", sel "#3/9"/"#1/7", QTY Deviasi signed, "Rata-rata Absolute Resto Setara (QTY Deviasi)", baris blind-spot "—"); 8.4/"Top Item per Resto Setara"/"Rank di Target"/"Arah" NOL hit; pixel-scan PPM: 429 px danger-red #DC2626 (minus → merah bekerja).
+- FIX: (1) rv 7 → 8 KEDUA SISI — route.ts cache key extra + useDashboardActions.ts URL param (URL baru = CDN miss pasti; key baru = DB miss pasti); (2) HARDENING SISTEMATIK: extra `deploy: VERCEL_GIT_COMMIT_SHA?.slice(0,12) ?? 'local'` di cache key — SETIAP deploy otomatis fork namespace cache PDF, jadi rv yang lupa di-bump tidak akan pernah lagi menyajikan PDF pra-deploy selamanya (rv manual kini hanya lapisan CDN; buildCacheKey skip nilai kosong → SHA kosong aman); (3) changelog pdf-builder + komentar insiden terdokumentasi.
+- Gerbang: tsc 0 error · eslint 0 error/377 warning (baseline) · vitest 512/512. Secret-scan staged diff CLEAN. Commit + push origin main.
+
+Stage Summary:
+- Jawaban user: PDF lama BUKAN karena perubahan gagal — kode PEERTOP-R1 terbukti merender benar (verifikasi runtime mock); yang terjadi adalah 3 lapis cache (deploy timing + CDN URL sama + SWR DB tanpa batas usia) menyajikan byte PDF lama.
+- Setelah deploy fix ini: export baru → URL rv=8 (CDN miss) + key deploy-SHA (DB miss) → PDF di-generate ulang dgn kode baru, PASTI menampilkan 8.3 versi revisi tanpa 8.4. Tab dashboard yang masih terbuka dari sebelum deploy tetap aman dalam ≤15 menit (CDN must-revalidate → origin fresh via deploy-SHA key).
+- Ke depan: lapisan DB kini self-healing per deploy — insiden kelas ini (REFINE-3 dulu, PEERTOP sekarang) tidak bisa terulang.

@@ -160,7 +160,24 @@ export async function GET(req: NextRequest) {
         // HEAT-SIGN: section 5 heat cells now encode the SIGN — red ramp for
         // the loss side, green ramp for the surplus side (magnitude still
         // picks the step; scale still p90 of the abs cells).
-        rv: '7',
+        // PEERTOP/PEERTOP-R1: NEW PDF section 8.3 (Top Item Resto Setara —
+        // bersama vs khusus) + revised columns (Ranking Resto di antara Resto
+        // yang Selevel per Item, QTY Deviasi signed, Rata-rata Absolute on
+        // |QTY deviasi| basis) + 8.4 removed. This bump was MISSING when
+        // PEERTOP/PEERTOP-R1 landed — the stale SWR row under the old key
+        // kept serving the PRE-PEERTOP PDF after the deploy (user: "kok di
+        // laporan PDF tidak ada perubahan?"). rv 7 → 8, both sides.
+        rv: '8',
+        // FIX (STALE-PDF, systematic hardening — same incident as the missing
+        // PEERTOP rv bump): the SWR store serves EXPIRED rows unbounded (see
+        // swr.ts 3b), so a forgotten `rv` bump means a pre-deploy PDF can be
+        // served FOREVER under the old key. Fork the cache namespace on EVERY
+        // deploy via the deployed commit SHA (Vercel injects
+        // VERCEL_GIT_COMMIT_SHA for Git-connected projects) — a deploy always
+        // starts a fresh namespace, making the manual `rv` bump above
+        // belt-and-braces instead of the only line of defense. 'local' keeps
+        // a stable namespace in dev (no SHA outside Vercel).
+        deploy: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 12) ?? 'local',
       },
     });
     const EXPORT_CACHE_TTL = 5 * 60 * 1000; // 5 min

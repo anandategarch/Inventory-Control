@@ -204,6 +204,16 @@
 //  pdf-style.ts heatColor; magnitude still picks the step, scale still
 //  p90 of the abs cells). rv 6 → 7 both sides.
 //
+//  STALE-PDF (user: "kok di laporan PDF tidak ada perubahan?" — after
+//  PEERTOP/PEERTOP-R1 deployed): the `rv` bump was MISSING on both
+//  PEERTOP commits, so the export URL stayed `rv=7` → (a) the CDN kept
+//  serving its cached response (s-maxage=300 + swr=600) and (b) the
+//  DB-level SWR store kept serving the EXPIRED pre-PEERTOP PDF row
+//  under the unchanged key (swr.ts serves stale unbounded). Fix: rv
+//  7 → 8 both sides + a `deploy` (VERCEL_GIT_COMMIT_SHA) component in
+//  the route's cache key so EVERY deploy forks a fresh cache namespace —
+//  a forgotten rv bump can never again serve a pre-deploy PDF.
+//
 //  Section map (FIXED numbers — stable across ?sections= selections;
 //  keep in sync with EXPORT_SECTION_KEYS in validation.ts + the
 //  SECTIONS list in ExportDialog.tsx):
