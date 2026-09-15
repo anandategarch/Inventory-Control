@@ -26,10 +26,21 @@
 //      direction, red = unfavorable (goodUp per metric — e.g. sales up
 //      is green, deviation up is red).
 //
+//  DESAIN-SIMPEL (user request: "tidak kelihatan seperti buatan AI,
+//  natural buatan manusia — simpel, sedikit warna, tetap merah/hijau
+//  untuk perubahan"):
+//    - Plain cover (no dark band), plain numbered section headers
+//      ("1. Ringkasan" + thin rule — NO caption lines per request), no
+//      page footer, light-gray table headers, neutral chart bars.
+//    - Removed: Total LOSS / Total SURPLUS metrics (KPI cards, Ringkasan
+//      rows, growth rows + bars, line-chart legend renamed Loss/Surplus).
+//    - Title: "Ringkasan Laporan Deviasi" (was "LAPORAN AUDIT INVENTORY").
+//    - Colors kept: ▲/▼ + red/green change markers, light-red heat scale.
+//
 //  Section map (FIXED numbers — stable across ?sections= selections;
 //  keep in sync with EXPORT_SECTION_KEYS in validation.ts + the
 //  SECTIONS list in ExportDialog.tsx):
-//     1 exec        — Ringkasan (hero cards + 16-row KPI table)
+//     1 exec        — Ringkasan (hero cards + KPI table)
 //     2 growth      — Perubahan vs Periode Pembanding (table + growth bars)
 //     3 topItems    — Item Prioritas (6 sub-tables)
 //     4 variance    — Perubahan Item: Memburuk / Membaik (tables + bars)
@@ -90,15 +101,17 @@ function shortMonth(label: string): string {
   return label.substring(0, 10);
 }
 
-/** Heat color for the item-trend matrix cells (amber intensity scale). */
+/** Heat color for the item-trend matrix cells — DESAIN-SIMPEL: light-red
+ *  intensity scale (deviation magnitude = further into the red; the only
+ *  chromatic family besides the change green). */
 function heatColor(v: number, max: number): string | undefined {
   if (max <= 0 || v <= 0) return undefined;
   const r = v / max;
-  if (r < 0.2) return '#FFFBEB';
-  if (r < 0.4) return '#FEF3C7';
-  if (r < 0.6) return '#FDE68A';
-  if (r < 0.8) return '#FCD34D';
-  return '#F59E0B';
+  if (r < 0.2) return '#FEF2F2';
+  if (r < 0.4) return '#FEE2E2';
+  if (r < 0.6) return '#FECACA';
+  if (r < 0.8) return '#FCA5A5';
+  return '#F87171';
 }
 
 /** Signed compact IDR for chart tick labels (no 'Rp' prefix — axis stays narrow). */
@@ -132,8 +145,15 @@ export async function buildPdfReport(
   const doc = new PDFDocument({
     size: 'A4',
     margin: 0,
+    // bufferPages: keep every page addressable until end() — without it
+    // pdfkit flushes the page buffer on every addPage(), so the post-hoc
+    // running-header pass below saw bufferedPageRange() = { start: N-1,
+    // count: 1 } and rendered the header ONLY... on the last page (and the
+    // old footer read "Halaman N dari 1" — the exact bug in the user's
+    // screenshot "Halaman 8 dari 1").
+    bufferPages: true,
     info: {
-      Title: `Laporan Audit Inventory ${shortMonth(data.period.monthLabel)} ${data.period.weekLabel}`,
+      Title: `Ringkasan Laporan Deviasi ${shortMonth(data.period.monthLabel)} ${data.period.weekLabel}`,
       Author: 'Inventory Control',
       Creator: 'Inventory Control',
     },
@@ -147,14 +167,14 @@ export async function buildPdfReport(
     doc.on('error', reject);
     try {
       drawReport(doc, data, ctx);
-      // Post-hoc pass: running header (pages 2+) + footer (every page).
+      // Post-hoc pass: small running header on pages 2+ only — no footer
+      // (DESAIN-SIMPEL: user asked to remove the page footer entirely).
       const range = doc.bufferedPageRange();
-      const headerLabel = `LAPORAN AUDIT INVENTORY  \u00B7  ${shortMonth(data.period.monthLabel)} ${data.period.weekLabel}`;
-      const footerLabel = `${shortMonth(data.period.monthLabel)} ${data.period.weekLabel}${data.period.comparisonMonth ? ` vs ${shortMonth(data.period.comparisonMonth)} ${data.period.comparisonWeek ?? ''}` : ''}`;
+      const headerLabel = `Ringkasan Laporan Deviasi  \u00B7  ${shortMonth(data.period.monthLabel)} ${data.period.weekLabel}`;
       for (let i = range.start; i < range.start + range.count; i++) {
+        if (i === range.start) continue;
         doc.switchToPage(i);
-        if (i > range.start) Rpt.runningHeader(doc, headerLabel);
-        Rpt.footer(doc, i, range.count, footerLabel);
+        Rpt.runningHeader(doc, headerLabel);
       }
       doc.end();
     } catch (e) {
@@ -167,7 +187,7 @@ export async function buildPdfReport(
       ? data.filters.outletCode
       : 'Semua_Resto';
     const vs = data.period.comparisonWeek ? `_vs_${data.period.comparisonWeek}` : '';
-    const raw = `Laporan_Audit_${outletLabel}_${shortMonth(data.period.monthLabel).replace(/\s+/g, '_')}_${data.period.weekLabel}${vs}.pdf`;
+    const raw = `Ringkasan_Laporan_Deviasi_${outletLabel}_${shortMonth(data.period.monthLabel).replace(/\s+/g, '_')}_${data.period.weekLabel}${vs}.pdf`;
     return { bufferBase64: r.bufferBase64, fileName: raw.replace(/[^A-Za-z0-9._-]/g, '_') };
   });
 }
@@ -199,10 +219,12 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   const kpisAvailable = hasSection('exec') || hasSection('growth');
 
   // ============================================================
-  //  COVER — band + filter chips + KPI hero cards + TOC
+  //  COVER — plain title header + filter line + KPI cards
+  //  (DESAIN-SIMPEL: no TOC — the report is short and every section is
+  //  numbered; nothing navigational was lost)
   // ============================================================
   rpt.coverBand(
-    'LAPORAN AUDIT INVENTORY',
+    'Ringkasan Laporan Deviasi',
     `${restoName}  \u00B7  ${data.period.monthLabel} \u2014 ${data.period.weekLabel}`,
     [
       fmtDateTimeWIB(new Date().toISOString()),
@@ -211,40 +233,32 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
     ],
   );
 
-  // filter chips — FIX-TERPOTONG: wrap onto a new line when the row is
-  // full instead of dropping the remaining filters.
-  const f = data.filters;
-  const fv = (v: string | null | undefined): string | null => (v && v !== 'all' ? v : null);
-  const chips: Array<[string, string | null]> = [
-    ['AREA', fv(f.area)], ['KELOMPOK', fv(f.kelompok)], ['RESTO', fv(f.outletCode)],
-    ['ITEM', fv(f.itemName)], ['PIC', fv(f.pic)],
-  ];
+  // Filter line — DESAIN-SIMPLEL: one plain wrapped text line instead of
+  // rounded chips (the chips read "AI-generated"). FIX-TERPOTONG: the
+  // paragraph wraps, so no filter is ever dropped.
   {
-    const cs = 6.2;
-    const chH = cs + 5.5;
-    let cx = PAGE.M;
-    let cy = rpt.y + 2;
-    const maxX = PAGE.W - PAGE.M;
-    for (const [lb, val] of chips) {
-      const txt = val ? `${lb}: ${val}` : `${lb}: Semua`;
-      doc.font('Helvetica-Bold').fontSize(cs);
-      const cw = doc.widthOfString(txt) + 10;
-      if (cx + cw > maxX) { cx = PAGE.M; cy += chH + 4; }
-      rpt.chip(txt, cx, cy, val ? C.accentLight : C.borderSoft, val ? C.accentDark : C.muted, { size: cs });
-      cx += cw + 5;
-    }
-    rpt.y = cy + chH + 12;
+    const f = data.filters;
+    const fv = (v: string | null | undefined): string => (v && v !== 'all' ? v : 'Semua');
+    const filterLine = [
+      `Area: ${fv(f.area)}`, `Kelompok: ${fv(f.kelompok)}`, `Resto: ${fv(f.outletCode)}`,
+      `Item: ${fv(f.itemName)}`, `PIC: ${fv(f.pic)}`,
+    ].join('   \u00B7   ');
+    rpt.para(filterLine, { size: 7, color: C.muted, gapAfter: 12 });
   }
 
-  // KPI hero cards (2 rows x 3) — only when the kpis row was fetched.
-  // FIX-TERPOTONG: every "vs …" sub now carries the ▲/▼ marker + a
-  // semantic color (green favorable / red unfavorable).
+  // KPI hero cards (2 × 2) — only when the kpis row was fetched.
+  // DESAIN-SIMPEL: Total LOSS / Total SURPLUS cards REMOVED (user
+  // request); % Nominal Deviasi to Sales now shows its own growth sub.
+  // FIX-TERPOTONG: every "vs …" sub carries the ▲/▼ marker + a semantic
+  // color (green favorable / red unfavorable).
   if (kpisAvailable) {
     const devToSalesCur = s.sales.current > 0 ? s.nominalDeviasi.current / s.sales.current : null;
+    const devToSalesPrev = (s.sales.previous != null && s.sales.previous > 0 && s.nominalDeviasi.previous != null)
+      ? s.nominalDeviasi.previous / s.sales.previous
+      : null;
+    const devToSalesG = devToSalesCur != null && devToSalesPrev != null ? calcGrowth(devToSalesCur, devToSalesPrev) : null;
     // Hoisted (TS narrowing through repeated pm?.x ternaries inside one
     // object literal is fragile) — also avoids re-running calcGrowth.
-    const lossG = pm != null && pm.totalLoss != null ? calcGrowth(s.totalLoss, pm.totalLoss) : null;
-    const surplusG = pm != null && pm.totalSurplus != null ? calcGrowth(s.totalSurplus, pm.totalSurplus) : null;
     const bomG = pm?.deviationToBom != null ? calcGrowth(s.deviationToBom, pm.deviationToBom) : null;
     rpt.kpiCards([
       {
@@ -255,7 +269,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       {
         label: 'Nominal Deviasi', value: fmtIDR(s.nominalDeviasi.current),
         sub: s.nominalDeviasi.growth != null ? `${markOf(s.nominalDeviasi.growth)}vs ${prevLabel}: ${fmtPct(s.nominalDeviasi.growth, true)}` : undefined,
-        subColor: chgColor(s.nominalDeviasi.growth, false) ?? C.muted, accent: C.danger,
+        subColor: chgColor(s.nominalDeviasi.growth, false) ?? C.muted,
       },
       {
         label: '% Deviasi To BOM', value: fmtPct(s.deviationToBom, false),
@@ -263,56 +277,18 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
         subColor: chgColor(bomG, false) ?? C.muted,
       },
       {
-        label: 'Total LOSS', value: fmtIDR(s.totalLoss),
-        sub: lossG != null ? `${markOf(lossG)}vs ${prevLabel}: ${fmtPct(lossG, true)}` : undefined,
-        subColor: chgColor(lossG, false) ?? C.muted, accent: C.danger,
-      },
-      {
-        label: 'Total SURPLUS', value: fmtIDR(s.totalSurplus),
-        sub: surplusG != null ? `${markOf(surplusG)}vs ${prevLabel}: ${fmtPct(surplusG, true)}` : undefined,
-        subColor: chgColor(surplusG, false) ?? C.muted, accent: C.success,
-      },
-      {
         label: '% Nominal Deviasi to Sales', value: fmtPct(devToSalesCur, false),
-        sub: pm != null ? `Loss/Sales ${fmtPct(s.lossToSales, false)} \u00B7 Surplus/Sales ${fmtPct(s.surplusToSales, false)}` : undefined,
-        subColor: C.muted,
+        sub: devToSalesG != null ? `${markOf(devToSalesG)}vs ${prevLabel}: ${fmtPct(devToSalesG, true)}` : undefined,
+        subColor: chgColor(devToSalesG, false) ?? C.muted,
       },
-    ]);
-  }
-
-  // Table of contents — fixed section numbers
-  const SECTION_TITLES: Record<string, string> = {
-    exec: 'Ringkasan',
-    growth: 'Perubahan vs Periode Pembanding',
-    topItems: 'Item Prioritas (Top Items)',
-    variance: 'Perubahan Item (vs Pembanding)',
-    itemTrend: 'Trend Item Multi-Periode',
-    trend: 'Trend Antar Periode',
-  };
-  const SECTION_ORDER = ['exec', 'growth', 'topItems', 'variance', 'itemTrend', 'trend'];
-  const active = SECTION_ORDER.filter(hasSection);
-  if (active.length > 0) {
-    rpt.subhead('Isi Laporan', { size: 10 });
-    const col2 = PAGE.M + CONTENT_W / 2 + 8;
-    active.forEach((key, i) => {
-      const x = i % 2 === 0 ? PAGE.M : col2;
-      if (i % 2 === 0) rpt.ensure(13);
-      const y = rpt.y;
-      const no = SECTION_ORDER.indexOf(key) + 1;
-      doc.fillColor(C.accent).roundedRect(x, y + 1, 13, 9, 2).fill();
-      rpt.text(String(no).padStart(2, '0'), x, y + 2.6, { font: 'Helvetica-Bold', size: 6, color: C.white, align: 'center', width: 13 });
-      rpt.text(SECTION_TITLES[key], x + 18, y + 1.2, { size: 7.2, color: C.inkSoft });
-      if (i % 2 === 1) rpt.y = y + 13;
-      if (i === active.length - 1 && i % 2 === 0) rpt.y = y + 13;
-    });
-    rpt.y += 8;
+    ], { perRow: 2 });
   }
 
   // ============================================================
   //  1 — RINGKASAN  (EXPORT-TRIM: renamed from "Ringkasan Eksekutif")
   // ============================================================
   if (hasSection('exec')) {
-    rpt.sectionHeader(1, 'Ringkasan', `Agregat periode ${currLabel} (kolom pembanding: ${prevLabel})`);
+    rpt.sectionHeader(1, 'Ringkasan');
     const devToSalesCur = s.sales.current > 0 ? s.nominalDeviasi.current / s.sales.current : null;
     const devToSalesPrev = (s.sales.previous != null && s.sales.previous > 0 && s.nominalDeviasi.previous != null)
       ? s.nominalDeviasi.previous / s.sales.previous
@@ -331,8 +307,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       ['QTY Loss/Surplus', fmtNum(s.qtyLossSurplus.current), s.qtyLossSurplus.growth, fmtNum(s.qtyLossSurplus.previous), false],
       ['Loss/Surplus Qty', fmtNum(s.residualLossQty), pm?.residualLossQty != null ? calcGrowth(s.residualLossQty, pm.residualLossQty) : null, pm?.residualLossQty != null ? fmtNum(pm.residualLossQty) : '\u2014', false],
       ['Loss/Surplus %', fmtPct(s.residualLossPct, false), pm?.residualLossPct != null ? calcGrowth(s.residualLossPct, pm.residualLossPct) : null, pm?.residualLossPct != null ? fmtPct(pm.residualLossPct, false) : '\u2014', false],
-      ['Total LOSS', fmtIDR(s.totalLoss), pm?.totalLoss != null ? calcGrowth(s.totalLoss, pm.totalLoss) : null, pm?.totalLoss != null ? fmtIDR(pm.totalLoss) : '\u2014', false],
-      ['Total SURPLUS', fmtIDR(s.totalSurplus), pm?.totalSurplus != null ? calcGrowth(s.totalSurplus, pm.totalSurplus) : null, pm?.totalSurplus != null ? fmtIDR(pm.totalSurplus) : '\u2014', false],
+      // DESAIN-SIMPEL: Total LOSS / Total SURPLUS rows REMOVED (user request).
       ['% Loss to Sales', fmtPct(s.lossToSales, false), pm?.lossToSales != null ? calcGrowth(s.lossToSales, pm.lossToSales) : null, pm?.lossToSales != null ? fmtPct(pm.lossToSales, false) : '\u2014', false],
       ['% Surplus to Sales', fmtPct(s.surplusToSales, false), pm?.surplusToSales != null ? calcGrowth(s.surplusToSales, pm.surplusToSales) : null, pm?.surplusToSales != null ? fmtPct(pm.surplusToSales, false) : '\u2014', false],
     ];
@@ -355,7 +330,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   //  2 — PERUBAHAN VS PERIODE PEMBANDING
   // ============================================================
   if (hasSection('growth')) {
-    rpt.sectionHeader(2, 'Perubahan vs Periode Pembanding', `${currLabel} vs ${prevLabel} \u2014 selisih absolut, selisih pp (rasio), growth %`);
+    rpt.sectionHeader(2, 'Perubahan vs Periode Pembanding');
     const devToSalesCur = s.sales.current > 0 ? s.nominalDeviasi.current / s.sales.current : null;
     const devToSalesPrev = (s.sales.previous != null && s.sales.previous > 0 && s.nominalDeviasi.previous != null)
       ? s.nominalDeviasi.previous / s.sales.previous
@@ -385,8 +360,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       vr('QTY Waste', s.qtyWaste.current, s.qtyWaste.previous, fmtNum, s.qtyWaste.growth, false),
       vr('QTY Susut', s.qtySusut.current, s.qtySusut.previous, fmtNum, s.qtySusut.growth, false),
       vr('QTY Trial', s.qtyTrial.current, s.qtyTrial.previous, fmtNum, s.qtyTrial.growth, false),
-      vr('Total LOSS (Rp)', s.totalLoss, pm?.totalLoss ?? null, fmtIDR, pm?.totalLoss != null ? calcGrowth(s.totalLoss, pm.totalLoss) : null, false),
-      vr('Total SURPLUS (Rp)', s.totalSurplus, pm?.totalSurplus ?? null, fmtIDR, pm?.totalSurplus != null ? calcGrowth(s.totalSurplus, pm.totalSurplus) : null, false),
+      // DESAIN-SIMPEL: Total LOSS / Total SURPLUS rows REMOVED (user request).
       rr('% Deviasi To BOM', s.deviationToBom, pm?.deviationToBom ?? null, pm?.deviationToBom != null ? calcGrowth(s.deviationToBom, pm.deviationToBom) : null, false),
       rr('% Nominal Deviasi to Sales', devToSalesCur, devToSalesPrev, devToSalesCur != null && devToSalesPrev != null ? calcGrowth(devToSalesCur, devToSalesPrev) : null, false),
       rr('% Loss to Sales', s.lossToSales, pm?.lossToSales ?? null, pm?.lossToSales != null ? calcGrowth(s.lossToSales, pm.lossToSales) : null, false),
@@ -416,8 +390,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       { label: 'QTY Waste', g: s.qtyWaste.growth, goodUp: false },
       { label: 'QTY Susut', g: s.qtySusut.growth, goodUp: false },
       { label: 'QTY Trial', g: s.qtyTrial.growth, goodUp: false },
-      { label: 'Total LOSS', g: pm?.totalLoss != null ? calcGrowth(s.totalLoss, pm.totalLoss) : null, goodUp: false },
-      { label: 'Total SURPLUS', g: pm?.totalSurplus != null ? calcGrowth(s.totalSurplus, pm.totalSurplus) : null, goodUp: false },
+      // DESAIN-SIMPEL: Total LOSS / Total SURPLUS bars REMOVED (user request).
       { label: '% Dev/BOM', g: pm?.deviationToBom != null ? calcGrowth(s.deviationToBom, pm.deviationToBom) : null, goodUp: false },
       { label: '% Loss to Sales', g: pm?.lossToSales != null ? calcGrowth(s.lossToSales, pm.lossToSales) : null, goodUp: false },
       { label: '% Surplus to Sales', g: pm?.surplusToSales != null ? calcGrowth(s.surplusToSales, pm.surplusToSales) : null, goodUp: false },
@@ -441,7 +414,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   //  3 — ITEM PRIORITAS (TOP ITEMS)  (EXPORT-TRIM: was 7)
   // ============================================================
   if (hasSection('topItems')) {
-    rpt.sectionHeader(3, 'Item Prioritas (Top Items)', `Enam ranking \u2014 ${currLabel}; kolom ${prevLabel} + ${histLabel} sebagai pembanding`);
+    rpt.sectionHeader(3, 'Item Prioritas (Top Items)');
 
     // 3.1 nominal
     if (data.topItemsByNominal.length > 0) {
@@ -523,7 +496,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   if (hasSection('variance')) {
     const va = data.varianceAnalysis;
     if (va.topWorsened.length > 0 || va.topImproved.length > 0) {
-      rpt.sectionHeader(4, 'Perubahan Item (vs Periode Pembanding)', `${currLabel} vs ${prevLabel} \u2014 selisih nominal per item terbesar`);
+      rpt.sectionHeader(4, 'Perubahan Item (vs Periode Pembanding)');
     }
     if (va.topWorsened.length > 0) {
       rpt.subhead(`4.1 Memburuk \u2014 selisih nominal terbesar (${currLabel} vs ${prevLabel})`, { size: 8.5 });
@@ -538,7 +511,9 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
           { header: 'Selisih', align: 'right' },
         ],
         rows: va.topWorsened.map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.area, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), markOf(it.selisih) + fmtIDR(it.selisih)]),
-        rowText: () => C.danger,
+        // DESAIN-SIMPEL: only the Selisih column carries the change color
+        // (red — worsened); the rest of the row stays neutral ink.
+        cellColor: (_row, _ri, ci) => (ci === 6 ? C.danger : undefined),
       });
       const worsened = va.topWorsened.slice(0, 10);
       rpt.ensure(18 * worsened.length + 24);
@@ -566,7 +541,9 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
           { header: 'Selisih', align: 'right' },
         ],
         rows: va.topImproved.map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.area, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), markOf(it.selisih) + fmtIDR(it.selisih)]),
-        rowText: () => C.success,
+        // DESAIN-SIMPEL: only the Selisih column carries the change color
+        // (green — improved); the rest of the row stays neutral ink.
+        cellColor: (_row, _ri, ci) => (ci === 6 ? C.success : undefined),
       });
     }
   }
@@ -575,7 +552,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   //  5 — TREND ITEM MULTI-PERIODE  (EXPORT-PDF — NEW; EXPORT-TRIM: was 9)
   // ============================================================
   if (hasSection('itemTrend') && data.itemTrendMatrix.length > 0) {
-    rpt.sectionHeader(5, 'Trend Item Multi-Periode', `15 item dengan nominal deviasi terbesar di ${currLabel} \u2014 nilai ABS(nominal) per ${data.period.weekLabel} tiap bulan`);
+    rpt.sectionHeader(5, 'Trend Item Multi-Periode');
 
     // group rows: item → month → absNominal
     const byMonth = new Map<string, string>(); // monthLabel → monthKey (for sort)
@@ -654,7 +631,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   //  6 — TREND ANTAR PERIODE  (EXPORT-TRIM: was 12)
   // ============================================================
   if (hasSection('trend') && data.trend.length > 0) {
-    rpt.sectionHeader(6, 'Trend Antar Periode', `Rangkaian ${data.period.weekLabel} lintas bulan \u2014 nominal, rasio, loss/surplus`);
+    rpt.sectionHeader(6, 'Trend Antar Periode');
     rpt.table({
       cols: [
         { header: 'Periode' },
@@ -694,8 +671,10 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
         x: PAGE.M, y: rpt.y, w: CONTENT_W, h: 140,
         xLabels: labels,
         series: [
-          { name: 'Total LOSS', values: data.trend.map((t) => t.lossNominal), color: C.danger },
-          { name: 'Total SURPLUS', values: data.trend.map((t) => t.surplusNominal), color: C.success },
+          // DESAIN-SIMPEL: per-period legend labels — no "Total" wording
+          // (the Total LOSS/SURPLUS metrics were removed by user request).
+          { name: 'Loss', values: data.trend.map((t) => t.lossNominal), color: C.danger },
+          { name: 'Surplus', values: data.trend.map((t) => t.surplusNominal), color: C.success },
         ],
         yFmt: tickIDR,
       });

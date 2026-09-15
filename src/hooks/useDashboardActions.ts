@@ -134,6 +134,10 @@ export function useDashboardActions({
       if (itemName) params.set('item', itemName);
       if (pic) params.set('pic', pic);
       params.set('sections', selectedSections.join(','));
+      // Report design version (busts the CDN/edge cache after a design
+      // change — keep in sync with the `rv` extra in /api/export-report's
+      // cache key). Ignored server-side (Zod strips unknown params).
+      params.set('rv', '2');
 
       // FIX (BUG-3-b A3): AbortController + 120s timeout — a hung export no
       // longer spins forever; the fetch is aborted and the user gets a

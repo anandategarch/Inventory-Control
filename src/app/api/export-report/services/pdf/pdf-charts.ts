@@ -24,7 +24,7 @@
 //    can carry increase/decrease marks.
 // ============================================================
 import type PDFKit from 'pdfkit';
-import { C, sanitizePdfText, takeMark, markerExtra, drawTri } from './pdf-primitives';
+import { C, sanitizePdfText, takeMark, markerExtra, drawTri, wrapLines } from './pdf-primitives';
 
 // ------------------------------------------------------------
 //  Shared helpers
@@ -84,6 +84,42 @@ function tinyText(
   doc.text(body, tx, y, { lineBreak: false });
 }
 
+/** FIX-TERPOTONG (hBarChart labels): wrap a label onto up to `maxLines`
+ *  lines at a READABLE size instead of shrinking a single line into
+ *  illegibility. Finds the largest font size (≤ size, ≥ 4.4pt) whose
+ *  greedy word-wrap fits maxLines lines; every wrapped line is guaranteed
+ *  to fit maxW except a single unbreakable word (drawn anyway — never
+ *  dropped, never ellipsized). */
+function tinyLines(
+  doc: PDFKit.PDFDocument,
+  t: string,
+  x: number,
+  y: number,
+  opts: { size?: number; color?: string; bold?: boolean; align?: 'left' | 'right'; maxW?: number; maxLines?: number } = {},
+): void {
+  const { size = 6.5, color = C.inkSoft, bold = false, align = 'right', maxW, maxLines = 2 } = opts;
+  if (maxW == null) { tinyText(doc, t, x, y, { size, color, bold, align }); return; }
+  const font = bold ? 'Helvetica-Bold' : 'Helvetica';
+  const body = sanitizePdfText(String(t ?? ''));
+  doc.font(font);
+  let fs = size;
+  let lines = wrapLines(doc, body, font, fs, maxW);
+  while (fs > 4.4 && (lines.length > maxLines || lines.some((ln) => doc.fontSize(fs).widthOfString(ln) > maxW))) {
+    fs = Math.round((fs - 0.2) * 100) / 100;
+    lines = wrapLines(doc, body, font, fs, maxW);
+  }
+  // vertical layout: center the line block on the bar track (rowH 18)
+  const lineH = fs * 1.18;
+  let ly = y + (18 - lines.length * lineH) / 2 + 0.6;
+  doc.fontSize(fs).fillColor(color);
+  for (const ln of lines) {
+    const w = doc.widthOfString(ln);
+    const tx = align === 'right' ? x - w : x;
+    doc.text(ln, tx, ly, { lineBreak: false });
+    ly += lineH;
+  }
+}
+
 /** Horizontal grid lines + right-aligned tick labels. Returns the plot rect. */
 function yGrid(
   doc: PDFKit.PDFDocument,
@@ -128,7 +164,8 @@ export function barChartV(
     const bh = Math.max(0, (v / maxV) * ph);
     const bx = px + slot * i + (slot - bw) / 2;
     const isLast = i === n - 1;
-    const color = o.colors?.[i] ?? (o.highlightLast === false ? (o.barColor ?? C.accent) : isLast ? C.accent : '#F59E0B');
+    // DESAIN-SIMPEL: neutral gray bars, current period darker (no amber)
+    const color = o.colors?.[i] ?? (o.highlightLast === false ? (o.barColor ?? C.bar) : isLast ? C.barCur : C.bar);
     doc.fillColor(color).roundedRect(bx, py + ph - bh, bw, bh, 1.5).fill();
     tinyText(doc, fmt(v), bx + bw / 2, py + ph - bh - 8, { align: 'center', size: 5.6, color: C.inkSoft, bold: isLast, maxW: slot });
     tinyText(doc, labels[i] ?? '', bx + bw / 2, py + ph + 5, { align: 'center', size: 5.8, color: isLast ? C.ink : C.muted, bold: isLast, maxW: slot });
@@ -166,8 +203,14 @@ export function hBarChart(
     const by = y + rowH * i;
     const v = values[i];
     const bw = (Math.abs(v) / maxV) * pw;
-    const color = o.colors?.[i] ?? o.barColor ?? C.accent;
-    tinyText(doc, lb, x - 2, by + 3.5, { align: 'right', size: 6.5, color: o.boldLabels?.[i] ? C.ink : C.inkSoft, bold: o.boldLabels?.[i], maxW: labelW - 6 });
+    const color = o.colors?.[i] ?? o.barColor ?? C.bar;
+    // FIX (LABEL-ANCHOR — the REAL "masih terpotong"): row labels are
+    // right-anchored at the BAR START (px - 2), NOT at the page's left
+    // margin (x - 2). The old anchor made every right-aligned label
+    // extend LEFT from x≈40 and clip off-page whenever it was wider than
+    // 40pt — exactly the cut-off item names in the user's screenshot.
+    // FIX-TERPOTONG: label wraps onto ≤2 lines at a readable size.
+    tinyLines(doc, lb, px - 2, by, { align: 'right', size: 6.5, color: o.boldLabels?.[i] ? C.ink : C.inkSoft, bold: o.boldLabels?.[i], maxW: labelW - 6 });
     // track
     doc.fillColor(C.borderSoft).roundedRect(px, by + 3, pw, 9, 2.5).fill();
     doc.fillColor(color).roundedRect(px, by + 3, Math.max(2, bw), 9, 2.5).fill();

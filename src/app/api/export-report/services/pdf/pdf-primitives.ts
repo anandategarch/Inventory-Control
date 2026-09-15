@@ -5,8 +5,9 @@
 //  deleted) to .pdf. This module owns everything generic about laying
 //  out the report:
 //    - PAGE geometry (A4 + margins + content bounds)
-//    - C — the report color palette (charcoal ink + amber accent family;
-//      deliberately NO blue/indigo, matching the app's amber accent)
+//    - C — the report color palette (DESAIN-SIMPEL: plain ink/gray base,
+//      NO blue/indigo; the only chromatic colors in play are danger red /
+//      success green on change values + a light-red heat scale)
 //    - sanitizePdfText — WinAnsi-safe text (standard-font PDFs cannot
 //      encode arbitrary Unicode; also strips control chars — the same
 //      class of bug as the PG 22021 NUL sentinel incident)
@@ -49,23 +50,24 @@ export const PAGE = {
   W: 595.28,
   H: 841.89,
   M: 42,          // left/right margin
-  TOP: 100,       // content top (below the running header band)
-  BOTTOM: 60,     // content bottom (above the footer line)
+  TOP: 64,        // content top (below the small running header)
+  BOTTOM: 48,     // content bottom (no footer — plain bottom margin)
 };
 export const CONTENT_W = PAGE.W - PAGE.M * 2; // 511.28pt
 
 // ------------------------------------------------------------
-//  Color palette — charcoal ink + amber accent (no blue/indigo)
+//  Color palette — plain ink/gray base (DESAIN-SIMPEL: few colors,
+// natural hand-made look). The ONLY chromatic colors left in use are
+// danger red / success green on change values (user: "tetap pertahankan
+// warna perubahan untuk merah dan hijau") + a light-red heat scale.
 // ------------------------------------------------------------
 export const C = {
   ink: '#111827',
   inkSoft: '#374151',
   muted: '#6B7280',
   faint: '#9CA3AF',
-  accent: '#D97706',
-  accentDark: '#92400E',
-  accentLight: '#FEF3C7',
-  accentFaint: '#FFFBEB',
+  bar: '#9CA3AF',      // neutral chart bar (non-current periods)
+  barCur: '#4B5563',   // current-period chart bar (darker neutral)
   danger: '#DC2626',
   dangerDark: '#991B1B',
   dangerLight: '#FEE2E2',
@@ -75,9 +77,17 @@ export const C = {
   border: '#E5E7EB',
   borderSoft: '#F3F4F6',
   zebra: '#F8FAFC',
-  headerBg: '#111827',
+  headerBg: '#E5E7EB', // light gray table header (classic, not dark)
   cardBg: '#FAFAF9',
   white: '#FFFFFF',
+} as const;
+// Amber accents kept for API compatibility — the report no longer uses
+// them (DESAIN-SIMPEL).
+export const ACCENT_LEGACY = {
+  accent: '#D97706',
+  accentDark: '#92400E',
+  accentLight: '#FEF3C7',
+  accentFaint: '#FFFBEB',
 } as const;
 
 // ------------------------------------------------------------
@@ -260,8 +270,6 @@ export interface KpiCard {
   /** Optional third line (usually the growth/delta, colored). */
   sub?: string;
   subColor?: string;
-  /** Card accent — thin top bar color (default C.accent). */
-  accent?: string;
 }
 
 // ============================================================
@@ -363,23 +371,18 @@ export class Rpt {
     this.y += h + gapAfter;
   }
 
-  /** Numbered section header: amber chip + title + rule. */
-  sectionHeader(no: number, title: string, subtitle?: string): void {
-    this.ensure(58);
+  /** Plain numbered section header ("1. Ringkasan" + thin rule) —
+   *  DESAIN-SIMPEL: no colored chip, no caption line (user: "hapus
+   *  caption-caption seperti itu"). */
+  sectionHeader(no: number, title: string): void {
+    this.ensure(40);
     const top = this.y;
-    // amber number chip
-    this.doc.fillColor(C.accent).roundedRect(PAGE.M, top, 22, 22, 5).fill();
-    this.text(String(no).padStart(2, '0'), PAGE.M, top + 6.5, { font: 'Helvetica-Bold', size: 10, color: C.white, align: 'center', width: 22 });
-    // title
-    this.text(title, PAGE.M + 30, top + 1, { font: 'Helvetica-Bold', size: 13, color: C.ink });
-    let y2 = top + 17;
-    if (subtitle) {
-      this.text(subtitle, PAGE.M + 30, top + 18, { size: 7.5, color: C.muted });
-      y2 = top + 29;
-    }
-    // rule
-    this.doc.moveTo(PAGE.M, y2 + 4).lineTo(PAGE.W - PAGE.M, y2 + 4).lineWidth(1.2).strokeColor(C.accent).stroke();
-    this.y = y2 + 12;
+    this.text(`${no}.`, PAGE.M, top, { font: 'Helvetica-Bold', size: 12, color: C.ink });
+    this.text(title, PAGE.M + 18, top, { font: 'Helvetica-Bold', size: 12, color: C.ink });
+    // thin neutral rule
+    this.doc.moveTo(PAGE.M, top + 16).lineTo(PAGE.W - PAGE.M, top + 16)
+      .lineWidth(0.9).strokeColor(C.ink).stroke();
+    this.y = top + 16 + 10;
   }
 
   /** Small bold sub-heading (e.g. "6.1 Top Nominal"). */
@@ -390,9 +393,10 @@ export class Rpt {
     this.y += size + 4 + gapAfter;
   }
 
-  /** Light amber fact/note box (single wrapped paragraph). */
+  /** Light amber fact/note box (single wrapped paragraph).
+   *  DESAIN-SIMPEL defaults: plain neutral box. */
   noteBox(t: string, opts: { fill?: string; border?: string; color?: string } = {}): void {
-    const { fill = C.accentFaint, border = C.accentLight, color = C.accentDark } = opts;
+    const { fill = C.borderSoft, border = C.border, color = C.inkSoft } = opts;
     const s = sanitizePdfText(t);
     this.doc.font('Helvetica').fontSize(8);
     const h = this.doc.heightOfString(s, { width: CONTENT_W - 20 });
@@ -417,11 +421,11 @@ export class Rpt {
   }
 
   // ----------------------------------------------------------
-  //  KPI cards — up to 3 per row
+  //  KPI cards — simple bordered boxes, no accent bars
   // ----------------------------------------------------------
-  /** Grid of rounded KPI cards. Returns the number of rows drawn. */
-  kpiCards(cards: KpiCard[]): number {
-    const perRow = 3;
+  /** Grid of plain KPI cards. Returns the number of rows drawn. */
+  kpiCards(cards: KpiCard[], opts: { perRow?: number } = {}): number {
+    const perRow = Math.min(opts.perRow ?? 3, Math.max(1, cards.length));
     const gap = 8;
     const cardW = (CONTENT_W - gap * (perRow - 1)) / perRow;
     const cardH = 54;
@@ -432,10 +436,8 @@ export class Rpt {
       const top = this.y;
       rowCards.forEach((c, j) => {
         const x = PAGE.M + j * (cardW + gap);
-        this.doc.fillColor(C.white).roundedRect(x, top, cardW, cardH, 7).fill();
-        this.doc.lineWidth(0.8).strokeColor(C.border).roundedRect(x, top, cardW, cardH, 7).stroke();
-        // accent top bar
-        this.doc.fillColor(c.accent ?? C.accent).roundedRect(x, top, cardW, 3.2, 1.6).fill();
+        this.doc.fillColor(C.white).roundedRect(x, top, cardW, cardH, 5).fill();
+        this.doc.lineWidth(0.8).strokeColor(C.border).roundedRect(x, top, cardW, cardH, 5).stroke();
         // FIX-TERPOTONG: fit (shrink) instead of ellipsize — nothing cut
         this.text(c.label.toUpperCase(), x + 9, top + 10, { size: 6, color: C.muted, fit: true, width: cardW - 18 });
         this.text(c.value, x + 9, top + 21, { font: 'Helvetica-Bold', size: 13.5, color: C.ink, fit: true, width: cardW - 18 });
@@ -560,7 +562,7 @@ export class Rpt {
         let ly = this.y + (headerH - blockH) / 2 + 0.5;
         for (const ln of lines) {
           this.text(ln, hx + 4, ly, {
-            font: headFont, size: hSize, color: C.white,
+            font: headFont, size: hSize, color: C.ink,
             align: c.align === 'right' ? 'right' : c.align === 'center' ? 'center' : 'left',
             width: widths[ci] - PADX, fit: true,
           });
@@ -614,47 +616,33 @@ export class Rpt {
   }
 
   // ----------------------------------------------------------
-  //  Cover header band (page 1 only)
+  //  Cover header (page 1 only)
   // ----------------------------------------------------------
-  /** Full-width dark band with the report title. Height fixed 92pt. */
+  /** Plain cover header (DESAIN-SIMPEL: no dark band — just the title,
+   *  a subtitle, small right meta lines and a rule). Height ≈ 64pt. */
   coverBand(title: string, subtitle: string, rightLines: string[]): void {
-    const top = 36;
-    const h = 92;
-    this.doc.fillColor(C.ink).roundedRect(PAGE.M, top, CONTENT_W, h, 10).fill();
-    // amber left accent
-    this.doc.fillColor(C.accent).roundedRect(PAGE.M, top, 5, h, 2.5).fill();
-    this.text(title, PAGE.M + 18, top + 16, { font: 'Helvetica-Bold', size: 19, color: C.white, fit: true, width: CONTENT_W - 210 });
-    this.text(subtitle, PAGE.M + 18, top + 44, { font: 'Helvetica-Bold', size: 11.5, color: C.accent, fit: true, width: CONTENT_W - 210 });
+    const top = 42;
+    const h = 62;
+    this.text(title, PAGE.M, top, { font: 'Helvetica-Bold', size: 17, color: C.ink, fit: true, width: CONTENT_W - 190 });
+    this.text(subtitle, PAGE.M, top + 26, { font: 'Helvetica-Bold', size: 10, color: C.inkSoft, fit: true, width: CONTENT_W - 190 });
     // right-aligned meta lines (fit: shrink, never cut)
     rightLines.forEach((ln, i) => {
-      this.text(ln, PAGE.M + CONTENT_W - 190, top + 16 + i * 12, {
-        size: 7, color: i === 0 ? C.faint : '#D1D5DB', align: 'right', width: 172, fit: true,
+      this.text(ln, PAGE.M + CONTENT_W - 185, top + 3 + i * 11, {
+        size: 7, color: C.muted, align: 'right', width: 185, fit: true,
       });
     });
-    this.y = top + h + 10;
+    // rule under the cover header
+    this.doc.moveTo(PAGE.M, top + h).lineTo(PAGE.W - PAGE.M, top + h)
+      .lineWidth(1).strokeColor(C.ink).stroke();
+    this.y = top + h + 14;
   }
 
-  /** Thin running header for pages ≥ 2 (drawn post-hoc via switchToPage). */
+  /** Small gray running header for pages ≥ 2 (drawn post-hoc via
+   *  switchToPage). DESAIN-SIMPEL: plain text + thin rule, no band. */
   static runningHeader(doc: PDFKit.PDFDocument, label: string): void {
-    doc.fillColor(C.ink).rect(0, 0, PAGE.W, 26).fill();
-    doc.font('Helvetica-Bold').fontSize(8).fillColor(C.white);
-    doc.text(sanitizePdfText(label), PAGE.M, 9, { lineBreak: false });
-    doc.font('Helvetica').fontSize(7).fillColor('#9CA3AF');
-    const t = 'Inventory Control';
-    doc.text(t, PAGE.W - PAGE.M - doc.widthOfString(t), 10, { lineBreak: false });
-    // amber baseline
-    doc.moveTo(0, 26).lineTo(PAGE.W, 26).lineWidth(1.5).strokeColor(C.accent).stroke();
-  }
-
-  /** Footer line (drawn post-hoc on every page via switchToPage). */
-  static footer(doc: PDFKit.PDFDocument, pageIdx: number, pageCount: number, label: string): void {
-    const y = PAGE.H - 42;
-    doc.moveTo(PAGE.M, y).lineTo(PAGE.W - PAGE.M, y).lineWidth(0.7).strokeColor(C.border).stroke();
-    doc.font('Helvetica').fontSize(6.8).fillColor(C.muted);
-    doc.text(sanitizePdfText(label), PAGE.M, y + 5, { lineBreak: false });
-    const mid = `Halaman ${pageIdx + 1} dari ${pageCount}`;
-    doc.text(mid, (PAGE.W - doc.widthOfString(mid)) / 2, y + 5, { lineBreak: false });
-    const r = sanitizePdfText('Laporan Audit Inventory');
-    doc.text(r, PAGE.W - PAGE.M - doc.widthOfString(r), y + 5, { lineBreak: false });
+    doc.font('Helvetica-Bold').fontSize(7).fillColor(C.muted);
+    doc.text(sanitizePdfText(label), PAGE.M, 17, { lineBreak: false });
+    doc.moveTo(PAGE.M, 29).lineTo(PAGE.W - PAGE.M, 29)
+      .lineWidth(0.6).strokeColor(C.border).stroke();
   }
 }

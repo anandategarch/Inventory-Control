@@ -139,7 +139,16 @@ export async function GET(req: NextRequest) {
       kelompok: kelompok && kelompok !== 'all' ? kelompok : null,
       outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
       itemName: itemName || null, pic: pic || null,
-      extra: { sections: sections === null ? null : (sections.length > 0 ? [...sections].sort().join(',') : '__NONE__') },
+      // FIX (MASIH-TERPOTONG): the SWR cache serves STALE entries whose
+      // age is unbounded — after a report-design change the user kept
+      // downloading the PREVIOUS design's PDF (old truncations included)
+      // until a recompute landed. Version the key so every design change
+      // instantly forks a fresh cache namespace. Bump together with the
+      // `rv` param in useDashboardActions.ts handleExport.
+      extra: {
+        sections: sections === null ? null : (sections.length > 0 ? [...sections].sort().join(',') : '__NONE__'),
+        rv: '2',
+      },
     });
     const EXPORT_CACHE_TTL = 5 * 60 * 1000; // 5 min
 
