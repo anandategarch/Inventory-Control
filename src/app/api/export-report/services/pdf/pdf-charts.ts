@@ -15,9 +15,16 @@
 //  EXPORT-TRIM: paretoChart / stackedHBar / donutChart / sparkbars /
 //  flipPairBars were removed together with their report sections
 //  (pareto / peer / breakdown / itemTrend-row mode / flip).
+//
+//  FIX-TERPOTONG (user request: "jangan sampai ada yang terpotong"):
+//    tinyText no longer truncates over-wide labels to an ellipsis —
+//    it SHRINKS the font size stepwise to fit (same policy as
+//    Rpt.text's `fit`). tinyText also renders the MK_UP/MK_DN ▲/▼
+//    change markers (see pdf-primitives) so bar-chart value labels
+//    can carry increase/decrease marks.
 // ============================================================
 import type PDFKit from 'pdfkit';
-import { C, sanitizePdfText, truncateToWidth } from './pdf-primitives';
+import { C, sanitizePdfText, takeMark, markerExtra, drawTri } from './pdf-primitives';
 
 // ------------------------------------------------------------
 //  Shared helpers
@@ -45,14 +52,36 @@ function tinyText(
   opts: { size?: number; color?: string; bold?: boolean; align?: 'left' | 'right' | 'center'; maxW?: number } = {},
 ): void {
   const { size = 6, color = C.muted, bold = false, align = 'left', maxW } = opts;
-  let s = sanitizePdfText(t);
-  if (maxW != null) s = truncateToWidth(doc, s, bold ? 'Helvetica-Bold' : 'Helvetica', size, maxW);
-  doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(size).fillColor(color);
-  const w = doc.widthOfString(s);
+  const font = bold ? 'Helvetica-Bold' : 'Helvetica';
+  const [s, mk] = takeMark(String(t ?? ''));
+  const body = sanitizePdfText(s);
+  doc.font(font);
+  let fs = size;
+  if (maxW != null) {
+    // FIX-TERPOTONG: shrink-to-fit instead of ellipsize — never cut off.
+    const avail = maxW - (mk ? markerExtra(fs) : 0);
+    while (fs > 3.6 && doc.fontSize(fs).widthOfString(body) > avail) {
+      fs = Math.round((fs - 0.1) * 100) / 100;
+    }
+  }
+  doc.fontSize(fs).fillColor(color);
+  const w = doc.widthOfString(body);
   let tx = x;
   if (align === 'right') tx = x - w;
   if (align === 'center') tx = x - w / 2;
-  doc.text(s, tx, y, { lineBreak: false });
+  if (mk) {
+    const mh = Math.max(3, fs * 0.52);
+    const mw = mh * 1.15;
+    const cy = y + fs * 0.62 + 0.8;
+    if (align === 'left') {
+      drawTri(doc, tx, cy, mw, mh, mk === 1, color);
+      tx += mw + 1.2;
+    } else {
+      drawTri(doc, tx - mw - 1.2, cy, mw, mh, mk === 1, color);
+    }
+    doc.font(font).fontSize(fs).fillColor(color);
+  }
+  doc.text(body, tx, y, { lineBreak: false });
 }
 
 /** Horizontal grid lines + right-aligned tick labels. Returns the plot rect. */
@@ -206,23 +235,3 @@ export function lineChart(
     }
   }
 }
-
-// ------------------------------------------------------------
-//  Pareto chart — bars + cumulative % line + 80% marker
-// ------------------------------------------------------------
-
-// ------------------------------------------------------------
-//  Stacked horizontal bar — two segments (loss | surplus)
-// ------------------------------------------------------------
-
-// ------------------------------------------------------------
-//  Donut chart — ring segments (polygon approximation)
-// ------------------------------------------------------------
-
-// ------------------------------------------------------------
-//  Sparkbars — tiny axis-less bars (trend matrix rows)
-// ------------------------------------------------------------
-
-// ------------------------------------------------------------
-//  Flip pair bars — opposing signed bars around a center axis
-// ------------------------------------------------------------

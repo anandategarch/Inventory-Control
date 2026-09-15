@@ -12,6 +12,20 @@
 //  peer (Pembanding Peer-to-Peer), coverage (Lampiran). Explanatory
 //  caption/legend lines under tables were removed per the same request.
 //
+//  FIX-TERPOTONG (user request: "laporan banyak yang terpotong … untuk
+//  persen peningkatan beri tanda, penurunan juga"):
+//    - NO truncation anywhere: tables use the auto-fit engine in
+//      pdf-primitives (content-derived column widths + word-wrap +
+//      variable row height); fixed-width slots (KPI cards, cover band,
+//      chart labels) SHRINK the font instead of ellipsizing; filter
+//      chips wrap onto extra lines instead of being dropped.
+//    - ▲ / ▼ markers (MK_UP/MK_DN vector triangles) + semantic colors
+//      on EVERY change column: Perubahan (section 1), Selisih & Growth %
+//      (section 2), vs Hist (3.3-3.6), Selisih (4.1/4.2), Trend
+//      (section 5) and the KPI hero card deltas. Green = favorable
+//      direction, red = unfavorable (goodUp per metric — e.g. sales up
+//      is green, deviation up is red).
+//
 //  Section map (FIXED numbers — stable across ?sections= selections;
 //  keep in sync with EXPORT_SECTION_KEYS in validation.ts + the
 //  SECTIONS list in ExportDialog.tsx):
@@ -33,7 +47,7 @@ import PDFDocument from 'pdfkit';
 import { calcGrowth } from '@/lib/metrics';
 import { fmtIDR, fmtNum, fmtPct } from '../format-helpers';
 import type { ReportData, ReportContext } from '../types';
-import { Rpt, C, PAGE, CONTENT_W } from './pdf-primitives';
+import { Rpt, C, PAGE, CONTENT_W, MK_UP, markOf, stripMark } from './pdf-primitives';
 import {
   barChartV, hBarChart, lineChart,
 } from './pdf-charts';
@@ -55,13 +69,13 @@ function fmtDateTimeWIB(iso: string): string {
   return `${d.toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'medium', timeZone: 'Asia/Jakarta' })} WIB`;
 }
 
+/** FIX-TERPOTONG: vs-historical delta now carries the ▲/▼ marker. */
 function fmtVsHist(current: number | null, histAvg: number | null): string {
   if (current == null || histAvg == null || histAvg === 0) return '\u2014';
   const pctChange = (current - histAvg) / Math.abs(histAvg);
-  const pctStr = `${(Math.abs(pctChange) * 100).toFixed(1)}%`;
-  if (pctChange > 0) return `+ ${pctStr}`;
-  if (pctChange < 0) return `- ${pctStr}`;
-  return '= 0%';
+  if (pctChange === 0) return '= 0%';
+  const sign = pctChange > 0 ? '+ ' : '- ';
+  return markOf(pctChange) + sign + `${(Math.abs(pctChange) * 100).toFixed(1)}%`;
 }
 
 /** "Juli 2026" → "JUL 26" (same short format the docx export used). */
@@ -94,6 +108,19 @@ const tickIDR = (v: number): string => {
   if (Math.abs(v) >= 1_000) return `${(v / 1_000).toFixed(0)}Rb`;
   return v.toFixed(0);
 };
+
+/**
+ * FIX-TERPOTONG: semantic color for a change value given whether "up" is
+ * the favorable direction (goodUp). Neutral (0 / missing) → undefined.
+ */
+function chgColor(v: number | null | undefined, goodUp: boolean): string | undefined {
+  if (v == null || isNaN(v) || !isFinite(v) || v === 0) return undefined;
+  return v > 0 ? (goodUp ? C.success : C.danger) : (goodUp ? C.danger : C.success);
+}
+
+/** Marker + signed growth string ("▲+1.23%") — null → '—'. */
+const mkGrowth = (v: number | null | undefined): string =>
+  v != null ? markOf(v) + fmtPct(v, true) : '\u2014';
 
 // ============================================================
 //  Main entry — buildPdfReport
@@ -184,7 +211,8 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
     ],
   );
 
-  // filter chips
+  // filter chips — FIX-TERPOTONG: wrap onto a new line when the row is
+  // full instead of dropping the remaining filters.
   const f = data.filters;
   const fv = (v: string | null | undefined): string | null => (v && v !== 'all' ? v : null);
   const chips: Array<[string, string | null]> = [
@@ -192,30 +220,63 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
     ['ITEM', fv(f.itemName)], ['PIC', fv(f.pic)],
   ];
   {
+    const cs = 6.2;
+    const chH = cs + 5.5;
     let cx = PAGE.M;
-    const cy = rpt.y + 2;
+    let cy = rpt.y + 2;
+    const maxX = PAGE.W - PAGE.M;
     for (const [lb, val] of chips) {
-      const w = rpt.chip(val ? `${lb}: ${val}` : `${lb}: Semua`, cx, cy, val ? C.accentLight : C.borderSoft, val ? C.accentDark : C.muted, { size: 6.2 });
-      cx += w + 5;
-      if (cx > PAGE.W - PAGE.M - 120) break;
+      const txt = val ? `${lb}: ${val}` : `${lb}: Semua`;
+      doc.font('Helvetica-Bold').fontSize(cs);
+      const cw = doc.widthOfString(txt) + 10;
+      if (cx + cw > maxX) { cx = PAGE.M; cy += chH + 4; }
+      rpt.chip(txt, cx, cy, val ? C.accentLight : C.borderSoft, val ? C.accentDark : C.muted, { size: cs });
+      cx += cw + 5;
     }
-    rpt.y = cy + 16;
+    rpt.y = cy + chH + 12;
   }
 
-  // KPI hero cards (2 rows x 3) — only when the kpis row was fetched
+  // KPI hero cards (2 rows x 3) — only when the kpis row was fetched.
+  // FIX-TERPOTONG: every "vs …" sub now carries the ▲/▼ marker + a
+  // semantic color (green favorable / red unfavorable).
   if (kpisAvailable) {
     const devToSalesCur = s.sales.current > 0 ? s.nominalDeviasi.current / s.sales.current : null;
     // Hoisted (TS narrowing through repeated pm?.x ternaries inside one
     // object literal is fragile) — also avoids re-running calcGrowth.
     const lossG = pm != null && pm.totalLoss != null ? calcGrowth(s.totalLoss, pm.totalLoss) : null;
     const surplusG = pm != null && pm.totalSurplus != null ? calcGrowth(s.totalSurplus, pm.totalSurplus) : null;
+    const bomG = pm?.deviationToBom != null ? calcGrowth(s.deviationToBom, pm.deviationToBom) : null;
     rpt.kpiCards([
-      { label: 'Penjualan', value: fmtIDR(s.sales.current), sub: s.sales.growth != null ? `vs ${prevLabel}: ${fmtPct(s.sales.growth, true)}` : undefined, subColor: s.sales.growth != null ? (s.sales.growth >= 0 ? C.success : C.danger) : C.muted },
-      { label: 'Nominal Deviasi', value: fmtIDR(s.nominalDeviasi.current), sub: s.nominalDeviasi.growth != null ? `vs ${prevLabel}: ${fmtPct(s.nominalDeviasi.growth, true)}` : undefined, subColor: s.nominalDeviasi.growth != null ? (s.nominalDeviasi.growth > 0 ? C.danger : C.success) : C.muted, accent: C.danger },
-      { label: '% Deviasi To BOM', value: fmtPct(s.deviationToBom, false), sub: pm?.deviationToBom != null ? `vs ${prevLabel}: ${fmtPct(calcGrowth(s.deviationToBom, pm.deviationToBom), true)}` : undefined, subColor: C.muted },
-      { label: 'Total LOSS', value: fmtIDR(s.totalLoss), sub: lossG != null ? `vs ${prevLabel}: ${fmtPct(lossG, true)}` : undefined, subColor: lossG != null ? (lossG > 0 ? C.danger : C.success) : C.muted, accent: C.danger },
-      { label: 'Total SURPLUS', value: fmtIDR(s.totalSurplus), sub: surplusG != null ? `vs ${prevLabel}: ${fmtPct(surplusG, true)}` : undefined, subColor: surplusG != null ? (surplusG > 0 ? C.danger : C.success) : C.muted, accent: C.success },
-      { label: '% Nominal Deviasi to Sales', value: fmtPct(devToSalesCur, false), sub: pm != null ? `Loss/Sales ${fmtPct(s.lossToSales, false)} \u00B7 Surplus/Sales ${fmtPct(s.surplusToSales, false)}` : undefined, subColor: C.muted },
+      {
+        label: 'Penjualan', value: fmtIDR(s.sales.current),
+        sub: s.sales.growth != null ? `${markOf(s.sales.growth)}vs ${prevLabel}: ${fmtPct(s.sales.growth, true)}` : undefined,
+        subColor: chgColor(s.sales.growth, true) ?? C.muted,
+      },
+      {
+        label: 'Nominal Deviasi', value: fmtIDR(s.nominalDeviasi.current),
+        sub: s.nominalDeviasi.growth != null ? `${markOf(s.nominalDeviasi.growth)}vs ${prevLabel}: ${fmtPct(s.nominalDeviasi.growth, true)}` : undefined,
+        subColor: chgColor(s.nominalDeviasi.growth, false) ?? C.muted, accent: C.danger,
+      },
+      {
+        label: '% Deviasi To BOM', value: fmtPct(s.deviationToBom, false),
+        sub: bomG != null ? `${markOf(bomG)}vs ${prevLabel}: ${fmtPct(bomG, true)}` : undefined,
+        subColor: chgColor(bomG, false) ?? C.muted,
+      },
+      {
+        label: 'Total LOSS', value: fmtIDR(s.totalLoss),
+        sub: lossG != null ? `${markOf(lossG)}vs ${prevLabel}: ${fmtPct(lossG, true)}` : undefined,
+        subColor: chgColor(lossG, false) ?? C.muted, accent: C.danger,
+      },
+      {
+        label: 'Total SURPLUS', value: fmtIDR(s.totalSurplus),
+        sub: surplusG != null ? `${markOf(surplusG)}vs ${prevLabel}: ${fmtPct(surplusG, true)}` : undefined,
+        subColor: chgColor(surplusG, false) ?? C.muted, accent: C.success,
+      },
+      {
+        label: '% Nominal Deviasi to Sales', value: fmtPct(devToSalesCur, false),
+        sub: pm != null ? `Loss/Sales ${fmtPct(s.lossToSales, false)} \u00B7 Surplus/Sales ${fmtPct(s.surplusToSales, false)}` : undefined,
+        subColor: C.muted,
+      },
     ]);
   }
 
@@ -256,34 +317,37 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
     const devToSalesPrev = (s.sales.previous != null && s.sales.previous > 0 && s.nominalDeviasi.previous != null)
       ? s.nominalDeviasi.previous / s.sales.previous
       : null;
-    const g = (v: number | null): string => (v != null ? fmtPct(v, true) : '\u2014');
+    // [label, current, change value (marker + color source), previous, goodUp]
+    const defs: Array<[string, string, number | null, string, boolean]> = [
+      ['Penjualan', fmtIDR(s.sales.current), s.sales.growth, fmtIDR(s.sales.previous), true],
+      ['Nominal Deviasi', fmtIDR(s.nominalDeviasi.current), s.nominalDeviasi.growth, fmtIDR(s.nominalDeviasi.previous), false],
+      ['% Nominal Deviasi to Sales', fmtPct(devToSalesCur, false), devToSalesCur != null && devToSalesPrev != null ? calcGrowth(devToSalesCur, devToSalesPrev) : null, fmtPct(devToSalesPrev, false), false],
+      ['QTY BOM', fmtNum(s.qtyBom.current), s.qtyBom.growth, fmtNum(s.qtyBom.previous), true],
+      ['QTY Deviasi', fmtNum(s.qtyDeviasi.current), s.qtyDeviasi.growth, fmtNum(s.qtyDeviasi.previous), false],
+      ['% Deviasi To BOM', fmtPct(s.deviationToBom, false), pm?.deviationToBom != null ? calcGrowth(s.deviationToBom, pm.deviationToBom) : null, pm?.deviationToBom != null ? fmtPct(pm.deviationToBom, false) : '\u2014', false],
+      ['QTY Waste', fmtNum(s.qtyWaste.current), s.qtyWaste.growth, fmtNum(s.qtyWaste.previous), false],
+      ['QTY Susut', fmtNum(s.qtySusut.current), s.qtySusut.growth, fmtNum(s.qtySusut.previous), false],
+      ['QTY Trial', fmtNum(s.qtyTrial.current), s.qtyTrial.growth, fmtNum(s.qtyTrial.previous), false],
+      ['QTY Loss/Surplus', fmtNum(s.qtyLossSurplus.current), s.qtyLossSurplus.growth, fmtNum(s.qtyLossSurplus.previous), false],
+      ['Loss/Surplus Qty', fmtNum(s.residualLossQty), pm?.residualLossQty != null ? calcGrowth(s.residualLossQty, pm.residualLossQty) : null, pm?.residualLossQty != null ? fmtNum(pm.residualLossQty) : '\u2014', false],
+      ['Loss/Surplus %', fmtPct(s.residualLossPct, false), pm?.residualLossPct != null ? calcGrowth(s.residualLossPct, pm.residualLossPct) : null, pm?.residualLossPct != null ? fmtPct(pm.residualLossPct, false) : '\u2014', false],
+      ['Total LOSS', fmtIDR(s.totalLoss), pm?.totalLoss != null ? calcGrowth(s.totalLoss, pm.totalLoss) : null, pm?.totalLoss != null ? fmtIDR(pm.totalLoss) : '\u2014', false],
+      ['Total SURPLUS', fmtIDR(s.totalSurplus), pm?.totalSurplus != null ? calcGrowth(s.totalSurplus, pm.totalSurplus) : null, pm?.totalSurplus != null ? fmtIDR(pm.totalSurplus) : '\u2014', false],
+      ['% Loss to Sales', fmtPct(s.lossToSales, false), pm?.lossToSales != null ? calcGrowth(s.lossToSales, pm.lossToSales) : null, pm?.lossToSales != null ? fmtPct(pm.lossToSales, false) : '\u2014', false],
+      ['% Surplus to Sales', fmtPct(s.surplusToSales, false), pm?.surplusToSales != null ? calcGrowth(s.surplusToSales, pm.surplusToSales) : null, pm?.surplusToSales != null ? fmtPct(pm.surplusToSales, false) : '\u2014', false],
+    ];
     rpt.table({
       cols: [
-        { header: 'Metrik', w: 172 },
-        { header: currLabel, w: 118, align: 'right' },
-        { header: 'Perubahan', w: 90, align: 'right' },
-        { header: prevLabel, w: 131.28, align: 'right' },
+        { header: 'Metrik' },
+        { header: currLabel, align: 'right' },
+        { header: 'Perubahan', align: 'right' },
+        { header: prevLabel, align: 'right' },
       ],
       boldFirst: true,
-      rowText: (row) => (row[2].startsWith('-') ? C.danger : undefined),
-      rows: [
-        ['Penjualan', fmtIDR(s.sales.current), g(s.sales.growth), fmtIDR(s.sales.previous)],
-        ['Nominal Deviasi', fmtIDR(s.nominalDeviasi.current), g(s.nominalDeviasi.growth), fmtIDR(s.nominalDeviasi.previous)],
-        ['% Nominal Deviasi to Sales', fmtPct(devToSalesCur, false), devToSalesCur != null && devToSalesPrev != null ? fmtPct(calcGrowth(devToSalesCur, devToSalesPrev), true) : '\u2014', fmtPct(devToSalesPrev, false)],
-        ['QTY BOM', fmtNum(s.qtyBom.current), g(s.qtyBom.growth), fmtNum(s.qtyBom.previous)],
-        ['QTY Deviasi', fmtNum(s.qtyDeviasi.current), g(s.qtyDeviasi.growth), fmtNum(s.qtyDeviasi.previous)],
-        ['% Deviasi To BOM', fmtPct(s.deviationToBom, false), pm?.deviationToBom != null ? fmtPct(calcGrowth(s.deviationToBom, pm.deviationToBom), true) : '\u2014', pm?.deviationToBom != null ? fmtPct(pm.deviationToBom, false) : '\u2014'],
-        ['QTY Waste', fmtNum(s.qtyWaste.current), g(s.qtyWaste.growth), fmtNum(s.qtyWaste.previous)],
-        ['QTY Susut', fmtNum(s.qtySusut.current), g(s.qtySusut.growth), fmtNum(s.qtySusut.previous)],
-        ['QTY Trial', fmtNum(s.qtyTrial.current), g(s.qtyTrial.growth), fmtNum(s.qtyTrial.previous)],
-        ['QTY Loss/Surplus', fmtNum(s.qtyLossSurplus.current), g(s.qtyLossSurplus.growth), fmtNum(s.qtyLossSurplus.previous)],
-        ['Loss/Surplus Qty', fmtNum(s.residualLossQty), pm?.residualLossQty != null ? fmtPct(calcGrowth(s.residualLossQty, pm.residualLossQty), true) : '\u2014', pm?.residualLossQty != null ? fmtNum(pm.residualLossQty) : '\u2014'],
-        ['Loss/Surplus %', fmtPct(s.residualLossPct, false), pm?.residualLossPct != null ? fmtPct(calcGrowth(s.residualLossPct, pm.residualLossPct), true) : '\u2014', pm?.residualLossPct != null ? fmtPct(pm.residualLossPct, false) : '\u2014'],
-        ['Total LOSS', fmtIDR(s.totalLoss), pm?.totalLoss != null ? fmtPct(calcGrowth(s.totalLoss, pm.totalLoss), true) : '\u2014', pm?.totalLoss != null ? fmtIDR(pm.totalLoss) : '\u2014'],
-        ['Total SURPLUS', fmtIDR(s.totalSurplus), pm?.totalSurplus != null ? fmtPct(calcGrowth(s.totalSurplus, pm.totalSurplus), true) : '\u2014', pm?.totalSurplus != null ? fmtIDR(pm.totalSurplus) : '\u2014'],
-        ['% Loss to Sales', fmtPct(s.lossToSales, false), pm?.lossToSales != null ? fmtPct(calcGrowth(s.lossToSales, pm.lossToSales), true) : '\u2014', pm?.lossToSales != null ? fmtPct(pm.lossToSales, false) : '\u2014'],
-        ['% Surplus to Sales', fmtPct(s.surplusToSales, false), pm?.surplusToSales != null ? fmtPct(calcGrowth(s.surplusToSales, pm.surplusToSales), true) : '\u2014', pm?.surplusToSales != null ? fmtPct(pm.surplusToSales, false) : '\u2014'],
-      ],
+      rows: defs.map((d) => [d[0], d[1], mkGrowth(d[2]), d[3]]),
+      // FIX-TERPOTONG: ▲/▼ + semantic color on the Perubahan column only
+      // (the rest of the row stays neutral ink).
+      cellColor: (row, ri, ci) => (ci === 2 ? chgColor(defs[ri]?.[2], defs[ri]?.[4] ?? false) : undefined),
     });
   }
 
@@ -296,41 +360,50 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
     const devToSalesPrev = (s.sales.previous != null && s.sales.previous > 0 && s.nominalDeviasi.previous != null)
       ? s.nominalDeviasi.previous / s.sales.previous
       : null;
-    const vr = (label: string, cur: number | null, prev: number | null, fmt: typeof fmtIDR, growth: number | null): string[] => [
-      label, fmt(cur), fmt(prev),
-      cur != null && prev != null ? fmt(cur - prev) : '\u2014',
-      growth != null ? fmtPct(growth, true) : '\u2014',
-    ];
-    const rr = (label: string, cur: number | null, prev: number | null, growth: number | null): string[] => [
-      label, fmtPct(cur, false), fmtPct(prev, false),
-      cur != null && prev != null ? fmtPp(cur - prev) : '\u2014',
-      growth != null ? fmtPct(growth, true) : '\u2014',
-    ];
-    const growthRows: string[][] = [
-      vr('Penjualan (Rp)', s.sales.current, s.sales.previous, fmtIDR, s.sales.growth),
-      vr('Nominal Deviasi (Rp)', s.nominalDeviasi.current, s.nominalDeviasi.previous, fmtIDR, s.nominalDeviasi.growth),
-      vr('QTY BOM', s.qtyBom.current, s.qtyBom.previous, fmtNum, s.qtyBom.growth),
-      vr('QTY Deviasi', s.qtyDeviasi.current, s.qtyDeviasi.previous, fmtNum, s.qtyDeviasi.growth),
-      vr('QTY Waste', s.qtyWaste.current, s.qtyWaste.previous, fmtNum, s.qtyWaste.growth),
-      vr('QTY Susut', s.qtySusut.current, s.qtySusut.previous, fmtNum, s.qtySusut.growth),
-      vr('QTY Trial', s.qtyTrial.current, s.qtyTrial.previous, fmtNum, s.qtyTrial.growth),
-      vr('Total LOSS (Rp)', s.totalLoss, pm?.totalLoss ?? null, fmtIDR, pm?.totalLoss != null ? calcGrowth(s.totalLoss, pm.totalLoss) : null),
-      vr('Total SURPLUS (Rp)', s.totalSurplus, pm?.totalSurplus ?? null, fmtIDR, pm?.totalSurplus != null ? calcGrowth(s.totalSurplus, pm.totalSurplus) : null),
-      rr('% Deviasi To BOM', s.deviationToBom, pm?.deviationToBom ?? null, pm?.deviationToBom != null ? calcGrowth(s.deviationToBom, pm.deviationToBom) : null),
-      rr('% Nominal Deviasi to Sales', devToSalesCur, devToSalesPrev, devToSalesCur != null && devToSalesPrev != null ? calcGrowth(devToSalesCur, devToSalesPrev) : null),
-      rr('% Loss to Sales', s.lossToSales, pm?.lossToSales ?? null, pm?.lossToSales != null ? calcGrowth(s.lossToSales, pm.lossToSales) : null),
-      rr('% Surplus to Sales', s.surplusToSales, pm?.surplusToSales ?? null, pm?.surplusToSales != null ? calcGrowth(s.surplusToSales, pm.surplusToSales) : null),
+    type GRow = { cells: string[]; g: number | null; goodUp: boolean };
+    const vr = (label: string, cur: number | null, prev: number | null, fmt: typeof fmtIDR, growth: number | null, goodUp: boolean): GRow => ({
+      cells: [
+        label, fmt(cur), fmt(prev),
+        cur != null && prev != null ? markOf(cur - prev) + fmt(cur - prev) : '\u2014',
+        mkGrowth(growth),
+      ],
+      g: growth, goodUp,
+    });
+    const rr = (label: string, cur: number | null, prev: number | null, growth: number | null, goodUp: boolean): GRow => ({
+      cells: [
+        label, fmtPct(cur, false), fmtPct(prev, false),
+        cur != null && prev != null ? markOf(cur - prev) + fmtPp(cur - prev) : '\u2014',
+        mkGrowth(growth),
+      ],
+      g: growth, goodUp,
+    });
+    const defs: GRow[] = [
+      vr('Penjualan (Rp)', s.sales.current, s.sales.previous, fmtIDR, s.sales.growth, true),
+      vr('Nominal Deviasi (Rp)', s.nominalDeviasi.current, s.nominalDeviasi.previous, fmtIDR, s.nominalDeviasi.growth, false),
+      vr('QTY BOM', s.qtyBom.current, s.qtyBom.previous, fmtNum, s.qtyBom.growth, true),
+      vr('QTY Deviasi', s.qtyDeviasi.current, s.qtyDeviasi.previous, fmtNum, s.qtyDeviasi.growth, false),
+      vr('QTY Waste', s.qtyWaste.current, s.qtyWaste.previous, fmtNum, s.qtyWaste.growth, false),
+      vr('QTY Susut', s.qtySusut.current, s.qtySusut.previous, fmtNum, s.qtySusut.growth, false),
+      vr('QTY Trial', s.qtyTrial.current, s.qtyTrial.previous, fmtNum, s.qtyTrial.growth, false),
+      vr('Total LOSS (Rp)', s.totalLoss, pm?.totalLoss ?? null, fmtIDR, pm?.totalLoss != null ? calcGrowth(s.totalLoss, pm.totalLoss) : null, false),
+      vr('Total SURPLUS (Rp)', s.totalSurplus, pm?.totalSurplus ?? null, fmtIDR, pm?.totalSurplus != null ? calcGrowth(s.totalSurplus, pm.totalSurplus) : null, false),
+      rr('% Deviasi To BOM', s.deviationToBom, pm?.deviationToBom ?? null, pm?.deviationToBom != null ? calcGrowth(s.deviationToBom, pm.deviationToBom) : null, false),
+      rr('% Nominal Deviasi to Sales', devToSalesCur, devToSalesPrev, devToSalesCur != null && devToSalesPrev != null ? calcGrowth(devToSalesCur, devToSalesPrev) : null, false),
+      rr('% Loss to Sales', s.lossToSales, pm?.lossToSales ?? null, pm?.lossToSales != null ? calcGrowth(s.lossToSales, pm.lossToSales) : null, false),
+      rr('% Surplus to Sales', s.surplusToSales, pm?.surplusToSales ?? null, pm?.surplusToSales != null ? calcGrowth(s.surplusToSales, pm.surplusToSales) : null, false),
     ];
     rpt.table({
       cols: [
-        { header: 'Metrik', w: 160 },
-        { header: currLabel, w: 95, align: 'right' },
-        { header: prevLabel, w: 95, align: 'right' },
-        { header: 'Selisih', w: 93, align: 'right' },
-        { header: 'Growth %', w: 68.28, align: 'right' },
+        { header: 'Metrik' },
+        { header: currLabel, align: 'right' },
+        { header: prevLabel, align: 'right' },
+        { header: 'Selisih', align: 'right' },
+        { header: 'Growth %', align: 'right' },
       ],
       boldFirst: true,
-      rows: growthRows,
+      rows: defs.map((d) => d.cells),
+      // ▲/▼ + semantic color on the Selisih and Growth % columns.
+      cellColor: (row, ri, ci) => (ci === 3 || ci === 4 ? chgColor(defs[ri]?.g, defs[ri]?.goodUp ?? false) : undefined),
     });
 
     // growth % horizontal bars — sales/BOM up = green (good); deviation
@@ -356,7 +429,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
         x: PAGE.M, y: rpt.y, w: CONTENT_W, h: 18 * withGrowth.length,
         labels: withGrowth.map((r) => r.label),
         values: withGrowth.map((r) => r.g * 100),
-        fmt: (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`,
+        fmt: (v) => markOf(v) + `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`,
         colors: withGrowth.map((r) => (r.g > 0 ? (r.goodUp ? C.success : C.danger) : r.goodUp ? C.danger : C.success)),
         labelW: 118, valW: 52,
       });
@@ -370,36 +443,36 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   if (hasSection('topItems')) {
     rpt.sectionHeader(3, 'Item Prioritas (Top Items)', `Enam ranking \u2014 ${currLabel}; kolom ${prevLabel} + ${histLabel} sebagai pembanding`);
 
-    // 7.1 nominal
+    // 3.1 nominal
     if (data.topItemsByNominal.length > 0) {
       rpt.subhead(`3.1 Nominal Deviasi Terbesar (${currLabel})`, { size: 8.5 });
       rpt.table({
         cols: [
-          { header: '#', w: 22, align: 'center' },
-          { header: 'Item', w: 190 },
-          { header: 'Resto', w: 92 },
-          { header: 'Satuan', w: 62 },
-          { header: `Nominal Deviasi ${currLabel}`, w: 145.28, align: 'right' },
+          { header: '#', align: 'center' },
+          { header: 'Item' },
+          { header: 'Resto' },
+          { header: 'Satuan' },
+          { header: `Nominal Deviasi ${currLabel}`, align: 'right' },
         ],
         rows: data.topItemsByNominal.map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.satuan ?? '\u2014', fmtIDR(it.nominalDeviasi)]),
-        rowText: (row) => (row[4].startsWith('-') ? C.danger : undefined),
+        rowText: (row) => (stripMark(row[4]).startsWith('-') ? C.danger : undefined),
       });
     }
-    // 7.2 devBom
+    // 3.2 devBom
     if (data.topItemsByDevBom.length > 0) {
       rpt.subhead(`3.2 % Deviasi To BOM Terbesar (${currLabel})`, { size: 8.5 });
       rpt.table({
         cols: [
-          { header: '#', w: 22, align: 'center' },
-          { header: 'Item', w: 190 },
-          { header: 'Resto', w: 92 },
-          { header: 'Satuan', w: 62 },
-          { header: `% Deviasi To BOM ${currLabel}`, w: 145.28, align: 'right' },
+          { header: '#', align: 'center' },
+          { header: 'Item' },
+          { header: 'Resto' },
+          { header: 'Satuan' },
+          { header: `% Deviasi To BOM ${currLabel}`, align: 'right' },
         ],
         rows: data.topItemsByDevBom.map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.satuan ?? '\u2014', fmtPct(it.devBom, false)]),
       });
     }
-    // 7.3-7.6 category tables
+    // 3.3-3.6 category tables
     const catTables: Array<{ title: string; items: Array<{ itemName: string; outletCode: string; satuan?: string | null; qty: number; nominal: number; prevQty: number | null; histAvgQty: number | null }> }> = [
       { title: `3.3 QTY Waste Terbesar (${currLabel})`, items: data.topItemsByWaste.map((r) => ({ itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, qty: r.qtyWaste, nominal: r.nominalWaste, prevQty: r.prevQty, histAvgQty: r.histAvgQty })) },
       { title: `3.4 QTY Susut Terbesar (${currLabel})`, items: data.topItemsBySusut.map((r) => ({ itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, qty: r.qtySusut, nominal: r.nominalSusut, prevQty: r.prevQty, histAvgQty: r.histAvgQty })) },
@@ -411,15 +484,15 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       rpt.subhead(ct2.title, { size: 8.5 });
       rpt.table({
         cols: [
-          { header: '#', w: 20, align: 'center' },
-          { header: 'Item', w: 128 },
-          { header: 'Satuan', w: 42 },
-          { header: 'Resto', w: 62 },
-          { header: `QTY ${currLabel}`, w: 56, align: 'right' },
-          { header: `QTY ${prevLabel}`, w: 56, align: 'right' },
-          { header: histLabel, w: 52, align: 'right' },
-          { header: 'vs Hist', w: 44, align: 'right' },
-          { header: 'Nominal (Rp)', w: 51.28, align: 'right' },
+          { header: '#', align: 'center' },
+          { header: 'Item' },
+          { header: 'Satuan' },
+          { header: 'Resto' },
+          { header: `QTY ${currLabel}`, align: 'right' },
+          { header: `QTY ${prevLabel}`, align: 'right' },
+          { header: histLabel, align: 'right' },
+          { header: 'vs Hist', align: 'right' },
+          { header: 'Nominal (Rp)', align: 'right' },
         ],
         rows: ct2.items.map((it, i) => [
           String(i + 1),
@@ -432,6 +505,14 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
           fmtVsHist(it.qty, it.histAvgQty),
           fmtIDR(it.nominal),
         ]),
+        // ▲/▼ semantic color on the "vs Hist" delta column (up = bad —
+        // these are all deviation-magnitude rankings).
+        cellColor: (row, ri, ci) => {
+          if (ci !== 7) return undefined;
+          const it = ct2.items[ri];
+          if (it == null || it.histAvgQty == null || it.histAvgQty === 0) return undefined;
+          return it.qty > it.histAvgQty ? C.danger : it.qty < it.histAvgQty ? C.success : undefined;
+        },
       });
     }
   }
@@ -448,15 +529,15 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       rpt.subhead(`4.1 Memburuk \u2014 selisih nominal terbesar (${currLabel} vs ${prevLabel})`, { size: 8.5 });
       rpt.table({
         cols: [
-          { header: '#', w: 20, align: 'center' },
-          { header: 'Item', w: 160 },
-          { header: 'Resto', w: 66 },
-          { header: 'Area', w: 66 },
-          { header: `Nominal ${currLabel}`, w: 68, align: 'right' },
-          { header: `Nominal ${prevLabel}`, w: 68, align: 'right' },
-          { header: 'Selisih', w: 63.28, align: 'right' },
+          { header: '#', align: 'center' },
+          { header: 'Item' },
+          { header: 'Resto' },
+          { header: 'Area' },
+          { header: `Nominal ${currLabel}`, align: 'right' },
+          { header: `Nominal ${prevLabel}`, align: 'right' },
+          { header: 'Selisih', align: 'right' },
         ],
-        rows: va.topWorsened.map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.area, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)]),
+        rows: va.topWorsened.map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.area, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), markOf(it.selisih) + fmtIDR(it.selisih)]),
         rowText: () => C.danger,
       });
       const worsened = va.topWorsened.slice(0, 10);
@@ -476,15 +557,15 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       rpt.subhead(`4.2 Membaik \u2014 penurunan selisih nominal terbesar (${currLabel} vs ${prevLabel})`, { size: 8.5 });
       rpt.table({
         cols: [
-          { header: '#', w: 20, align: 'center' },
-          { header: 'Item', w: 160 },
-          { header: 'Resto', w: 66 },
-          { header: 'Area', w: 66 },
-          { header: `Nominal ${currLabel}`, w: 68, align: 'right' },
-          { header: `Nominal ${prevLabel}`, w: 68, align: 'right' },
-          { header: 'Selisih', w: 63.28, align: 'right' },
+          { header: '#', align: 'center' },
+          { header: 'Item' },
+          { header: 'Resto' },
+          { header: 'Area' },
+          { header: `Nominal ${currLabel}`, align: 'right' },
+          { header: `Nominal ${prevLabel}`, align: 'right' },
+          { header: 'Selisih', align: 'right' },
         ],
-        rows: va.topImproved.map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.area, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), fmtIDR(it.selisih)]),
+        rows: va.topImproved.map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.area, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), markOf(it.selisih) + fmtIDR(it.selisih)]),
         rowText: () => C.success,
       });
     }
@@ -532,36 +613,38 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       .slice(0, 15);
 
     const maxCell = topItems.reduce((acc, [, m]) => Math.max(acc, ...shownMonths.map((ml) => m.get(ml) ?? 0)), 0);
+    // FIX-TERPOTONG: trend % carries the ▲/▼ marker (BARU = item muncul
+    // baru → treated as an increase).
     const trendPct = (m: Map<string, number>): string => {
       const curIdx = shownMonths.reduce((acc, ml, i) => (m.has(ml) ? i : acc), -1);
       if (curIdx < 1) return '\u2014';
       const cur = m.get(shownMonths[curIdx]) ?? 0;
       const prev = m.get(shownMonths[curIdx - 1]) ?? 0;
-      if (prev === 0) return cur === 0 ? '= 0%' : 'BARU';
+      if (prev === 0) return cur === 0 ? '= 0%' : MK_UP + 'BARU';
       const pct = ((cur - prev) / Math.abs(prev)) * 100;
-      return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
+      return markOf(pct) + `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
     };
 
     const monthLabel = (ml: string): string => shortMonth(ml);
     rpt.table({
       cols: [
-        { header: 'Item', w: 118 },
-        ...shownMonths.map((ml) => ({ header: monthLabel(ml), w: 44, align: 'right' as const })),
-        { header: 'Trend', w: 85.28, align: 'right' },
+        { header: 'Item' },
+        ...shownMonths.map((ml) => ({ header: monthLabel(ml), align: 'right' as const })),
+        { header: 'Trend', align: 'right' },
       ],
       rows: topItems.map(([name, m]) => [
         name,
         ...shownMonths.map((ml) => (m.has(ml) ? fmtIDR(m.get(ml)) : '\u2014')),
         trendPct(m),
       ]),
-      cellFill: (row, ci) => {
+      cellFill: (row, _ri, ci) => {
         if (ci === 0 || ci > shownMonths.length) return undefined;
         const ml = shownMonths[ci - 1];
         const val = byItem.get(row[0])?.get(ml) ?? 0;
         return heatColor(val, maxCell);
       },
       rowText: (row) => {
-        const t = row[row.length - 1];
+        const t = stripMark(row[row.length - 1]);
         return t.startsWith('+') || t === 'BARU' ? C.danger : t.startsWith('-') ? C.success : undefined;
       },
     });
@@ -574,12 +657,12 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
     rpt.sectionHeader(6, 'Trend Antar Periode', `Rangkaian ${data.period.weekLabel} lintas bulan \u2014 nominal, rasio, loss/surplus`);
     rpt.table({
       cols: [
-        { header: 'Periode', w: 92 },
-        { header: 'Nominal Deviasi', w: 92, align: 'right' },
-        { header: '% Dev/BOM', w: 70, align: 'right' },
-        { header: 'Loss (Rp)', w: 85, align: 'right' },
-        { header: 'Surplus (Rp)', w: 85, align: 'right' },
-        { header: '% Nominal to Sales', w: 87.28, align: 'right' },
+        { header: 'Periode' },
+        { header: 'Nominal Deviasi', align: 'right' },
+        { header: '% Dev/BOM', align: 'right' },
+        { header: 'Loss (Rp)', align: 'right' },
+        { header: 'Surplus (Rp)', align: 'right' },
+        { header: '% Nominal to Sales', align: 'right' },
       ],
       rows: data.trend.map((t) => [
         t.weekLabel,
