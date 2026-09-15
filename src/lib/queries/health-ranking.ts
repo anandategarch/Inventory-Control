@@ -111,6 +111,10 @@ export interface VarianceRow {
   itemName: string;
   outletCode: string;
   area: string;
+  // REFINE-2 (user: "section yang belum punya satuan tambahain"): per-item
+  // unit of measure for the "Satuan" column in export tables 4.1/4.2
+  // (MAX(ir."satuan") — GROUP BY-safe, same convention as top-items H-2b).
+  satuan?: string | null;
   currentNominal: number;
   previousNominal: number;
   selisih: number;        // signed delta (currentNominal - previousNominal)
@@ -150,6 +154,7 @@ export async function queryVarianceAnalysis(
       i.name as "itemName",
       o.code as "outletCode",
       c.area,
+      c."satuan",
       COALESCE(c."nominalDeviasi", 0) as "currentNominal",
       COALESCE(p."nominalDeviasi", 0) as "previousNominal",
       COALESCE(c."nominalDeviasi", 0) - COALESCE(p."nominalDeviasi", 0) as "selisih",
@@ -196,7 +201,7 @@ export async function queryVarianceAnalysis(
       FROM variance v
     )
     SELECT
-      "itemName", "outletCode", "area", "currentNominal", "previousNominal", "selisih",
+      "itemName", "outletCode", "area", "satuan", "currentNominal", "previousNominal", "selisih",
       "currentAbsNominal", "previousAbsNominal", "delta", "direction", "varianceDirection"
     FROM ranked
     WHERE rw <= 5 OR ri <= 5
@@ -207,6 +212,7 @@ export async function queryVarianceAnalysis(
     itemName: r.itemName,
     outletCode: r.outletCode,
     area: r.area,
+    satuan: r.satuan ?? null,
     currentNominal: Number(r.currentNominal) || 0,
     previousNominal: Number(r.previousNominal) || 0,
     selisih: Number(r.selisih) || 0,

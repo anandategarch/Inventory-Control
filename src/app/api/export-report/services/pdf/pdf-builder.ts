@@ -70,6 +70,24 @@
 //    - NEW section 8 "Item yang Kemungkinan Plus Minus antar Periode"
 //      (flip-flop items, renamed per request).
 //
+//  REFINE-2 (user request, 3 items):
+//    - Minimal cover header ("Hapus Bagian Header laporan itu. Cukup buat:
+//      Ringkasan Laporan Deviasi / 1042.KWGGAL · September") — the
+//      timestamp, "Periode pembanding", "Rata-rata per bulan" meta lines
+//      and the Area/Kelompok/Resto/Item/PIC filter line are GONE; the
+//      running header on pages 2+ mirrors the same minimal form.
+//    - "Section yang belum punya satuan tambahain" — tables 4.1, 4.2, 5,
+//      7.2 and 8 gain the per-item "Satuan" column (SQL: MAX(satuan) on
+//      variance / item-trend-matrix / flip-ranking / peer-comparison-items;
+//      cache sv forked so pre-deploy rows can't render '—').
+//    - "Data yang terpotong di laporan sama" — root cause of the awkward
+//      subhead wrap ("3.3 QTY Waste Terbesar (SEP 26 / W1)") fixed in
+//      pdf-primitives Rpt.text: pdfkit's LineWrapper measures per-word
+//      WITHOUT cross-word kerning, so some strings exceeded the passed
+//      `width: tw + 2` by a fraction and wrapped their last word. No width
+//      is passed anymore (see the note there) — single-line draws stay
+//      single-line, deterministically.
+//
 //  Section map (FIXED numbers — stable across ?sections= selections;
 //  keep in sync with EXPORT_SECTION_KEYS in validation.ts + the
 //  SECTIONS list in ExportDialog.tsx):
@@ -107,12 +125,6 @@ function fmtPp(v: number | null | undefined): string {
   const pp = v * 100;
   const sign = pp > 0 ? '+' : '';
   return `${sign}${pp.toFixed(2)} pp`;
-}
-
-function fmtDateTimeWIB(iso: string): string {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '\u2014';
-  return `${d.toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'medium', timeZone: 'Asia/Jakarta' })} WIB`;
 }
 
 /** FIX-TERPOTONG: vs-historical delta now carries the ▲/▼ marker. */
@@ -243,8 +255,13 @@ export async function buildPdfReport(
       drawReport(doc, data, ctx);
       // Post-hoc pass: small running header on pages 2+ only — no footer
       // (DESAIN-SIMPEL: user asked to remove the page footer entirely).
+      // REFINE-2: mirrors the new minimal cover header —
+      // "Ringkasan Laporan Deviasi · <resto> · <bulan>".
       const range = doc.bufferedPageRange();
-      const headerLabel = `Ringkasan Laporan Deviasi  \u00B7  ${shortMonth(data.period.monthLabel)} ${prettyWeek(data.period.weekLabel)}`;
+      const outletLabel = data.filters.outletCode && data.filters.outletCode !== 'all'
+        ? data.filters.outletCode
+        : 'Semua Resto';
+      const headerLabel = `Ringkasan Laporan Deviasi  \u00B7  ${outletLabel}  \u00B7  ${titleCase(data.period.monthLabel.split(/\s+/)[0] ?? '')}`;
       for (let i = range.start; i < range.start + range.count; i++) {
         if (i === range.start) continue;
         doc.switchToPage(i);
@@ -275,58 +292,36 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
 
   // ---- dynamic labels ------------------------------------------------
   const currLabel = shortMonth(data.period.monthLabel);
-  const prevLabel = data.period.comparisonMonth ? shortMonth(data.period.comparisonMonth) : '\u2014';
   // REFINE-1: the comparator is NAMED, not called "pembanding" — full form
   // for titles/subs ("Agustus 2026 Week 1"), column form for table headers
   // ("AGU 26 W1"). Every period reference also carries its week now (the
   // comparison is week-scoped).
   const currCol = periodCol(data.period.monthLabel, data.period.weekLabel);
   const prevCol = data.period.comparisonMonth ? periodCol(data.period.comparisonMonth, data.period.comparisonWeek) : '\u2014';
-  const currFull = periodFull(data.period.monthLabel, data.period.weekLabel);
   const cmpFull = data.period.comparisonMonth ? periodFull(data.period.comparisonMonth, data.period.comparisonWeek) : null;
-  const histMonths = ctx.historicalPeriods.map((p) => shortMonth(p.monthLabel)).filter((m) => m !== '\u2014');
-  // REFINE-1: "HIST (…)" renamed "Rata-rata per Bulan" (user: "ganti jadi
-  // istilah rata rata tiap bulan nya") — the values ARE the per-month
-  // average across the same-week historical months.
-  const histRange = histMonths.length >= 2
-    ? `${histMonths[0]}-${histMonths[histMonths.length - 1]}`
-    : histMonths.length === 1
-      ? histMonths[0]
-      : currLabel;
   const restoName = data.filters.outletCode && data.filters.outletCode !== 'all' ? data.filters.outletCode : 'Semua Resto';
   const s = data.executiveSummary;
   const pm = s._prevMetrics;
   const kpisAvailable = hasSection('exec') || hasSection('growth');
 
   // ============================================================
-  //  COVER — plain title header + filter line + KPI cards
+  //  COVER — plain title header + KPI cards
   //  (DESAIN-SIMPEL: no TOC — the report is short and every section is
   //  numbered; nothing navigational was lost)
+  //  REFINE-2 (user: "Hapus Bagian Header laporan itu. Cukup buat:
+  //  Ringkasan Laporan Deviasi / 1042.KWGGAL · September"): the cover
+  //  header is now ONLY the title + the outlet · month subtitle — the
+  //  timestamp / "Periode pembanding" / "Rata-rata per bulan" meta lines
+  //  AND the Area/Kelompok/Resto/Item/PIC filter line are GONE. The named
+  //  comparator period still lives in every section title + KPI sub where
+  //  it matters; the week scope stays visible in the table column headers
+  //  (e.g. "SEP 26 W1").
   // ============================================================
   rpt.coverBand(
     'Ringkasan Laporan Deviasi',
-    `${restoName}  \u00B7  ${titleCase(data.period.monthLabel)} \u2014 ${prettyWeek(data.period.weekLabel)}`,
-    [
-      fmtDateTimeWIB(new Date().toISOString()),
-      // REFINE-1: "Periode pembanding: Agustus 2026 Week 1" — the chosen
-      // period named explicitly (was the bare word "Pembanding: AGU 26").
-      cmpFull ? `Periode pembanding: ${cmpFull}` : 'Tanpa periode pembanding',
-      `Rata-rata per bulan: ${histRange}`,
-    ],
+    `${restoName}  \u00B7  ${titleCase(data.period.monthLabel.split(/\s+/)[0] ?? '')}`,
+    [],
   );
-
-  // Filter line — DESAIN-SIMPLEL: one plain wrapped text line instead of
-  // rounded chips (the chips read "AI-generated"). FIX-TERPOTONG: the
-  // paragraph wraps, so no filter is ever dropped.
-  {
-    const f = data.filters;
-    const fv = (v: string | null | undefined): string => (v && v !== 'all' ? v : 'Semua');
-    const filterLine = [
-      `Area: ${fv(f.area)}`, `Kelompok: ${fv(f.kelompok)}`, `Resto: ${fv(f.outletCode)}`,
-      `Item: ${fv(f.itemName)}`, `PIC: ${fv(f.pic)}`,
-    ].join('   \u00B7   ');
-    rpt.para(filterLine, { size: 7, color: C.muted, gapAfter: 12 });
-  }
 
   // KPI hero cards (2 × 2) — only when the kpis row was fetched.
   // DESAIN-SIMPEL: Total LOSS / Total SURPLUS cards REMOVED (user
@@ -608,16 +603,19 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
         cols: [
           { header: '#', align: 'center' },
           { header: 'Item' },
+          // REFINE-2 (user: "section yang belum punya satuan tambahain"):
+          // per-item unit of measure, same convention as the 3.x tables.
+          { header: 'Satuan' },
           { header: 'Resto' },
           { header: 'Area' },
           { header: `Nominal ${currCol}`, align: 'right' },
           { header: `Nominal ${prevCol}`, align: 'right' },
           { header: 'Selisih', align: 'right' },
         ],
-        rows: va.topWorsened.map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.area, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), markOf(it.selisih) + fmtIDR(it.selisih)]),
+        rows: va.topWorsened.map((it, i) => [String(i + 1), it.itemName, it.satuan ?? '\u2014', it.outletCode, it.area, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), markOf(it.selisih) + fmtIDR(it.selisih)]),
         // DESAIN-SIMPEL: only the Selisih column carries the change color
         // (red — worsened); the rest of the row stays neutral ink.
-        cellColor: (_row, _ri, ci) => (ci === 6 ? C.danger : undefined),
+        cellColor: (_row, _ri, ci) => (ci === 7 ? C.danger : undefined),
       });
       const worsened = va.topWorsened.slice(0, 10);
       rpt.ensure(18 * worsened.length + 24);
@@ -638,16 +636,17 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
         cols: [
           { header: '#', align: 'center' },
           { header: 'Item' },
+          { header: 'Satuan' },
           { header: 'Resto' },
           { header: 'Area' },
           { header: `Nominal ${currCol}`, align: 'right' },
           { header: `Nominal ${prevCol}`, align: 'right' },
           { header: 'Selisih', align: 'right' },
         ],
-        rows: va.topImproved.map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.area, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), markOf(it.selisih) + fmtIDR(it.selisih)]),
+        rows: va.topImproved.map((it, i) => [String(i + 1), it.itemName, it.satuan ?? '\u2014', it.outletCode, it.area, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), markOf(it.selisih) + fmtIDR(it.selisih)]),
         // DESAIN-SIMPEL: only the Selisih column carries the change color
         // (green — improved); the rest of the row stays neutral ink.
-        cellColor: (_row, _ri, ci) => (ci === 6 ? C.success : undefined),
+        cellColor: (_row, _ri, ci) => (ci === 7 ? C.success : undefined),
       });
     }
   }
@@ -716,20 +715,30 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
     };
 
     const monthLabel = (ml: string): string => shortMonth(ml);
+    // REFINE-2: per-item satuan (unit of measure) — MAX across the item's
+    // period rows ("section yang belum punya satuan tambahain").
+    const satuanByItem = new Map<string, string>();
+    for (const r of data.itemTrendMatrix) {
+      if (r.satuan != null) satuanByItem.set(r.itemName, r.satuan);
+    }
     rpt.table({
       cols: [
         { header: 'Item' },
+        { header: 'Satuan' },
         ...shownMonths.map((ml) => ({ header: monthLabel(ml), align: 'right' as const })),
         { header: 'Trend', align: 'right' },
       ],
       rows: topItems.map(([name, m]) => [
         name,
+        satuanByItem.get(name) ?? '\u2014',
         ...shownMonths.map((ml) => (m.has(ml) ? fmtIDR(m.get(ml)) : '\u2014')),
         trendPct(m),
       ]),
       cellFill: (row, _ri, ci) => {
-        if (ci === 0 || ci > shownMonths.length) return undefined;
-        const ml = shownMonths[ci - 1];
+        // ci 0 = Item, ci 1 = Satuan, last = Trend — no heat fill; the month
+        // columns start at ci 2.
+        if (ci <= 1 || ci > shownMonths.length + 1) return undefined;
+        const ml = shownMonths[ci - 2];
         const val = byItem.get(row[0])?.get(ml) ?? 0;
         return heatColor(val, heatScale);
       },
@@ -846,6 +855,9 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
         rpt.table({
           cols: [
             { header: 'Item' },
+            // REFINE-2 ("section yang belum punya satuan tambahain"): unit of
+            // measure per item — the QTY columns are satuan-denominated.
+            { header: 'Satuan' },
             { header: 'QTY Deviasi', align: 'right' },
             { header: '% Deviasi To BOM', align: 'right' },
             { header: 'Rata-rata QTY Peer', align: 'right' },
@@ -853,6 +865,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
           ],
           rows: pc.items.map((it) => [
             it.itemName,
+            it.satuan ?? '\u2014',
             fmtNum(it.target.qtyDeviasi),
             fmtPct(it.target.devBom, false),
             it.peerAvg != null ? fmtNum(it.peerAvg.qtyDeviasi) : '\u2014',
@@ -884,6 +897,9 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
         cols: [
           { header: '#', align: 'center' },
           { header: 'Item' },
+          // REFINE-2 ("section yang belum punya satuan tambahain"): the QTY
+          // Deviasi / Net columns are satuan-denominated.
+          { header: 'Satuan' },
           { header: 'Periode 1' },
           { header: 'QTY Deviasi P1', align: 'right' },
           { header: 'Periode 2' },
@@ -892,15 +908,15 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
         ],
         rows: flipRows.map((it, i) => {
           const fp = it.topFlips[0];
-          return [String(i + 1), it.itemName, fp.period1Label, fmtNum(fp.qtyP1), fp.period2Label, fmtNum(fp.qtyP2), fmtNum(fp.net)];
+          return [String(i + 1), it.itemName, it.satuan ?? '\u2014', fp.period1Label, fmtNum(fp.qtyP1), fp.period2Label, fmtNum(fp.qtyP2), fmtNum(fp.net)];
         }),
         // Plus/minus coloring on the two QTY columns — the visual point of
         // the section: green = plus (surplus side), red = minus (loss side).
         cellColor: (_row, ri, ci) => {
-          if (ci !== 3 && ci !== 5) return undefined;
+          if (ci !== 4 && ci !== 6) return undefined;
           const fp = flipRows[ri]?.topFlips[0];
           if (fp == null) return undefined;
-          const v = ci === 3 ? fp.qtyP1 : fp.qtyP2;
+          const v = ci === 4 ? fp.qtyP1 : fp.qtyP2;
           return v < 0 ? C.danger : v > 0 ? C.success : undefined;
         },
       });

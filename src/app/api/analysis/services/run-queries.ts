@@ -152,7 +152,10 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
   const healthRankingSqlPromise = queryOutletHealthRanking(week, month, filterOpts, thresholds.HIGH_LOSS_NOMINAL_THRESHOLD);
   const varianceAnalysisPromise = cachedSharedQuery(
     'q-variance',
-    { month, week, compareWeek: prevWeek, compareMonth: prevMonth, filters: filterOpts },
+    // REFINE-2: sv forks a fresh cache namespace — the row shape gained
+    // `satuan` (export tables 4.1/4.2 "Satuan" column). Bumped HERE TOO so
+    // the analysis pipeline + export route share ONE cache namespace.
+    { month, week, compareWeek: prevWeek, compareMonth: prevMonth, filters: filterOpts, extra: { sv: 2 } },
     () => queryVarianceAnalysis(week, month, prevWeek, prevMonth, filterOpts),
   );
   const growthDriversPromise = queryGrowthDrivers(week, month, prevWeek, prevMonth, filterOpts);

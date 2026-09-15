@@ -38,6 +38,9 @@ export interface PeerOutletEntry {
 export interface GroupedItem {
   itemId: number;
   itemName: string;
+  /** MAX(ir."satuan") — per-item unit of measure (REFINE-2: "Satuan"
+   *  column in the export report's 7.2 breakdown). */
+  satuan?: string | null;
   target: { qtyDeviasi: number; devBom: number; nominal: number };
   peers: PeerOutletEntry[];
 }
@@ -128,6 +131,7 @@ export async function queryPeerComparisonItems(
     interface PeerComparisonItemRawRow {
       itemId: number | bigint;
       itemName: string;
+      targetSatuan: string | null;
       targetQtyDeviasi: number | bigint;
       targetDevBom: number | bigint;
       targetNominal: number | bigint;
@@ -164,6 +168,7 @@ export async function queryPeerComparisonItems(
       ),
       target_top_items AS (
         SELECT i.id as "itemId", i.name as "itemName",
+          MAX(ir."satuan") as "targetSatuan",
           SUM(ABS(ir."qtyDeviasi")) as "targetQtyDeviasi",
           CASE WHEN SUM(ABS(ir."qtyBom")) > 0
             THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
@@ -183,6 +188,7 @@ export async function queryPeerComparisonItems(
       SELECT
         tti."itemId",
         tti."itemName",
+        tti."targetSatuan",
         tti."targetQtyDeviasi",
         tti."targetDevBom",
         tti."targetNominal",
@@ -201,7 +207,7 @@ export async function queryPeerComparisonItems(
         AND ir."outletId" = po."outletId"
         AND ir."monthLabel" = ${month}
         ${weekFilter}
-      GROUP BY tti."itemId", tti."itemName", tti."targetQtyDeviasi",
+      GROUP BY tti."itemId", tti."itemName", tti."targetSatuan", tti."targetQtyDeviasi",
                tti."targetDevBom", tti."targetNominal",
                po."outletId", po."outletCode", po."outletName", po."isTarget"
       ORDER BY tti."targetNominal" DESC, po."outletCode"
@@ -216,6 +222,7 @@ export async function queryPeerComparisonItems(
         itemMap.set(itemId, {
           itemId,
           itemName: r.itemName,
+          satuan: r.targetSatuan ?? null,
           target: {
             qtyDeviasi: Number(r.targetQtyDeviasi) || 0,
             devBom: Number(r.targetDevBom) || 0,

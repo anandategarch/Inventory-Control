@@ -354,9 +354,18 @@ export class Rpt {
       }
       this.doc.font(font).fontSize(size).fillColor(color);
     }
-    // lineBreak:false keeps pdfkit from wrapping mid-call; the explicit
-    // x/y (not doc.x/doc.y) makes this position-stable.
-    this.doc.text(s, tx, y, { lineBreak: false, width: tw + 2 });
+    // REFINE-2 (user: "data yang terpotong di laporan sama"): NO width is
+    // passed to pdfkit — with `width` set, pdfkit runs its LineWrapper even
+    // under lineBreak:false, and the wrapper measures WORD-BY-WORD without
+    // cross-word kerning, so a string whose word-width sum exceeds its
+    // whole-string kerned width (e.g. "3.3 QTY Waste Terbesar (SEP 26 W1)")
+    // wrapped its last word onto a second line ("…(SEP 26 / W1)") whenever
+    // `tw + 2` was tighter than the un-kerned sum. Without `width`, pdfkit
+    // takes its no-wrapper branch (split on '\n' only) — a single line is
+    // drawn exactly once. `fit`/`ellipsize` already guaranteed the string
+    // fits `avail` before we get here, and alignment is applied manually
+    // via `tx` above, so the wrapper's width was never doing useful work.
+    this.doc.text(s, tx, y, { lineBreak: false });
   }
 
   /** Wrapped paragraph starting at the cursor, full content width. */
@@ -622,12 +631,15 @@ export class Rpt {
   //  Cover header (page 1 only)
   // ----------------------------------------------------------
   /** Plain cover header (DESAIN-SIMPEL: no dark band — just the title,
-   *  a subtitle, small right meta lines and a rule). Height ≈ 64pt. */
+   *  a subtitle, small right meta lines and a rule). Height ≈ 64pt.
+   *  REFINE-2: with NO right meta lines the title/subtitle may use the full
+   *  content width (the 190pt right reservation was only for the meta). */
   coverBand(title: string, subtitle: string, rightLines: string[]): void {
     const top = 42;
     const h = 62;
-    this.text(title, PAGE.M, top, { font: 'Helvetica-Bold', size: 17, color: C.ink, fit: true, width: CONTENT_W - 190 });
-    this.text(subtitle, PAGE.M, top + 26, { font: 'Helvetica-Bold', size: 10, color: C.inkSoft, fit: true, width: CONTENT_W - 190 });
+    const rightW = rightLines.length > 0 ? 190 : 0;
+    this.text(title, PAGE.M, top, { font: 'Helvetica-Bold', size: 17, color: C.ink, fit: true, width: CONTENT_W - rightW });
+    this.text(subtitle, PAGE.M, top + 26, { font: 'Helvetica-Bold', size: 10, color: C.inkSoft, fit: true, width: CONTENT_W - rightW });
     // right-aligned meta lines (fit: shrink, never cut)
     rightLines.forEach((ln, i) => {
       this.text(ln, PAGE.M + CONTENT_W - 185, top + 3 + i * 11, {

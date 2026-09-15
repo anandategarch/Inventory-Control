@@ -193,6 +193,8 @@ export interface TopCatItemLossSurplus {
  *  peer outlets. Peer averages cover non-target, non-missing peers only. */
 export interface PeerItemRow {
   itemName: string;
+  /** MAX(ir."satuan") — per-item unit of measure (REFINE-2: "Satuan" column). */
+  satuan?: string | null;
   target: { qtyDeviasi: number; devBom: number; nominal: number };
   peerAvg: { qtyDeviasi: number; devBom: number; nominal: number } | null;
   peerCount: number;

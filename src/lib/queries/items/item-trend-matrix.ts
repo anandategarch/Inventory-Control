@@ -32,6 +32,9 @@ export interface ItemTrendMatrixRow {
   /** Sortable month key ("2026-07") from SourceFile — null when absent. */
   monthKey: string | null;
   itemName: string;
+  /** MAX(ir."satuan") — per-item unit of measure (REFINE-2: "Satuan"
+   *  column in the export's Trend Item table; GROUP BY-safe). */
+  satuan?: string | null;
   /** SUM(ABS(nominalDeviasi)) for this (month, item) — magnitude. */
   absNominal: number;
   /** SUM(nominalDeviasi) — SIGNED (negative = net LOSS side). */
@@ -68,6 +71,7 @@ export async function queryItemTrendMatrix(
     monthLabel: string;
     monthKey: string | null;
     itemName: string;
+    satuan: string | null;
     absNominal: number | bigint;
     nominalDeviasi: number | bigint;
   }>>`
@@ -75,6 +79,7 @@ export async function queryItemTrendMatrix(
       ir."monthLabel",
       MAX(sf."monthKey") as "monthKey",
       i.name as "itemName",
+      MAX(ir."satuan") as "satuan",
       COALESCE(SUM(ABS(ir."nominalDeviasi")), 0) as "absNominal",
       COALESCE(SUM(ir."nominalDeviasi"), 0) as "nominalDeviasi"
     FROM "InventoryRecord" ir
@@ -91,6 +96,7 @@ export async function queryItemTrendMatrix(
       monthLabel: r.monthLabel,
       monthKey: r.monthKey ?? null,
       itemName: r.itemName,
+      satuan: r.satuan ?? null,
       absNominal: Number(r.absNominal) || 0,
       nominalDeviasi: Number(r.nominalDeviasi) || 0,
     })),

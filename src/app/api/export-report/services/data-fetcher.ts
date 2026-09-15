@@ -352,7 +352,10 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     needVariance
       ? cachedSharedQuery(
           'q-variance',
-          { month, week, compareWeek: prevWeek, compareMonth: prevMonth, filters: filterOpts },
+          // REFINE-2: sv forks a fresh cache namespace — the row shape gained
+          // `satuan` (tables 4.1/4.2's new "Satuan" column); cached rows from
+          // the previous deploy lack it and would render '—' for a TTL cycle.
+          { month, week, compareWeek: prevWeek, compareMonth: prevMonth, filters: filterOpts, extra: { sv: 2 } },
           () => queryVarianceAnalysis(week, month, prevWeek, prevMonth, filterOpts),
         )
       : Promise.resolve({ topWorsened: [], topImproved: [] }),
@@ -519,7 +522,9 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     // dashboard's item-trend route key which also keys on week only).
     needItemTrend ? cachedSharedQuery(
       'q-item-trend-matrix',
-      { month: 'ALL', week, filters: { ...filterOpts, itemName: null }, extra: { weekLabel: week } },
+      // REFINE-2: sv — row shape gained `satuan` (section 5's "Satuan"
+      // column); see the q-variance note above.
+      { month: 'ALL', week, filters: { ...filterOpts, itemName: null }, extra: { weekLabel: week, sv: 2 } },
       () => queryItemTrendMatrix(week, { ...filterOpts, itemName: null }),
     ) : Promise.resolve(null),
     // REFINE-1 — section 'flip': top-N items whose QTY deviasi sign flips
@@ -529,7 +534,9 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     // itemName is ignored by the query itself (it scans all items).
     needFlip ? cachedSharedQuery(
       'q-flip-rank',
-      { month, week, filters: filterOpts, extra: { limit: 10, weekLabel: week } },
+      // REFINE-2: sv — row shape gained `satuan` (section 8's "Satuan"
+      // column); see the q-variance note above.
+      { month, week, filters: filterOpts, extra: { limit: 10, weekLabel: week, sv: 2 } },
       () => queryFlipRanking(filterOpts, week, month, 10),
     ) : Promise.resolve(null),
     // REFINE-1 — per-(item, area) category averages (current period).
@@ -682,7 +689,9 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
           // non-missing peers only.
           const itemsRes = await cachedSharedQuery(
             'q-peer-cmp-items',
-            { month, week, filters: filterOpts, extra: { target: targetCode, top: 8 } },
+            // REFINE-2: sv — row shape gained `satuan` (7.2's "Satuan"
+            // column); see the q-variance note above.
+            { month, week, filters: filterOpts, extra: { target: targetCode, top: 8, sv: 2 } },
             () => queryPeerComparisonItems(targetCode as string, month, week, 'week', 8, kelompokParam),
           );
           const items: PeerItemRow[] = itemsRes.items.map((g) => {
@@ -694,7 +703,7 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
                   nominal: real.reduce((s, p) => s + p.nominal, 0) / real.length,
                 }
               : null;
-            return { itemName: g.itemName, target: g.target, peerAvg, peerCount: real.length };
+            return { itemName: g.itemName, satuan: g.satuan ?? null, target: g.target, peerAvg, peerCount: real.length };
           });
           peerComparison = {
             targetOutlet: { code: targetRow.outletCode, name: targetRow.outletName, area: targetRow.area },

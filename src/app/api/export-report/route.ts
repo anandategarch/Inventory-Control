@@ -147,10 +147,10 @@ export async function GET(req: NextRequest) {
       // `rv` param in useDashboardActions.ts handleExport.
       extra: {
         sections: sections === null ? null : (sections.length > 0 ? [...sections].sort().join(',') : '__NONE__'),
-        // REFINE-1: design/content change (sales secrecy, renamed metrics,
-        // new peer/flip sections, rata-rata columns) — bump together with
-        // the `rv` param in useDashboardActions.ts handleExport.
-        rv: '3',
+        // REFINE-2: design/content change (minimal header, Satuan columns in
+        // 4.1/4.2/5/7.2/8, phantom-wrap fix) — bump together with the `rv`
+        // param in useDashboardActions.ts handleExport.
+        rv: '4',
       },
     });
     const EXPORT_CACHE_TTL = 5 * 60 * 1000; // 5 min

@@ -86,6 +86,9 @@ export interface FlipPair {
 
 export interface FlipRankItem {
   itemName: string;
+  /** MAX(ir."satuan") across the item's periods — per-item unit of measure
+   *  (REFINE-2: "Satuan" column in export section 8). */
+  satuan: string | null;
   /** Total same-week consecutive pairs analyzed for this item. */
   totalPairs: number;
   /** Pairs where signs flip AND both non-zero. */
@@ -139,6 +142,8 @@ interface RawPeriodRow {
   weekLabel: string;
   monthKey: string | null;
   itemName: string;
+  /** MAX(ir."satuan") — per-item unit of measure (REFINE-2). */
+  satuan: string | null;
   /** SUM(ir."qtyDeviasi") — signed (positive = SURPLUS, negative = LOSS). */
   qtyDeviasiSigned: number;
 }
@@ -213,6 +218,7 @@ export async function queryFlipRanking(
       ir."weekLabel",
       MAX(sf."monthKey") as "monthKey",
       i.name as "itemName",
+      MAX(ir."satuan") as "satuan",
       COALESCE(SUM(ir."qtyDeviasi"), 0) as "qtyDeviasiSigned"
     FROM "InventoryRecord" ir
     JOIN "Item" i ON ir."itemId" = i.id
@@ -230,6 +236,7 @@ export async function queryFlipRanking(
     weekLabel: r.weekLabel,
     monthKey: r.monthKey ?? null,
     itemName: r.itemName,
+    satuan: r.satuan ?? null,
     qtyDeviasiSigned: Number(r.qtyDeviasiSigned) || 0,
   }));
 
@@ -330,8 +337,16 @@ export async function queryFlipRanking(
     allFlips.sort((a, b) => a.disparityPct - b.disparityPct);
     const topFlips = allFlips.slice(0, 3);
 
+    // REFINE-2: per-item satuan — MAX across the item's period rows
+    // (string MAX; stable for a single item whose satuan never changes).
+    const itemSatuan = itemRows.reduce<string | null>(
+      (acc, r) => (r.satuan != null && (acc == null || r.satuan > acc) ? r.satuan : acc),
+      null,
+    );
+
     items.push({
       itemName,
+      satuan: itemSatuan,
       totalPairs,
       flipCount,
       sempurnaCount,
