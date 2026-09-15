@@ -147,7 +147,10 @@ export async function GET(req: NextRequest) {
       // `rv` param in useDashboardActions.ts handleExport.
       extra: {
         sections: sections === null ? null : (sections.length > 0 ? [...sections].sort().join(',') : '__NONE__'),
-        rv: '2',
+        // REFINE-1: design/content change (sales secrecy, renamed metrics,
+        // new peer/flip sections, rata-rata columns) — bump together with
+        // the `rv` param in useDashboardActions.ts handleExport.
+        rv: '3',
       },
     });
     const EXPORT_CACHE_TTL = 5 * 60 * 1000; // 5 min

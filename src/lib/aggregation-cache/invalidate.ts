@@ -142,11 +142,18 @@ export async function invalidateAnalysisCache(): Promise<void> {
     // rule as the q-* above: a mutation that invalidates the analysis
     // payload must invalidate this query row too, otherwise export could
     // serve a pre-mutation trend-matrix row for up to 30 min.
-    // EXPORT-TRIM: 'q-pareto-item' / 'q-pareto-outlet' / 'q-flip-rank' /
-    // 'q-peer-cmp' removed — their export sections are gone and no other
-    // pipeline uses those cache ids (the /api/pareto, /api/flip-ranking and
-    // /api/peer-comparison routes cache at route level under their own keys).
+    // EXPORT-TRIM: 'q-pareto-item' / 'q-pareto-outlet' removed — their export
+    // sections are gone and no other pipeline uses those cache ids (the
+    // /api/pareto route caches at route level under its own key).
+    // REFINE-1: 'q-flip-rank' + 'q-peer-cmp' / 'q-peer-cmp-items' are BACK
+    // (export sections 8 + 7 returned), plus the new 'q-area-catavg'
+    // (per-(item, area) averages for the "Rata-rata Area" column) — same
+    // rule: mutations must kill these rows or export serves pre-mutation data.
     'q-item-trend-matrix',
+    // (q-peer-cmp-items is NOT covered by the 'q-peer-cmp' prefix — the
+    // \x1f sentinel right after 'q-peer-cmp' doesn't match the '-' in
+    // 'q-peer-cmp-items', so it needs its own entry.)
+    'q-flip-rank', 'q-peer-cmp', 'q-peer-cmp-items', 'q-area-catavg',
   ];
   await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }

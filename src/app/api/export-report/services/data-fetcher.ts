@@ -79,17 +79,28 @@ import {
   queryTopItemsByDevBom,
   queryTopItemsByAllCategories,
   queryHistoricalCategoryAvg,
+  // REFINE-1: per-(item, area) category averages — "Rata-rata Area"
+  // column in the export's 3.3-3.6 tables.
+  queryAreaCategoryAvg,
   // EXPORT-PDF: the item-trend matrix section query (re-exported via the
   // queries barrel).
   queryItemTrendMatrix,
+  // REFINE-1: section 7 peer-to-peer (renamed "Resto dengan Penjualan
+  // Kurang Lebih Sama") — outlet-level peers + per-item breakdown.
+  queryPeerComparison,
+  queryPeerComparisonItems,
 } from '@/lib/queries';
+// REFINE-1: section 8 flip items (renamed "Item yang Kemungkinan Plus Minus
+// antar Periode") — not in the queries barrel; direct module import.
+import { queryFlipRanking } from '@/lib/queries/items/flip-ranking';
 import { queryVarianceAnalysis } from '@/lib/queries/health-ranking';
 import { cachedSharedQuery, cachedSharedQueryMap, histPeriodsKeyParts } from '@/lib/queries/query-cache';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolveKelompokOutletCodes } from '@/lib/kelompok-resolver';
 import { buildInventoryWhere } from '@/lib/build-where';
 import { resolveComparePeriod } from '@/lib/period-resolver';
-import { withStatementTimeout } from '@/lib/queries/shared';
+import { withStatementTimeout, buildSqlFilters } from '@/lib/queries/shared';
+import type { AreaCategoryAvg } from '@/lib/queries/items/top-items';
 import { logger } from '@/lib/logger';
 import type { ExecSummaryRow } from '@/lib/queries/dashboard';
 import { EarlyHttpResponse } from '@/lib/early-http-response';
@@ -99,6 +110,7 @@ import type {
   ReportData,
   ReportContext,
   FetchedReport,
+  PeerItemRow,
 } from './types';
 
 // ============================================================
@@ -176,24 +188,31 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   // EXPORT-TRIM (user request): trimmed 13 → 6 sections — the removed keys
   // ('breakdown'/'area'/'outlets'/'pareto'/'flip'/'peer'/'coverage') are now
   // 400-rejected by validation.ts before this pipeline ever runs.
-  const ALL_EXPORT_SECTIONS = ['exec', 'growth', 'topItems', 'variance', 'itemTrend', 'trend'] as const;
+  // REFINE-1 (user request): + 'peer' (section 7 — Resto dengan Penjualan
+  // Kurang Lebih Sama) + 'flip' (section 8 — Item yang Kemungkinan Plus
+  // Minus antar Periode).
+  const ALL_EXPORT_SECTIONS = ['exec', 'growth', 'topItems', 'variance', 'itemTrend', 'trend', 'peer', 'flip'] as const;
   const need = new Set<string>(sections ?? ALL_EXPORT_SECTIONS);
   // Section → data dependencies (verified against pdf-builder.ts, not
   // assumed; EXPORT-TRIM: only the 6 kept sections): exec renders
   // executiveSummary (q-kpis + prev q-exec-summary); growth renders the
   // SAME execSummary (growth values + _prevMetrics need the prev-period
   // row); topItems renders the 6 top tables (q-top-nominal / q-top-devbom /
-  // q-topcat + prev q-topcat + 4× q-hist-catavg); variance → q-variance;
-  // itemTrend → q-item-trend-matrix; trend → q-trend. The header/footer
-  // need metadata only (no SQL).
+  // q-topcat + prev q-topcat + 4× q-hist-catavg + REFINE-1 q-area-catavg);
+  // variance → q-variance; itemTrend → q-item-trend-matrix; trend → q-trend;
+  // REFINE-1: peer → q-peer-cmp + q-peer-cmp-items (serial wave — the target
+  // must be resolved first); flip → q-flip-rank. The header/footer need
+  // metadata only (no SQL).
   const needExec = need.has('exec');
   const needGrowth = need.has('growth');
   const needTopItems = need.has('topItems');
   const needVariance = need.has('variance');
   const needTrend = need.has('trend');
+  const needPeer = need.has('peer');
+  const needFlip = need.has('flip');
   // EXPORT-TRIM: sections 'breakdown' / 'area' / 'outlets' / 'pareto' /
-  // 'flip' / 'peer' / 'coverage' removed — their need* gates + fetches went
-  // with them (see the section map above).
+  // 'coverage' removed — their need* gates + fetches went with them (see
+  // the section map above). 'flip' + 'peer' are BACK (REFINE-1).
   const needItemTrend = need.has('itemTrend');
   // The kpis row feeds executiveSummary (exec + growth sections + the cover
   // KPI cards). Cheap: shared cached q-* row.
@@ -378,6 +397,12 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     // even with 743 cached rows. Unwrap .rows here; `[]` stays the
     // off-section placeholder.
     itemTrendMatrixRes,
+    // REFINE-1 — section 8 "Item yang Kemungkinan Plus Minus antar Periode":
+    // flip ranking scoped to the exported week + month (null when off).
+    flipRankingRes,
+    // REFINE-1 — per-(item, area) category averages for the "Rata-rata
+    // Area" column in 3.3-3.6 (empty Map when topItems is off).
+    areaCatAvgMap,
   ] = await Promise.all([
     // PERF (TAHAP-2 / P2-9): kpis + trendAgg + category tops use the shared
     // per-query cache (same queryIds as the analysis pipeline).
@@ -406,21 +431,29 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     needTopItems
       ? cachedSharedQuery(
           'q-top-nominal',
-          { month, week, filters: filterOpts, extra: { limit: topNItems } },
+          // REFINE-1: sv forks a fresh cache namespace — the query's row shape
+          // gained `devBom` (3.1's new column) and cached pre-deploy rows lack
+          // it, which would render '—' in the new column for up to a TTL
+          // cycle after deploy.
+          { month, week, filters: filterOpts, extra: { limit: topNItems, sv: 2 } },
           () => queryTopItemsByNominal(week, month, filterOpts, topNItems),
         )
       : Promise.resolve([]),
     needTopItems
       ? cachedSharedQuery(
           'q-top-devbom',
-          { month, week, filters: filterOpts, extra: { limit: topNItems } },
+          // REFINE-1: sv — row shape gained `nominalDeviasi` (3.2's new
+          // column); see the q-top-nominal note above.
+          { month, week, filters: filterOpts, extra: { limit: topNItems, sv: 2 } },
           () => queryTopItemsByDevBom(week, month, filterOpts, topNItems),
         )
       : Promise.resolve([]),
     needTopItems
       ? cachedSharedQuery(
           'q-topcat',
-          { month, week, filters: filterOpts, extra: { limit: topNItems } },
+          // REFINE-1: sv — row shape gained `area` (drives the "Rata-rata
+          // Area" lookup); see the q-top-nominal note above.
+          { month, week, filters: filterOpts, extra: { limit: topNItems, sv: 2 } },
           () => queryTopItemsByAllCategories(week, month, filterOpts, topNItems),
         )
       : Promise.resolve({ waste: [], susut: [], trial: [], lossSurplus: [] }),
@@ -489,6 +522,25 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
       { month: 'ALL', week, filters: { ...filterOpts, itemName: null }, extra: { weekLabel: week } },
       () => queryItemTrendMatrix(week, { ...filterOpts, itemName: null }),
     ) : Promise.resolve(null),
+    // REFINE-1 — section 'flip': top-N items whose QTY deviasi sign flips
+    // between consecutive same-week periods ("plus minus antar periode").
+    // Scoped to the exported week + month (flips involving the selected
+    // month). Filters follow the dashboard scope (area/kelompok/outlet/pic);
+    // itemName is ignored by the query itself (it scans all items).
+    needFlip ? cachedSharedQuery(
+      'q-flip-rank',
+      { month, week, filters: filterOpts, extra: { limit: 10, weekLabel: week } },
+      () => queryFlipRanking(filterOpts, week, month, 10),
+    ) : Promise.resolve(null),
+    // REFINE-1 — per-(item, area) category averages (current period).
+    // Scoped by area ONLY: the benchmark is the whole area population
+    // ("rata-rata area di mana resto itu berada"), independent of the
+    // outlet/pic/kelompok filters the report itself runs under.
+    needTopItems ? cachedSharedQueryMap(
+      'q-area-catavg',
+      { month, week, filters: { area: filterOpts.area }, extra: {} },
+      () => queryAreaCategoryAvg(week, month, filterOpts.area),
+    ) : Promise.resolve(new Map<string, AreaCategoryAvg>()),
   ]);
   const topWasteRows = topCategories.waste;
   const topSusutRows = topCategories.susut;
@@ -515,26 +567,32 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     const key = `${r.itemName}|${r.outletCode}`;
     const prev = prevWasteMap.get(key);
     const hist = histWasteMap.get(key);
+    // REFINE-1: "Rata-rata Area" — per-(item, area) avg across the area's
+    // outlets (conditional on having the metric).
+    const areaAvg = areaCatAvgMap.get(`${r.itemName}|${r.area}`)?.waste ?? null;
     // H-2b: pass satuan through for the "Satuan" column in the docx table.
-    return { itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, qtyWaste: r.qty, nominalWaste: r.nominal, prevQty: prev?.qty ?? null, histAvgQty: hist?.avgQty ?? null };
+    return { itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, area: r.area, qtyWaste: r.qty, nominalWaste: r.nominal, prevQty: prev?.qty ?? null, histAvgQty: hist?.avgQty ?? null, areaAvgQty: areaAvg };
   });
   const topSusut = topSusutRows.map(r => {
     const key = `${r.itemName}|${r.outletCode}`;
     const prev = prevSusutMap.get(key);
     const hist = histSusutMap.get(key);
-    return { itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, qtySusut: r.qty, nominalSusut: r.nominal, prevQty: prev?.qty ?? null, histAvgQty: hist?.avgQty ?? null };
+    const areaAvg = areaCatAvgMap.get(`${r.itemName}|${r.area}`)?.susut ?? null;
+    return { itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, area: r.area, qtySusut: r.qty, nominalSusut: r.nominal, prevQty: prev?.qty ?? null, histAvgQty: hist?.avgQty ?? null, areaAvgQty: areaAvg };
   });
   const topTrial = topTrialRows.map(r => {
     const key = `${r.itemName}|${r.outletCode}`;
     const prev = prevTrialMap.get(key);
     const hist = histTrialMap.get(key);
-    return { itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, qtyTrial: r.qty, nominalTrial: r.nominal, prevQty: prev?.qty ?? null, histAvgQty: hist?.avgQty ?? null };
+    const areaAvg = areaCatAvgMap.get(`${r.itemName}|${r.area}`)?.trial ?? null;
+    return { itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, area: r.area, qtyTrial: r.qty, nominalTrial: r.nominal, prevQty: prev?.qty ?? null, histAvgQty: hist?.avgQty ?? null, areaAvgQty: areaAvg };
   });
   const topLossSurplus = topLossSurplusRows.map(r => {
     const key = `${r.itemName}|${r.outletCode}`;
     const prev = prevLossSurplusMap.get(key);
     const hist = histLossSurplusMap.get(key);
-    return { itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, qtyLossSurplus: r.qty, nominalLossSurplus: r.nominal, direction: r.direction, prevQty: prev?.qty ?? null, histAvgQty: hist?.avgQty ?? null };
+    const areaAvg = areaCatAvgMap.get(`${r.itemName}|${r.area}`)?.lossSurplus ?? null;
+    return { itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, area: r.area, qtyLossSurplus: r.qty, nominalLossSurplus: r.nominal, direction: r.direction, prevQty: prev?.qty ?? null, histAvgQty: hist?.avgQty ?? null, areaAvgQty: areaAvg };
   });
 
   // FIX (BUG-3-a P2): kpis/prevSummary are null when the exec/growth
@@ -555,6 +613,103 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).map(({ sortKey, ...rest }) => rest);
 
 
+  // ============================================================
+  //  REFINE-1 (section 'peer' — "Resto dengan Penjualan Kurang Lebih
+  //  Sama"): similar-sales peer comparison for ONE target outlet.
+  //  --------------------------------------------------------
+  //  Target resolution follows the Resto Analysis filter convention (the
+  //  frontend sends focusOutlet || outletCode as the `outlet` param): when
+  //  an outlet filter is active, THAT outlet is the target. When none is
+  //  active, the outlet with the largest ABS(nominalDeviasi) inside the
+  //  current filter scope is auto-picked so the section always has a
+  //  concrete target (labeled in the report — factual, not narrative).
+  //
+  //  Dependent fetch (AFTER the Promise.all): the auto-target needs its
+  //  own scan, and both peer queries take the resolved target code —
+  //  this is the one intentionally-serial wave in the pipeline (≤3 extra
+  //  RTTs, only when the section is selected).
+  //  Non-fatal by design: a failure (or a target with no records) leaves
+  //  peerComparison = null → the builder renders a factual "data tidak
+  //  tersedia" note instead of killing the whole export.
+  //
+  //  SALES SECRECY (user request): sales nominals are NEVER put in the
+  //  payload for rendering — PeerComparisonRow carries them (query
+  //  output), but the builder only renders outlet/area/deviasi columns.
+  // ============================================================
+  let peerComparison: ReportData['peerComparison'] = null;
+  if (needPeer) {
+    try {
+      const resolvedOutlet = outletCode && outletCode !== 'all' ? outletCode : null;
+      let targetCode: string | null = resolvedOutlet;
+      let autoTarget = false;
+      if (!targetCode) {
+        const scopeFilter = buildSqlFilters({
+          area: area === 'all' ? null : area,
+          kelompok,
+          outletCode: null,
+          itemName: null,
+          picOutletCodes,
+        });
+        const topOutletRows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ outletCode: string }>>`
+          SELECT o.code as "outletCode"
+          FROM "InventoryRecord" ir
+          JOIN "Outlet" o ON ir."outletId" = o.id
+          WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+            ${scopeFilter}
+          GROUP BY o.code
+          ORDER BY ABS(SUM(ir."nominalDeviasi")) DESC
+          LIMIT 1
+        `);
+        if (topOutletRows.length > 0) {
+          targetCode = topOutletRows[0].outletCode;
+          autoTarget = true;
+        }
+      }
+      if (targetCode) {
+        const kelompokParam = kelompok && kelompok !== 'all' ? kelompok : null;
+        const peerRes = await cachedSharedQuery(
+          'q-peer-cmp',
+          { month, week, filters: filterOpts, extra: { target: targetCode, limit: 10 } },
+          () => queryPeerComparison(targetCode as string, month, week, 'week', 10, kelompokParam),
+        );
+        const targetRow = peerRes.peers.find((p) => p.isTarget);
+        // Only attach when the target actually has data in this period —
+        // otherwise the peer set degenerates (see the target_fallback CTE in
+        // peer-comparison.ts) and the section would mislead.
+        if (targetRow) {
+          // Per-item breakdown (target's top items vs the same items
+          // averaged across the peer outlets). Averages cover non-target,
+          // non-missing peers only.
+          const itemsRes = await cachedSharedQuery(
+            'q-peer-cmp-items',
+            { month, week, filters: filterOpts, extra: { target: targetCode, top: 8 } },
+            () => queryPeerComparisonItems(targetCode as string, month, week, 'week', 8, kelompokParam),
+          );
+          const items: PeerItemRow[] = itemsRes.items.map((g) => {
+            const real = g.peers.filter((p) => !p.isTarget && !p.missing);
+            const peerAvg = real.length > 0
+              ? {
+                  qtyDeviasi: real.reduce((s, p) => s + p.qtyDeviasi, 0) / real.length,
+                  devBom: real.reduce((s, p) => s + p.devBom, 0) / real.length,
+                  nominal: real.reduce((s, p) => s + p.nominal, 0) / real.length,
+                }
+              : null;
+            return { itemName: g.itemName, target: g.target, peerAvg, peerCount: real.length };
+          });
+          peerComparison = {
+            targetOutlet: { code: targetRow.outletCode, name: targetRow.outletName, area: targetRow.area },
+            autoTarget,
+            peers: peerRes.peers,
+            items,
+          };
+        }
+      }
+    } catch (e) {
+      logger.error('[export-report] peer comparison failed:', { error: e instanceof Error ? e.message : String(e) });
+      peerComparison = null;
+    }
+  }
+
   // (EXPORT-TRIM: the outletRanking fetch + the EXPAND-1 comment blocks that
   // explained it were removed with the 'outlets' section; the peer section's
   // auto-target fallback went with the 'peer' section.)
@@ -572,6 +727,10 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     // rendered — the builder gates on the SAME sections list that gated
     // the fetch).
     itemTrendMatrix: itemTrendMatrixRes?.rows ?? [],
+    // REFINE-1 — section 'peer' (null when off / target unresolvable).
+    peerComparison,
+    // REFINE-1 — section 'flip' (null when off).
+    flipRanking: flipRankingRes,
     durationMs: Date.now() - startedAt,
   };
 

@@ -39,6 +39,8 @@
 import type { ExecutiveSummary } from '@/types/inventory';
 import type { queryVarianceAnalysis } from '@/lib/queries/health-ranking';
 import type { ItemTrendMatrixRow } from '@/lib/queries/items/item-trend-matrix';
+import type { PeerComparisonRow } from '@/lib/queries/outlets/peer-comparison';
+import type { FlipRankResult } from '@/lib/queries/items/flip-ranking';
 
 // PERF-CACHE-06: helper used to short-circuit the cache wrapper for early-return
 // error paths (404 No records found). Throwing this error propagates through
@@ -99,9 +101,11 @@ export interface ReportParams {
 // ============================================================
 
 // queryTopItemsByNominal return shape (explicit Promise<...> signature in
-// src/lib/queries/items/top-items/by-other-metric.ts:27).
+// src/lib/queries/items/top-items/by-other-metric.ts).
 // H-2b: `satuan` (MAX(ir."satuan") — nullable, GROUP BY-safe) flows through
-// for the "Satuan" column in the docx top-item tables.
+// for the "Satuan" column in the top-item tables.
+// REFINE-1: + devBom (SUM(qtyDeviasi)/SUM|qtyBom| — nullable) for the
+// "% Deviasi To BOM" column in table 3.1.
 export interface TopItemByNominalRow {
   itemName: string;
   outletCode: string;
@@ -109,9 +113,12 @@ export interface TopItemByNominalRow {
   absNominal: number;
   nominalDeviasi: number;
   direction: string;
+  devBom: number | null;
 }
 
-// queryTopItemsByDevBom return shape (by-other-metric.ts:57). H-2b: satuan.
+// queryTopItemsByDevBom return shape (by-other-metric.ts). H-2b: satuan.
+// REFINE-1: + nominalDeviasi (signed SUM — nullable) for the "Nominal
+// Deviasi" column in table 3.2.
 export interface TopItemByDevBomRow {
   itemName: string;
   outletCode: string;
@@ -119,6 +126,7 @@ export interface TopItemByDevBomRow {
   devBom: number;
   devBomAbs: number;
   tolerance: number | null;
+  nominalDeviasi: number | null;
 }
 
 // Derived from queryTopItemsByAllCategories('waste') output via the
@@ -128,41 +136,77 @@ export interface TopCatItemWaste {
   itemName: string;
   outletCode: string;
   satuan?: string | null;
+  area: string;
   qtyWaste: number;
   nominalWaste: number;
   prevQty: number | null;
   histAvgQty: number | null;
+  areaAvgQty: number | null;
 }
 
 export interface TopCatItemSusut {
   itemName: string;
   outletCode: string;
   satuan?: string | null;
+  area: string;
   qtySusut: number;
   nominalSusut: number;
   prevQty: number | null;
   histAvgQty: number | null;
+  areaAvgQty: number | null;
 }
 
 export interface TopCatItemTrial {
   itemName: string;
   outletCode: string;
   satuan?: string | null;
+  area: string;
   qtyTrial: number;
   nominalTrial: number;
   prevQty: number | null;
   histAvgQty: number | null;
+  areaAvgQty: number | null;
 }
 
 export interface TopCatItemLossSurplus {
   itemName: string;
   outletCode: string;
   satuan?: string | null;
+  area: string;
   qtyLossSurplus: number;
   nominalLossSurplus: number;
   direction: string;
   prevQty: number | null;
   histAvgQty: number | null;
+  areaAvgQty: number | null;
+}
+
+// ============================================================
+// REFINE-1 — section 7 "Resto dengan Penjualan Kurang Lebih Sama"
+// (peer-to-peer, renamed per user request) + section 8 "Item yang
+// Kemungkinan Plus Minus antar Periode" (flip-flop, renamed per user
+// request).
+// ============================================================
+
+/** Per-item peer breakdown row (target vs peer average) — the target's top
+ *  deviation items with the same items averaged across the similar-sales
+ *  peer outlets. Peer averages cover non-target, non-missing peers only. */
+export interface PeerItemRow {
+  itemName: string;
+  target: { qtyDeviasi: number; devBom: number; nominal: number };
+  peerAvg: { qtyDeviasi: number; devBom: number; nominal: number } | null;
+  peerCount: number;
+}
+
+/** Section 7 payload. `peers` includes the target row (isTarget=true).
+ *  Sales nominals are intentionally NOT exposed to the builder — the user
+ *  keeps penjualan figures confidential; only the ±10% band membership is
+ *  communicated (in words). */
+export interface PeerComparisonData {
+  targetOutlet: { code: string; name: string; area: string };
+  autoTarget: boolean;
+  peers: PeerComparisonRow[];
+  items: PeerItemRow[];
 }
 
 // trend row — derived at route.ts:600-603 from trendAggRows (queryTrendAgg).
@@ -213,6 +257,10 @@ export interface ReportData {
   trend: TrendRow[];
   // EXPORT-PDF — section 'itemTrend': per-(month × item) rows ([] when off).
   itemTrendMatrix: ItemTrendMatrixRow[];
+  // REFINE-1 — section 'peer' (null when off / no target resolvable).
+  peerComparison: PeerComparisonData | null;
+  // REFINE-1 — section 'flip' (null when off).
+  flipRanking: FlipRankResult | null;
   durationMs: number;
 }
 

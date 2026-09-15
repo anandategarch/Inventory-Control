@@ -37,15 +37,50 @@
 //    - Title: "Ringkasan Laporan Deviasi" (was "LAPORAN AUDIT INVENTORY").
 //    - Colors kept: ▲/▼ + red/green change markers, light-red heat scale.
 //
+//  REFINE-1 (user request round 4):
+//    - SALES SECRECY: "Penjualan merupakan angka yang rahasia jadi
+//      tampilkan aja persentasi kenaikan gak perlu nominal nya" — the
+//      Penjualan KPI card shows ONLY the ▲/▼ % change (no Rp figure),
+//      and the Penjualan rows are gone from the section 1/2 tables
+//      (their % change lives on the card + the growth bars).
+//    - "% Loss to Sales" / "% Surplus to Sales" rows + bars REMOVED
+//      ("gak perlu jadi hapus aja").
+//    - "% Nominal Deviasi to Sales" → renamed "Nominal Deviasi to Sales"
+//      ("rename sesuai headernya").
+//    - The word "pembanding" is replaced by the actual selected period
+//      ("Misal Agustus 2026 week 1"): section titles, KPI subs and the
+//      table column headers now carry the comparator's month + week
+//      (e.g. "AGU 26 W1" in headers, "Agustus 2026 Week 1" in titles).
+//    - 3.1 gains a "% Deviasi To BOM" column; 3.2 gains a "Nominal
+//      Deviasi" column on its right.
+//    - 3.3-3.6: "HIST (…)" + "vs Hist" renamed to "Rata-rata per Bulan" /
+//      "vs Rata-rata" ("istilah rata-rata tiap bulannya"), a NEW
+//      "Rata-rata Area" column (average of the area where the row's
+//      resto is located), and the "Nominal (Rp)" column is REMOVED
+//      ("hapus nominal nya biar fit").
+//    - Heat map colors: percentile-scaled (p90 of the non-zero cells)
+//      + a finer 6-step ramp — one outlier no longer flattens the whole
+//      matrix to near-white ("warna heat map buat lebih akurat lagi").
+//    - Section 6 table: Loss/Surplus columns REMOVED
+//      ("trend antar periode hapuss kolom loss dan surplus").
+//    - NEW section 7 "Resto dengan Penjualan Kurang Lebih Sama"
+//      (peer-to-peer, renamed per request): peers' nominal deviations +
+//      a per-item breakdown (kuantitas, % to BOM) vs the peer average.
+//      Sales nominals are never printed.
+//    - NEW section 8 "Item yang Kemungkinan Plus Minus antar Periode"
+//      (flip-flop items, renamed per request).
+//
 //  Section map (FIXED numbers — stable across ?sections= selections;
 //  keep in sync with EXPORT_SECTION_KEYS in validation.ts + the
 //  SECTIONS list in ExportDialog.tsx):
 //     1 exec        — Ringkasan (hero cards + KPI table)
-//     2 growth      — Perubahan vs Periode Pembanding (table + growth bars)
+//     2 growth      — Perubahan vs <periode pembanding> (table + growth bars)
 //     3 topItems    — Item Prioritas (6 sub-tables)
 //     4 variance    — Perubahan Item: Memburuk / Membaik (tables + bars)
 //     5 itemTrend   — Trend Item Multi-Periode (heat matrix)
 //     6 trend       — Trend Antar Periode (table + bar + line charts)
+//     7 peer        — Resto dengan Penjualan Kurang Lebih Sama (REFINE-1)
+//     8 flip        — Item yang Kemungkinan Plus Minus antar Periode (REFINE-1)
 //
 //  Content rule (user request, EXPAND-1): EVERY rendered line is a SQL
 //  aggregate, a factual label, or a formula definition — no generated
@@ -101,17 +136,56 @@ function shortMonth(label: string): string {
   return label.substring(0, 10);
 }
 
+// ------------------------------------------------------------
+//  REFINE-1 period label helpers — the user asked for the comparator to
+//  be named as the actual selected period ("Misal Agustus 2026 week 1")
+//  instead of the generic word "pembanding", and every period reference
+//  now carries its week (the comparison is week-scoped).
+// ------------------------------------------------------------
+
+/** "AGUSTUS 2026" / "Agustus 2026" → "Agustus 2026". */
+function titleCase(s: string): string {
+  return s.toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+}
+
+/** "WEEK 1" → "Week 1" (digit-less labels pass through). */
+function prettyWeek(wl: string | null | undefined): string {
+  if (!wl) return '\u2014';
+  const n = wl.replace(/\D/g, '');
+  return n ? `Week ${n}` : wl;
+}
+
+/** Column-header period: "SEP 26" + "WEEK 1" → "SEP 26 W1". */
+function periodCol(monthLabel: string | null | undefined, weekLabel: string | null | undefined): string {
+  const m = monthLabel ? shortMonth(monthLabel) : '\u2014';
+  const n = weekLabel ? weekLabel.replace(/\D/g, '') : '';
+  return n ? `${m} W${n}` : m;
+}
+
+/** Full period: "September 2026" + "WEEK 1" → "September 2026 Week 1". */
+function periodFull(monthLabel: string | null | undefined, weekLabel: string | null | undefined): string {
+  if (!monthLabel) return '\u2014';
+  return `${titleCase(monthLabel)} ${prettyWeek(weekLabel)}`;
+}
+
 /** Heat color for the item-trend matrix cells — DESAIN-SIMPEL: light-red
  *  intensity scale (deviation magnitude = further into the red; the only
- *  chromatic family besides the change green). */
-function heatColor(v: number, max: number): string | undefined {
-  if (max <= 0 || v <= 0) return undefined;
-  const r = v / max;
-  if (r < 0.2) return '#FEF2F2';
-  if (r < 0.4) return '#FEE2E2';
-  if (r < 0.6) return '#FECACA';
-  if (r < 0.8) return '#FCA5A5';
-  return '#F87171';
+ *  chromatic family besides the change green).
+ *  REFINE-1 ("warna heat map buat lebih akurat lagi"): the scale max is
+ *  now the 90th PERCENTILE of the non-zero cells (computed by the caller),
+ *  not the global max — one outlier row no longer compresses every other
+ *  cell into the palest bucket — and the ramp has 6 steps instead of 5, so
+ *  adjacent magnitudes are easier to tell apart. Values above the p90
+ *  saturate at the deepest red. */
+function heatColor(v: number, scale: number): string | undefined {
+  if (scale <= 0 || v <= 0) return undefined;
+  const r = Math.min(1, v / scale);
+  if (r < 1 / 6) return '#FEF2F2';
+  if (r < 2 / 6) return '#FEE2E2';
+  if (r < 3 / 6) return '#FECACA';
+  if (r < 4 / 6) return '#FCA5A5';
+  if (r < 5 / 6) return '#F87171';
+  return '#EF4444';
 }
 
 /** Signed compact IDR for chart tick labels (no 'Rp' prefix — axis stays narrow). */
@@ -153,7 +227,7 @@ export async function buildPdfReport(
     // screenshot "Halaman 8 dari 1").
     bufferPages: true,
     info: {
-      Title: `Ringkasan Laporan Deviasi ${shortMonth(data.period.monthLabel)} ${data.period.weekLabel}`,
+      Title: `Ringkasan Laporan Deviasi ${shortMonth(data.period.monthLabel)} ${prettyWeek(data.period.weekLabel)}`,
       Author: 'Inventory Control',
       Creator: 'Inventory Control',
     },
@@ -170,7 +244,7 @@ export async function buildPdfReport(
       // Post-hoc pass: small running header on pages 2+ only — no footer
       // (DESAIN-SIMPEL: user asked to remove the page footer entirely).
       const range = doc.bufferedPageRange();
-      const headerLabel = `Ringkasan Laporan Deviasi  \u00B7  ${shortMonth(data.period.monthLabel)} ${data.period.weekLabel}`;
+      const headerLabel = `Ringkasan Laporan Deviasi  \u00B7  ${shortMonth(data.period.monthLabel)} ${prettyWeek(data.period.weekLabel)}`;
       for (let i = range.start; i < range.start + range.count; i++) {
         if (i === range.start) continue;
         doc.switchToPage(i);
@@ -202,12 +276,18 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   // ---- dynamic labels ------------------------------------------------
   const currLabel = shortMonth(data.period.monthLabel);
   const prevLabel = data.period.comparisonMonth ? shortMonth(data.period.comparisonMonth) : '\u2014';
+  // REFINE-1: the comparator is NAMED, not called "pembanding" — full form
+  // for titles/subs ("Agustus 2026 Week 1"), column form for table headers
+  // ("AGU 26 W1"). Every period reference also carries its week now (the
+  // comparison is week-scoped).
+  const currCol = periodCol(data.period.monthLabel, data.period.weekLabel);
+  const prevCol = data.period.comparisonMonth ? periodCol(data.period.comparisonMonth, data.period.comparisonWeek) : '\u2014';
+  const currFull = periodFull(data.period.monthLabel, data.period.weekLabel);
+  const cmpFull = data.period.comparisonMonth ? periodFull(data.period.comparisonMonth, data.period.comparisonWeek) : null;
   const histMonths = ctx.historicalPeriods.map((p) => shortMonth(p.monthLabel)).filter((m) => m !== '\u2014');
-  const histLabel = histMonths.length === 0
-    ? 'Hist (\u2014)'
-    : histMonths.length === 1
-      ? `Hist (${histMonths[0]})`
-      : `Hist (${histMonths[0]}-${histMonths[histMonths.length - 1]})`;
+  // REFINE-1: "HIST (…)" renamed "Rata-rata per Bulan" (user: "ganti jadi
+  // istilah rata rata tiap bulan nya") — the values ARE the per-month
+  // average across the same-week historical months.
   const histRange = histMonths.length >= 2
     ? `${histMonths[0]}-${histMonths[histMonths.length - 1]}`
     : histMonths.length === 1
@@ -225,11 +305,13 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   // ============================================================
   rpt.coverBand(
     'Ringkasan Laporan Deviasi',
-    `${restoName}  \u00B7  ${data.period.monthLabel} \u2014 ${data.period.weekLabel}`,
+    `${restoName}  \u00B7  ${titleCase(data.period.monthLabel)} \u2014 ${prettyWeek(data.period.weekLabel)}`,
     [
       fmtDateTimeWIB(new Date().toISOString()),
-      data.period.comparisonMonth ? `Pembanding: ${data.period.comparisonMonth} \u2014 ${data.period.comparisonWeek ?? '\u2014'}` : 'Tanpa periode pembanding',
-      `Baseline historis: ${histRange}`,
+      // REFINE-1: "Periode pembanding: Agustus 2026 Week 1" — the chosen
+      // period named explicitly (was the bare word "Pembanding: AGU 26").
+      cmpFull ? `Periode pembanding: ${cmpFull}` : 'Tanpa periode pembanding',
+      `Rata-rata per bulan: ${histRange}`,
     ],
   );
 
@@ -251,6 +333,11 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   // request); % Nominal Deviasi to Sales now shows its own growth sub.
   // FIX-TERPOTONG: every "vs …" sub carries the ▲/▼ marker + a semantic
   // color (green favorable / red unfavorable).
+  // REFINE-1: SALES SECRECY (user: "Penjualan merupakan angka yang rahasia
+  // jadi tampilkan aja persentasi kenaikan gak perlu nominal nya") — the
+  // Penjualan card's VALUE is the ▲/▼ % change itself (no Rp figure),
+  // colored green/red. The card's % Nominal Deviasi to Sales dropped its
+  // "%-sign" prefix (renamed "Nominal Deviasi to Sales").
   if (kpisAvailable) {
     const devToSalesCur = s.sales.current > 0 ? s.nominalDeviasi.current / s.sales.current : null;
     const devToSalesPrev = (s.sales.previous != null && s.sales.previous > 0 && s.nominalDeviasi.previous != null)
@@ -262,23 +349,25 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
     const bomG = pm?.deviationToBom != null ? calcGrowth(s.deviationToBom, pm.deviationToBom) : null;
     rpt.kpiCards([
       {
-        label: 'Penjualan', value: fmtIDR(s.sales.current),
-        sub: s.sales.growth != null ? `${markOf(s.sales.growth)}vs ${prevLabel}: ${fmtPct(s.sales.growth, true)}` : undefined,
-        subColor: chgColor(s.sales.growth, true) ?? C.muted,
+        label: 'Penjualan',
+        value: s.sales.growth != null ? markOf(s.sales.growth) + fmtPct(s.sales.growth, true) : '\u2014',
+        valueColor: chgColor(s.sales.growth, true),
+        sub: cmpFull ?? undefined,
+        subColor: C.muted,
       },
       {
         label: 'Nominal Deviasi', value: fmtIDR(s.nominalDeviasi.current),
-        sub: s.nominalDeviasi.growth != null ? `${markOf(s.nominalDeviasi.growth)}vs ${prevLabel}: ${fmtPct(s.nominalDeviasi.growth, true)}` : undefined,
+        sub: s.nominalDeviasi.growth != null && cmpFull ? `${markOf(s.nominalDeviasi.growth)}vs ${cmpFull}: ${fmtPct(s.nominalDeviasi.growth, true)}` : undefined,
         subColor: chgColor(s.nominalDeviasi.growth, false) ?? C.muted,
       },
       {
         label: '% Deviasi To BOM', value: fmtPct(s.deviationToBom, false),
-        sub: bomG != null ? `${markOf(bomG)}vs ${prevLabel}: ${fmtPct(bomG, true)}` : undefined,
+        sub: bomG != null && cmpFull ? `${markOf(bomG)}vs ${cmpFull}: ${fmtPct(bomG, true)}` : undefined,
         subColor: chgColor(bomG, false) ?? C.muted,
       },
       {
-        label: '% Nominal Deviasi to Sales', value: fmtPct(devToSalesCur, false),
-        sub: devToSalesG != null ? `${markOf(devToSalesG)}vs ${prevLabel}: ${fmtPct(devToSalesG, true)}` : undefined,
+        label: 'Nominal Deviasi to Sales', value: fmtPct(devToSalesCur, false),
+        sub: devToSalesG != null && cmpFull ? `${markOf(devToSalesG)}vs ${cmpFull}: ${fmtPct(devToSalesG, true)}` : undefined,
         subColor: chgColor(devToSalesG, false) ?? C.muted,
       },
     ], { perRow: 2 });
@@ -294,10 +383,14 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       ? s.nominalDeviasi.previous / s.sales.previous
       : null;
     // [label, current, change value (marker + color source), previous, goodUp]
+    // REFINE-1: the Penjualan row is GONE (sales nominal is confidential —
+    // its ▲/▼ % change lives on the cover KPI card + the growth bars);
+    // % Loss to Sales / % Surplus to Sales rows REMOVED ("gak perlu jadi
+    // hapus aja"); "% Nominal Deviasi to Sales" renamed "Nominal Deviasi
+    // to Sales" ("rename sesuai headernya").
     const defs: Array<[string, string, number | null, string, boolean]> = [
-      ['Penjualan', fmtIDR(s.sales.current), s.sales.growth, fmtIDR(s.sales.previous), true],
       ['Nominal Deviasi', fmtIDR(s.nominalDeviasi.current), s.nominalDeviasi.growth, fmtIDR(s.nominalDeviasi.previous), false],
-      ['% Nominal Deviasi to Sales', fmtPct(devToSalesCur, false), devToSalesCur != null && devToSalesPrev != null ? calcGrowth(devToSalesCur, devToSalesPrev) : null, fmtPct(devToSalesPrev, false), false],
+      ['Nominal Deviasi to Sales', fmtPct(devToSalesCur, false), devToSalesCur != null && devToSalesPrev != null ? calcGrowth(devToSalesCur, devToSalesPrev) : null, fmtPct(devToSalesPrev, false), false],
       ['QTY BOM', fmtNum(s.qtyBom.current), s.qtyBom.growth, fmtNum(s.qtyBom.previous), true],
       ['QTY Deviasi', fmtNum(s.qtyDeviasi.current), s.qtyDeviasi.growth, fmtNum(s.qtyDeviasi.previous), false],
       ['% Deviasi To BOM', fmtPct(s.deviationToBom, false), pm?.deviationToBom != null ? calcGrowth(s.deviationToBom, pm.deviationToBom) : null, pm?.deviationToBom != null ? fmtPct(pm.deviationToBom, false) : '\u2014', false],
@@ -307,16 +400,13 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       ['QTY Loss/Surplus', fmtNum(s.qtyLossSurplus.current), s.qtyLossSurplus.growth, fmtNum(s.qtyLossSurplus.previous), false],
       ['Loss/Surplus Qty', fmtNum(s.residualLossQty), pm?.residualLossQty != null ? calcGrowth(s.residualLossQty, pm.residualLossQty) : null, pm?.residualLossQty != null ? fmtNum(pm.residualLossQty) : '\u2014', false],
       ['Loss/Surplus %', fmtPct(s.residualLossPct, false), pm?.residualLossPct != null ? calcGrowth(s.residualLossPct, pm.residualLossPct) : null, pm?.residualLossPct != null ? fmtPct(pm.residualLossPct, false) : '\u2014', false],
-      // DESAIN-SIMPEL: Total LOSS / Total SURPLUS rows REMOVED (user request).
-      ['% Loss to Sales', fmtPct(s.lossToSales, false), pm?.lossToSales != null ? calcGrowth(s.lossToSales, pm.lossToSales) : null, pm?.lossToSales != null ? fmtPct(pm.lossToSales, false) : '\u2014', false],
-      ['% Surplus to Sales', fmtPct(s.surplusToSales, false), pm?.surplusToSales != null ? calcGrowth(s.surplusToSales, pm.surplusToSales) : null, pm?.surplusToSales != null ? fmtPct(pm.surplusToSales, false) : '\u2014', false],
     ];
     rpt.table({
       cols: [
         { header: 'Metrik' },
-        { header: currLabel, align: 'right' },
+        { header: currCol, align: 'right' },
         { header: 'Perubahan', align: 'right' },
-        { header: prevLabel, align: 'right' },
+        { header: prevCol, align: 'right' },
       ],
       boldFirst: true,
       rows: defs.map((d) => [d[0], d[1], mkGrowth(d[2]), d[3]]),
@@ -327,10 +417,13 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   }
 
   // ============================================================
-  //  2 — PERUBAHAN VS PERIODE PEMBANDING
+  //  2 — PERUBAHAN VS <PERIODE PEMBANDING DINAMAI>
+  // REFINE-1: the title names the actual selected comparator period
+  // ("Perubahan vs Agustus 2026 Week 1") — user: "Kata pembanding jadi Kata
+  // periode yang terpilih menjadi pembanding. Misal Agustus 2026 week 1".
   // ============================================================
   if (hasSection('growth')) {
-    rpt.sectionHeader(2, 'Perubahan vs Periode Pembanding');
+    rpt.sectionHeader(2, cmpFull ? `Perubahan vs ${cmpFull}` : 'Perubahan');
     const devToSalesCur = s.sales.current > 0 ? s.nominalDeviasi.current / s.sales.current : null;
     const devToSalesPrev = (s.sales.previous != null && s.sales.previous > 0 && s.nominalDeviasi.previous != null)
       ? s.nominalDeviasi.previous / s.sales.previous
@@ -352,25 +445,25 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       ],
       g: growth, goodUp,
     });
+    // REFINE-1: Penjualan (Rp) row REMOVED (sales nominal confidential — the
+    // % change lives on the cover card + the growth bars below); % Loss to
+    // Sales / % Surplus to Sales rows REMOVED; "% Nominal Deviasi to Sales"
+    // renamed "Nominal Deviasi to Sales".
     const defs: GRow[] = [
-      vr('Penjualan (Rp)', s.sales.current, s.sales.previous, fmtIDR, s.sales.growth, true),
       vr('Nominal Deviasi (Rp)', s.nominalDeviasi.current, s.nominalDeviasi.previous, fmtIDR, s.nominalDeviasi.growth, false),
       vr('QTY BOM', s.qtyBom.current, s.qtyBom.previous, fmtNum, s.qtyBom.growth, true),
       vr('QTY Deviasi', s.qtyDeviasi.current, s.qtyDeviasi.previous, fmtNum, s.qtyDeviasi.growth, false),
       vr('QTY Waste', s.qtyWaste.current, s.qtyWaste.previous, fmtNum, s.qtyWaste.growth, false),
       vr('QTY Susut', s.qtySusut.current, s.qtySusut.previous, fmtNum, s.qtySusut.growth, false),
       vr('QTY Trial', s.qtyTrial.current, s.qtyTrial.previous, fmtNum, s.qtyTrial.growth, false),
-      // DESAIN-SIMPEL: Total LOSS / Total SURPLUS rows REMOVED (user request).
       rr('% Deviasi To BOM', s.deviationToBom, pm?.deviationToBom ?? null, pm?.deviationToBom != null ? calcGrowth(s.deviationToBom, pm.deviationToBom) : null, false),
-      rr('% Nominal Deviasi to Sales', devToSalesCur, devToSalesPrev, devToSalesCur != null && devToSalesPrev != null ? calcGrowth(devToSalesCur, devToSalesPrev) : null, false),
-      rr('% Loss to Sales', s.lossToSales, pm?.lossToSales ?? null, pm?.lossToSales != null ? calcGrowth(s.lossToSales, pm.lossToSales) : null, false),
-      rr('% Surplus to Sales', s.surplusToSales, pm?.surplusToSales ?? null, pm?.surplusToSales != null ? calcGrowth(s.surplusToSales, pm.surplusToSales) : null, false),
+      rr('Nominal Deviasi to Sales', devToSalesCur, devToSalesPrev, devToSalesCur != null && devToSalesPrev != null ? calcGrowth(devToSalesCur, devToSalesPrev) : null, false),
     ];
     rpt.table({
       cols: [
         { header: 'Metrik' },
-        { header: currLabel, align: 'right' },
-        { header: prevLabel, align: 'right' },
+        { header: currCol, align: 'right' },
+        { header: prevCol, align: 'right' },
         { header: 'Selisih', align: 'right' },
         { header: 'Growth %', align: 'right' },
       ],
@@ -382,6 +475,8 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
 
     // growth % horizontal bars — sales/BOM up = green (good); deviation
     // metrics up = red (bad). Factual coloring by metric direction.
+    // REFINE-1: the Penjualan BAR stays — it IS "tampilkan aja persentasi
+    // kenaikan" (a % change, not a nominal). % Loss/% Surplus bars REMOVED.
     const withGrowth = [
       { label: 'Penjualan', g: s.sales.growth, goodUp: true },
       { label: 'Nominal Deviasi', g: s.nominalDeviasi.growth, goodUp: false },
@@ -390,14 +485,11 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       { label: 'QTY Waste', g: s.qtyWaste.growth, goodUp: false },
       { label: 'QTY Susut', g: s.qtySusut.growth, goodUp: false },
       { label: 'QTY Trial', g: s.qtyTrial.growth, goodUp: false },
-      // DESAIN-SIMPEL: Total LOSS / Total SURPLUS bars REMOVED (user request).
       { label: '% Dev/BOM', g: pm?.deviationToBom != null ? calcGrowth(s.deviationToBom, pm.deviationToBom) : null, goodUp: false },
-      { label: '% Loss to Sales', g: pm?.lossToSales != null ? calcGrowth(s.lossToSales, pm.lossToSales) : null, goodUp: false },
-      { label: '% Surplus to Sales', g: pm?.surplusToSales != null ? calcGrowth(s.surplusToSales, pm.surplusToSales) : null, goodUp: false },
     ].filter((r) => r.g != null) as Array<{ label: string; g: number; goodUp: boolean }>;
     if (withGrowth.length > 0) {
       rpt.ensure(18 * withGrowth.length + 24);
-      rpt.subhead('Growth % per Metrik (vs Pembanding)', { size: 8.5, gapAfter: 2 });
+      rpt.subhead('Growth % per Metrik', { size: 8.5, gapAfter: 2 });
       hBarChart(doc, {
         x: PAGE.M, y: rpt.y, w: CONTENT_W, h: 18 * withGrowth.length,
         labels: withGrowth.map((r) => r.label),
@@ -416,41 +508,51 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   if (hasSection('topItems')) {
     rpt.sectionHeader(3, 'Item Prioritas (Top Items)');
 
-    // 3.1 nominal
+    // 3.1 nominal — REFINE-1: + "% Deviasi To BOM" column (user: "3.1
+    // Nominal Deviasi Terbesar tambahkan % Deviasi to bom nya juga").
     if (data.topItemsByNominal.length > 0) {
-      rpt.subhead(`3.1 Nominal Deviasi Terbesar (${currLabel})`, { size: 8.5 });
+      rpt.subhead(`3.1 Nominal Deviasi Terbesar (${currCol})`, { size: 8.5 });
       rpt.table({
         cols: [
           { header: '#', align: 'center' },
           { header: 'Item' },
           { header: 'Resto' },
           { header: 'Satuan' },
-          { header: `Nominal Deviasi ${currLabel}`, align: 'right' },
+          { header: `Nominal Deviasi`, align: 'right' },
+          { header: '% Deviasi To BOM', align: 'right' },
         ],
-        rows: data.topItemsByNominal.map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.satuan ?? '\u2014', fmtIDR(it.nominalDeviasi)]),
+        rows: data.topItemsByNominal.map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.satuan ?? '\u2014', fmtIDR(it.nominalDeviasi), fmtPct(it.devBom, false)]),
         rowText: (row) => (stripMark(row[4]).startsWith('-') ? C.danger : undefined),
       });
     }
-    // 3.2 devBom
+    // 3.2 devBom — REFINE-1: + "Nominal Deviasi" column on the right (user:
+    // "3.2 % Deviasi To BOM Terbesar tambahkan Nominal Deviasi juga di
+    // sebelah kanan nya").
     if (data.topItemsByDevBom.length > 0) {
-      rpt.subhead(`3.2 % Deviasi To BOM Terbesar (${currLabel})`, { size: 8.5 });
+      rpt.subhead(`3.2 % Deviasi To BOM Terbesar (${currCol})`, { size: 8.5 });
       rpt.table({
         cols: [
           { header: '#', align: 'center' },
           { header: 'Item' },
           { header: 'Resto' },
           { header: 'Satuan' },
-          { header: `% Deviasi To BOM ${currLabel}`, align: 'right' },
+          { header: '% Deviasi To BOM', align: 'right' },
+          { header: 'Nominal Deviasi', align: 'right' },
         ],
-        rows: data.topItemsByDevBom.map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.satuan ?? '\u2014', fmtPct(it.devBom, false)]),
+        rows: data.topItemsByDevBom.map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.satuan ?? '\u2014', fmtPct(it.devBom, false), fmtIDR(it.nominalDeviasi)]),
+        rowText: (row) => (stripMark(row[5]).startsWith('-') ? C.danger : undefined),
       });
     }
     // 3.3-3.6 category tables
-    const catTables: Array<{ title: string; items: Array<{ itemName: string; outletCode: string; satuan?: string | null; qty: number; nominal: number; prevQty: number | null; histAvgQty: number | null }> }> = [
-      { title: `3.3 QTY Waste Terbesar (${currLabel})`, items: data.topItemsByWaste.map((r) => ({ itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, qty: r.qtyWaste, nominal: r.nominalWaste, prevQty: r.prevQty, histAvgQty: r.histAvgQty })) },
-      { title: `3.4 QTY Susut Terbesar (${currLabel})`, items: data.topItemsBySusut.map((r) => ({ itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, qty: r.qtySusut, nominal: r.nominalSusut, prevQty: r.prevQty, histAvgQty: r.histAvgQty })) },
-      { title: `3.5 QTY Trial Terbesar (${currLabel})`, items: data.topItemsByTrial.map((r) => ({ itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, qty: r.qtyTrial, nominal: r.nominalTrial, prevQty: r.prevQty, histAvgQty: r.histAvgQty })) },
-      { title: `3.6 QTY Loss/Surplus Terbesar (${currLabel})`, items: data.topItemsByLossSurplus.map((r) => ({ itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, qty: r.qtyLossSurplus, nominal: r.nominalLossSurplus, prevQty: r.prevQty, histAvgQty: r.histAvgQty })) },
+    // REFINE-1: "HIST (…)"/"vs Hist" → "Rata-rata per Bulan"/"vs Rata-rata";
+    // + NEW "Rata-rata Area" column (avg across the area where the row's
+    // resto is located); "Nominal (Rp)" column REMOVED ("hapus nominal nya
+    // biar fit").
+    const catTables: Array<{ title: string; items: Array<{ itemName: string; outletCode: string; satuan?: string | null; area: string; qty: number; nominal: number; prevQty: number | null; histAvgQty: number | null; areaAvgQty: number | null }> }> = [
+      { title: `3.3 QTY Waste Terbesar (${currCol})`, items: data.topItemsByWaste.map((r) => ({ itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, area: r.area, qty: r.qtyWaste, nominal: r.nominalWaste, prevQty: r.prevQty, histAvgQty: r.histAvgQty, areaAvgQty: r.areaAvgQty })) },
+      { title: `3.4 QTY Susut Terbesar (${currCol})`, items: data.topItemsBySusut.map((r) => ({ itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, area: r.area, qty: r.qtySusut, nominal: r.nominalSusut, prevQty: r.prevQty, histAvgQty: r.histAvgQty, areaAvgQty: r.areaAvgQty })) },
+      { title: `3.5 QTY Trial Terbesar (${currCol})`, items: data.topItemsByTrial.map((r) => ({ itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, area: r.area, qty: r.qtyTrial, nominal: r.nominalTrial, prevQty: r.prevQty, histAvgQty: r.histAvgQty, areaAvgQty: r.areaAvgQty })) },
+      { title: `3.6 QTY Loss/Surplus Terbesar (${currCol})`, items: data.topItemsByLossSurplus.map((r) => ({ itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, area: r.area, qty: r.qtyLossSurplus, nominal: r.nominalLossSurplus, prevQty: r.prevQty, histAvgQty: r.histAvgQty, areaAvgQty: r.areaAvgQty })) },
     ];
     for (const ct2 of catTables) {
       if (ct2.items.length === 0) continue;
@@ -461,11 +563,11 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
           { header: 'Item' },
           { header: 'Satuan' },
           { header: 'Resto' },
-          { header: `QTY ${currLabel}`, align: 'right' },
-          { header: `QTY ${prevLabel}`, align: 'right' },
-          { header: histLabel, align: 'right' },
-          { header: 'vs Hist', align: 'right' },
-          { header: 'Nominal (Rp)', align: 'right' },
+          { header: `QTY ${currCol}`, align: 'right' },
+          { header: `QTY ${prevCol}`, align: 'right' },
+          { header: 'Rata-rata per Bulan', align: 'right' },
+          { header: 'vs Rata-rata', align: 'right' },
+          { header: 'Rata-rata Area', align: 'right' },
         ],
         rows: ct2.items.map((it, i) => [
           String(i + 1),
@@ -476,9 +578,9 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
           it.prevQty != null ? fmtNum(it.prevQty) : '\u2014',
           it.histAvgQty != null ? fmtNum(it.histAvgQty) : '\u2014',
           fmtVsHist(it.qty, it.histAvgQty),
-          fmtIDR(it.nominal),
+          it.areaAvgQty != null ? fmtNum(it.areaAvgQty) : '\u2014',
         ]),
-        // ▲/▼ semantic color on the "vs Hist" delta column (up = bad —
+        // ▲/▼ semantic color on the "vs Rata-rata" delta column (up = bad —
         // these are all deviation-magnitude rankings).
         cellColor: (row, ri, ci) => {
           if (ci !== 7) return undefined;
@@ -496,18 +598,20 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   if (hasSection('variance')) {
     const va = data.varianceAnalysis;
     if (va.topWorsened.length > 0 || va.topImproved.length > 0) {
-      rpt.sectionHeader(4, 'Perubahan Item (vs Periode Pembanding)');
+      // REFINE-1: the comparator period is NAMED ("vs Agustus 2026 Week 1")
+      // instead of the generic "vs Periode Pembanding".
+      rpt.sectionHeader(4, cmpFull ? `Perubahan Item (vs ${cmpFull})` : 'Perubahan Item');
     }
     if (va.topWorsened.length > 0) {
-      rpt.subhead(`4.1 Memburuk \u2014 selisih nominal terbesar (${currLabel} vs ${prevLabel})`, { size: 8.5 });
+      rpt.subhead(`4.1 Memburuk \u2014 selisih nominal terbesar (${currCol} vs ${prevCol})`, { size: 8.5 });
       rpt.table({
         cols: [
           { header: '#', align: 'center' },
           { header: 'Item' },
           { header: 'Resto' },
           { header: 'Area' },
-          { header: `Nominal ${currLabel}`, align: 'right' },
-          { header: `Nominal ${prevLabel}`, align: 'right' },
+          { header: `Nominal ${currCol}`, align: 'right' },
+          { header: `Nominal ${prevCol}`, align: 'right' },
           { header: 'Selisih', align: 'right' },
         ],
         rows: va.topWorsened.map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.area, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), markOf(it.selisih) + fmtIDR(it.selisih)]),
@@ -529,15 +633,15 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       rpt.y += 18 * worsened.length + 8;
     }
     if (va.topImproved.length > 0) {
-      rpt.subhead(`4.2 Membaik \u2014 penurunan selisih nominal terbesar (${currLabel} vs ${prevLabel})`, { size: 8.5 });
+      rpt.subhead(`4.2 Membaik \u2014 penurunan selisih nominal terbesar (${currCol} vs ${prevCol})`, { size: 8.5 });
       rpt.table({
         cols: [
           { header: '#', align: 'center' },
           { header: 'Item' },
           { header: 'Resto' },
           { header: 'Area' },
-          { header: `Nominal ${currLabel}`, align: 'right' },
-          { header: `Nominal ${prevLabel}`, align: 'right' },
+          { header: `Nominal ${currCol}`, align: 'right' },
+          { header: `Nominal ${prevCol}`, align: 'right' },
           { header: 'Selisih', align: 'right' },
         ],
         rows: va.topImproved.map((it, i) => [String(i + 1), it.itemName, it.outletCode, it.area, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), markOf(it.selisih) + fmtIDR(it.selisih)]),
@@ -589,7 +693,16 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       .sort((a, b2) => itemScore(b2[1]) - itemScore(a[1]))
       .slice(0, 15);
 
-    const maxCell = topItems.reduce((acc, [, m]) => Math.max(acc, ...shownMonths.map((ml) => m.get(ml) ?? 0)), 0);
+    // REFINE-1 ("warna heat map buat lebih akurat lagi"): the color scale
+    // is anchored at the 90th PERCENTILE of the non-zero cells instead of
+    // the global max — one outlier item no longer pushes every other cell
+    // into the palest two buckets, and mid-range differences get visible
+    // steps (see heatColor: 6-step ramp, saturating above p90).
+    const cellVals = topItems
+      .flatMap(([, m]) => shownMonths.map((ml) => m.get(ml) ?? 0))
+      .filter((v) => v > 0)
+      .sort((a, b) => a - b);
+    const heatScale = cellVals.length > 0 ? cellVals[Math.floor((cellVals.length - 1) * 0.9)] : 0;
     // FIX-TERPOTONG: trend % carries the ▲/▼ marker (BARU = item muncul
     // baru → treated as an increase).
     const trendPct = (m: Map<string, number>): string => {
@@ -618,7 +731,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
         if (ci === 0 || ci > shownMonths.length) return undefined;
         const ml = shownMonths[ci - 1];
         const val = byItem.get(row[0])?.get(ml) ?? 0;
-        return heatColor(val, maxCell);
+        return heatColor(val, heatScale);
       },
       rowText: (row) => {
         const t = stripMark(row[row.length - 1]);
@@ -629,6 +742,9 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
 
   // ============================================================
   //  6 — TREND ANTAR PERIODE  (EXPORT-TRIM: was 12)
+  //  REFINE-1: Loss / Surplus table columns REMOVED (user: "Trend antar
+  //  periode hapuss kolom loss dan surplus") — the loss-vs-surplus line
+  //  chart below still carries that composition per period.
   // ============================================================
   if (hasSection('trend') && data.trend.length > 0) {
     rpt.sectionHeader(6, 'Trend Antar Periode');
@@ -637,16 +753,12 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
         { header: 'Periode' },
         { header: 'Nominal Deviasi', align: 'right' },
         { header: '% Dev/BOM', align: 'right' },
-        { header: 'Loss (Rp)', align: 'right' },
-        { header: 'Surplus (Rp)', align: 'right' },
-        { header: '% Nominal to Sales', align: 'right' },
+        { header: 'Nominal Deviasi to Sales', align: 'right' },
       ],
       rows: data.trend.map((t) => [
         t.weekLabel,
         fmtIDR(t.nominal),
         fmtPct(t.devBom, false),
-        fmtIDR(t.lossNominal),
-        fmtIDR(t.surplusNominal),
         t.sales && t.sales > 0 ? fmtPct(Math.abs(t.nominal) / t.sales, false) : '\u2014',
       ]),
     });
@@ -679,6 +791,119 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
         yFmt: tickIDR,
       });
       rpt.y += 140 + 16;
+    }
+  }
+
+  // ============================================================
+  //  7 — RESTO DENGAN PENJUALAN KURANG LEBIH SAMA  (REFINE-1 — NEW)
+  //  --------------------------------------------------------
+  //  User: "Tambahkan section Peer to Peer tapi ganti istilah nya menjadi
+  //  'Dengan Total Penjualan yang kurang lebih sama Resto lain menghasilkan
+  //  nominal deviasi ini dan ada break down per item nya berapa secara
+  //  kuantiti, % to bom'".
+  //  7.1 = the similar-sales restos and the nominal deviations they produce
+  //        (peer band = sales within ±10% of the target — same-period mode).
+  //  7.2 = the per-item breakdown for the target's top items: kuantitas +
+  //        % to BOM, vs the peer average.
+  //  SALES SECRECY: no sales nominal is ever printed here.
+  // ============================================================
+  if (hasSection('peer')) {
+    rpt.sectionHeader(7, 'Resto dengan Penjualan Kurang Lebih Sama');
+    const pc = data.peerComparison;
+    if (!pc || pc.peers.length === 0) {
+      rpt.noteBox('Data pembanding tidak tersedia untuk filter ini \u2014 pilih satu resto pada Filter Resto (tab Resto Analysis) lalu export ulang.');
+    } else {
+      const targetLabel = `${pc.targetOutlet.name} (${pc.targetOutlet.code})`;
+      // 7.1 — peers' nominal deviations, biggest first; the target row is
+      // bold (named in the subhead — factual, no legend needed).
+      const sortedPeers = [...pc.peers].sort((a, b) => Math.abs(b.nominalDeviasi) - Math.abs(a.nominalDeviasi));
+      rpt.subhead(`7.1 Nominal Deviasi per Resto (penjualan kurang lebih sama dengan ${targetLabel}${pc.autoTarget ? ' \u2014 target otomatis: resto deviasi terbesar' : ''})`, { size: 8.5 });
+      rpt.table({
+        cols: [
+          { header: '#', align: 'center' },
+          { header: 'Resto' },
+          { header: 'Area' },
+          { header: 'Nominal Deviasi', align: 'right' },
+          { header: '% Deviasi To BOM', align: 'right' },
+          { header: 'QTY Deviasi', align: 'right' },
+        ],
+        rows: sortedPeers.map((p, i) => [
+          String(i + 1),
+          `${p.outletName} (${p.outletCode})`,
+          p.area,
+          fmtIDR(p.nominalDeviasi),
+          fmtPct(p.devBom, false),
+          fmtNum(p.qtyDeviasi),
+        ]),
+        rowBold: (_row, i) => sortedPeers[i]?.isTarget ?? false,
+        rowText: (row) => (row[3].startsWith('-') ? C.danger : undefined),
+      });
+
+      // 7.2 — per-item breakdown: kuantitas + % to BOM, target vs the
+      // average of the similar-sales peers.
+      if (pc.items.length > 0) {
+        rpt.subhead(`7.2 Breakdown per Item (kuantitas, % to BOM) \u2014 ${targetLabel} vs rata-rata resto setara`, { size: 8.5 });
+        rpt.table({
+          cols: [
+            { header: 'Item' },
+            { header: 'QTY Deviasi', align: 'right' },
+            { header: '% Deviasi To BOM', align: 'right' },
+            { header: 'Rata-rata QTY Peer', align: 'right' },
+            { header: 'Rata-rata % Dev/BOM Peer', align: 'right' },
+          ],
+          rows: pc.items.map((it) => [
+            it.itemName,
+            fmtNum(it.target.qtyDeviasi),
+            fmtPct(it.target.devBom, false),
+            it.peerAvg != null ? fmtNum(it.peerAvg.qtyDeviasi) : '\u2014',
+            it.peerAvg != null ? fmtPct(it.peerAvg.devBom, false) : '\u2014',
+          ]),
+        });
+      }
+    }
+  }
+
+  // ============================================================
+  //  8 — ITEM YANG KEMUNGKINAN PLUS MINUS ANTAR PERIODE  (REFINE-1 — NEW)
+  //  --------------------------------------------------------
+  //  User: "Tambahkan juga item yang flip flop namun ganti istilah nya
+  //  menjadi Item yang kemungkinan Plus Minus antar Periode".
+  //  Each row shows an item's most BALANCED sign reversal between two
+  //  consecutive same-week periods (e.g. +100 in Jul W4 → -98 in Agu W4):
+  //  QTY Deviasi positive = green (plus), negative = red (minus); Net near
+  //  zero = the reversal is nearly symmetrical.
+  // ============================================================
+  if (hasSection('flip')) {
+    rpt.sectionHeader(8, 'Item yang Kemungkinan Plus Minus antar Periode');
+    const fr = data.flipRanking;
+    const flipRows = (fr?.items ?? []).filter((it) => it.topFlips.length > 0).slice(0, 10);
+    if (flipRows.length === 0) {
+      rpt.noteBox('Tidak ada item dengan pola plus minus antar periode pada scope ini.');
+    } else {
+      rpt.table({
+        cols: [
+          { header: '#', align: 'center' },
+          { header: 'Item' },
+          { header: 'Periode 1' },
+          { header: 'QTY Deviasi P1', align: 'right' },
+          { header: 'Periode 2' },
+          { header: 'QTY Deviasi P2', align: 'right' },
+          { header: 'Net', align: 'right' },
+        ],
+        rows: flipRows.map((it, i) => {
+          const fp = it.topFlips[0];
+          return [String(i + 1), it.itemName, fp.period1Label, fmtNum(fp.qtyP1), fp.period2Label, fmtNum(fp.qtyP2), fmtNum(fp.net)];
+        }),
+        // Plus/minus coloring on the two QTY columns — the visual point of
+        // the section: green = plus (surplus side), red = minus (loss side).
+        cellColor: (_row, ri, ci) => {
+          if (ci !== 3 && ci !== 5) return undefined;
+          const fp = flipRows[ri]?.topFlips[0];
+          if (fp == null) return undefined;
+          const v = ci === 3 ? fp.qtyP1 : fp.qtyP2;
+          return v < 0 ? C.danger : v > 0 ? C.success : undefined;
+        },
+      });
     }
   }
 }

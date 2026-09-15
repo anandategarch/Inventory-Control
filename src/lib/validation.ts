@@ -197,10 +197,13 @@ export const changeAnalysisItemsQuerySchema = changeAnalysisQuerySchema.extend({
 // error). Keep this list in sync with SECTIONS in ExportDialog.tsx and the
 // hasSection() keys in pdf/pdf-builder.ts.
 // EXPORT-TRIM: user request — report trimmed 13 → 6 sections. Removed:
-// 'breakdown', 'area', 'outlets', 'pareto', 'flip', 'peer', 'coverage'.
-// Kept: exec (renamed "Ringkasan"), growth, topItems, variance, itemTrend,
-// trend.
-const EXPORT_SECTION_KEYS = ['exec', 'growth', 'topItems', 'variance', 'itemTrend', 'trend'] as const;
+// 'breakdown', 'area', 'outlets', 'pareto', 'coverage' (the removed keys are
+// 400-rejected below). Kept: exec (renamed "Ringkasan"), growth, topItems,
+// variance, itemTrend, trend.
+// REFINE-1 (user request): + 'peer' (section 7 — Resto dengan Penjualan
+// Kurang Lebih Sama) + 'flip' (section 8 — Item yang Kemungkinan Plus Minus
+// antar Periode).
+const EXPORT_SECTION_KEYS = ['exec', 'growth', 'topItems', 'variance', 'itemTrend', 'trend', 'peer', 'flip'] as const;
 export const exportReportQuerySchema = z.object({
   month: monthLabelSchema,
   week: weekLabelSchema,

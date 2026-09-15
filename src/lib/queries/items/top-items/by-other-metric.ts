@@ -10,6 +10,15 @@
 //    3. queryHistoricalCategoryAvg — historical avg per (item,outlet)
 //    4. queryItemConsistency       — per-item outlet-count + consistency tier
 //    5. queryParetoByDevBom        — Pareto 80/20 for items with |Dev/BOM| > threshold
+//    6. queryAreaCategoryAvg       — per-(item, area) avg category QTY across the
+//                                   area's outlets (REFINE-1: "Rata-rata Area"
+//                                   column in the export's 3.3-3.6 tables)
+//
+//  REFINE-1 (user request): queryTopItemsByNominal now also returns devBom
+//  (SUM(qtyDeviasi) / SUM|qtyBom| per group — feeds the "% Deviasi To BOM"
+//  column added to export table 3.1), and queryTopItemsByDevBom returns
+//  nominalDeviasi (feeds the "Nominal Deviasi" column added to 3.2). Both are
+//  additive — existing consumers ignore the extra fields.
 //
 //  (H-10: the standalone queryTopItemsByCategory was removed — zero
 //  production callers since queryTopItemsByAllCategories landed.)
@@ -26,16 +35,19 @@ export async function queryTopItemsByNominal(
   month: string,
   filters: SqlFilterOpts,
   limit: number = 10
-): Promise<Array<{ itemName: string; outletCode: string; satuan: string | null; absNominal: number; nominalDeviasi: number; direction: string }>> {
+): Promise<Array<{ itemName: string; outletCode: string; satuan: string | null; absNominal: number; nominalDeviasi: number; direction: string; devBom: number | null }>> {
   const f = buildSqlFilters(filters);
   // Rev 3: Sort by ABS(nominalDeviasi), but return signed nominalDeviasi for display.
   // Previous version sorted/displayed absNominalLossSurplus (NET) — user wants nominalDeviasi (GROSS).
   // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ itemName: string; outletCode: string; satuan: string | null; absNominal: number; nominalDeviasi: number; direction: string }[]>`
+  // REFINE-1: + devBom per group (NULL when the group has no BOM rows) — feeds
+  // the "% Deviasi To BOM" column in export table 3.1.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ itemName: string; outletCode: string; satuan: string | null; absNominal: number; nominalDeviasi: number; direction: string; devBom: number | null }[]>`
     SELECT i.name as "itemName", o.code as "outletCode",
       MAX(ir."satuan") as "satuan",
       ABS(SUM(ir."nominalDeviasi")) as "absNominal",
       SUM(ir."nominalDeviasi") as "nominalDeviasi",
+      SUM(ir."qtyDeviasi") / NULLIF(SUM(ABS(ir."qtyBom")), 0) as "devBom",
       -- FIX VERIFY3-8: direction derived from SUM(nominalLossSurplus) with qtyDeviasi NULL fallback
       -- FIX (RESTORE-SHARED-1): use shared DIRECTION_FROM_SUM_SQL fragment from ../shared
       ${DIRECTION_FROM_SUM_SQL} as direction
@@ -57,12 +69,14 @@ export async function queryTopItemsByDevBom(
   month: string,
   filters: SqlFilterOpts,
   limit: number = 10
-): Promise<Array<{ itemName: string; outletCode: string; satuan: string | null; devBom: number; devBomAbs: number; tolerance: number | null }>> {
+): Promise<Array<{ itemName: string; outletCode: string; satuan: string | null; devBom: number; devBomAbs: number; tolerance: number | null; nominalDeviasi: number | null }>> {
   const f = buildSqlFilters(filters);
   // Rev 4: Sort by ABS(devBom), but return signed devBom for display.
   // Signed devBom = SUM(qtyDeviasi) / SUM(ABS(qtyBom)) — can be negative (SURPLUS) or positive (LOSS).
   // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ itemName: string; outletCode: string; satuan: string | null; devBom: number; devBomAbs: number; tolerance: number | null }[]>`
+  // REFINE-1: + signed nominalDeviasi per group — feeds the "Nominal Deviasi"
+  // column in export table 3.2.
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ itemName: string; outletCode: string; satuan: string | null; devBom: number; devBomAbs: number; tolerance: number | null; nominalDeviasi: number | null }[]>`
     SELECT i.name as "itemName", o.code as "outletCode",
       MAX(ir."satuan") as "satuan",
       CASE WHEN SUM(ABS(ir."qtyBom")) > 0
@@ -71,6 +85,7 @@ export async function queryTopItemsByDevBom(
       CASE WHEN SUM(ABS(ir."qtyBom")) > 0
         THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
         ELSE 0 END as "devBomAbs",
+      SUM(ir."nominalDeviasi") as "nominalDeviasi",
       -- FIX FUNC-3: use MIN for LOSS (strictest tolerance), MAX for SURPLUS (was: MAX always)
       CASE
         WHEN SUM(ir."nominalLossSurplus") < 0 THEN MIN(ir."tolerancePct")
@@ -119,6 +134,9 @@ export interface TopItemsCategoryRow {
   outletCode: string;
   /** H-2b: unit-of-measure for the item (denormalized on InventoryRecord; MAX per group — nullable, GROUP BY-safe). */
   satuan: string | null;
+  /** REFINE-1: outlet's area (o.area) — drives the "Rata-rata Area" lookup
+   *  in the export's 3.3-3.6 tables. */
+  area: string;
   qty: number;
   nominal: number;
   direction: string;
@@ -150,6 +168,7 @@ interface WideCategoryRow {
   itemName: string;
   outletCode: string;
   satuan: string | null;
+  area: string;
   wasteQty: number; wasteNominal: number; wasteNls: number | null; wasteQd: number | null; rw: number;
   susutQty: number; susutNominal: number; susutNls: number | null; susutQd: number | null; rs: number;
   trialQty: number; trialNominal: number; trialNls: number | null; trialQd: number | null; rt: number;
@@ -185,7 +204,7 @@ export async function queryTopItemsByAllCategories(
   const ls = catFrag('lossSurplus');
 
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<WideCategoryRow[]>`
-    SELECT "itemName", "outletCode", "satuan",
+    SELECT "itemName", "outletCode", "satuan", "area",
       "wasteQty", "wasteNominal", "wasteNls", "wasteQd", "rw",
       "susutQty", "susutNominal", "susutNls", "susutQd", "rs",
       "trialQty", "trialNominal", "trialNls", "trialQd", "rt",
@@ -193,6 +212,7 @@ export async function queryTopItemsByAllCategories(
     FROM (
       SELECT i.name as "itemName", o.code as "outletCode",
         MAX(ir."satuan") as "satuan",
+        MAX(o.area) as "area",
         ${waste.select},
         ${susut.select},
         ${trial.select},
@@ -220,6 +240,7 @@ export async function queryTopItemsByAllCategories(
         itemName: r.itemName,
         outletCode: r.outletCode,
         satuan: r.satuan,
+        area: r.area,
         qty: Number(r[`${c.tag}Qty` as keyof WideCategoryRow]) || 0,
         nominal: Number(r[`${c.tag}Nominal` as keyof WideCategoryRow]) || 0,
         direction: directionFromSums(
@@ -278,6 +299,99 @@ export async function queryHistoricalCategoryAvg(
     map.set(`${r.itemName}|${r.outletCode}`, {
       avgQty: Number(r.avgQty) || 0,
       avgNominal: Number(r.avgNominal) || 0,
+    });
+  }
+  return map;
+}
+
+// ============================================================
+//  Area Category Average — REFINE-1 (user request: "tambahkan juga
+//  rata rata area di mana resto itu berada")
+//  --------------------------------------------------------
+//  Per-(item, area) average category QTY across ALL outlets in that
+//  area for the CURRENT period — the "Rata-rata Area" benchmark column
+//  in the export's 3.3-3.6 tables.
+//
+//  Grain: first per-OUTLET sums (same FILTER (qty IS NOT NULL AND
+//  qty != 0) convention as queryTopItemsByAllCategories), then
+//  AVG over the outlets whose per-outlet qty is > 0 — a conditional
+//  average, so the benchmark answers "berapa typical resto di area ini
+//  yang mengalami metric ini untuk item yang sama". Outlets with no
+//  rows for the metric do not dilute the average to ~0.
+//
+//  Deliberately NOT scoped by kelompok/outlet/pic/itemName filters:
+//  the benchmark is the FULL area population ("rata-rata area di mana
+//  resto itu berada"), independent of which resto the report focuses
+//  on. The optional `area` param only scopes WHICH areas are computed
+//  (when the export itself is area-filtered, every row is inside it
+//  anyway — the filter just trims the row count).
+//
+//  Returns a Map keyed "itemName|area" → the 4 category averages
+//  (null when no outlet in the area has the metric for that item).
+// ============================================================
+export interface AreaCategoryAvg {
+  waste: number | null;
+  susut: number | null;
+  trial: number | null;
+  lossSurplus: number | null;
+}
+
+export async function queryAreaCategoryAvg(
+  week: string,
+  month: string,
+  area: string | null,
+): Promise<Map<string, AreaCategoryAvg>> {
+  const areaFilter = area ? Prisma.sql`AND ir."area" = ${area}` : Prisma.empty;
+
+  const catAvg = (qtyCol: string) => {
+    const qtyRef = Prisma.raw(`ir."${qtyCol}"`);
+    const cond = Prisma.sql`${qtyRef} IS NOT NULL AND ${qtyRef} != 0`;
+    // inner: per-outlet sum (wide); outer: AVG over outlets with qty > 0
+    return {
+      inner: Prisma.sql`COALESCE(SUM(ABS(${qtyRef})) FILTER (WHERE ${cond}), 0)`,
+      outer: (col: string) => Prisma.sql`AVG(${Prisma.raw(col)}) FILTER (WHERE ${Prisma.raw(col)} > 0)`,
+    };
+  };
+
+  const cats = {
+    waste: catAvg('qtyWaste'),
+    susut: catAvg('qtySusut'),
+    trial: catAvg('qtyTrial'),
+    lossSurplus: catAvg('qtyLossSurplus'),
+  };
+
+  const rows = await withStatementTimeout((tx) => tx.$queryRaw<{
+    itemName: string; area: string;
+    avgWaste: number | null; avgSusut: number | null; avgTrial: number | null; avgLossSurplus: number | null;
+  }[]>`
+    SELECT "itemName", "area",
+      ${cats.waste.outer('perOutlet."wasteQty"')} as "avgWaste",
+      ${cats.susut.outer('perOutlet."susutQty"')} as "avgSusut",
+      ${cats.trial.outer('perOutlet."trialQty"')} as "avgTrial",
+      ${cats.lossSurplus.outer('perOutlet."lsQty"')} as "avgLossSurplus"
+    FROM (
+      SELECT i.name as "itemName", o.area,
+        ${cats.waste.inner} as "wasteQty",
+        ${cats.susut.inner} as "susutQty",
+        ${cats.trial.inner} as "trialQty",
+        ${cats.lossSurplus.inner} as "lsQty"
+      FROM "InventoryRecord" ir
+      JOIN "Item" i ON ir."itemId" = i.id
+      JOIN "Outlet" o ON ir."outletId" = o.id
+      WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
+        ${areaFilter}
+      GROUP BY i.name, o.area, o.code
+    ) perOutlet
+    GROUP BY "itemName", "area"
+  `);
+
+  const map = new Map<string, AreaCategoryAvg>();
+  for (const r of rows) {
+    map.set(`${r.itemName}|${r.area}`, {
+      waste: r.avgWaste == null ? null : Number(r.avgWaste) || 0,
+      susut: r.avgSusut == null ? null : Number(r.avgSusut) || 0,
+      trial: r.avgTrial == null ? null : Number(r.avgTrial) || 0,
+      lossSurplus: r.avgLossSurplus == null ? null : Number(r.avgLossSurplus) || 0,
     });
   }
   return map;

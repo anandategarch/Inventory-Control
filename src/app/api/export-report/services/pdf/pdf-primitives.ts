@@ -267,6 +267,9 @@ export interface TableOpts {
 export interface KpiCard {
   label: string;
   value: string;
+  /** Optional value text color (REFINE-1: the Penjualan card's value IS the
+   *  % change — it carries the semantic green/red itself). */
+  valueColor?: string;
   /** Optional third line (usually the growth/delta, colored). */
   sub?: string;
   subColor?: string;
@@ -440,7 +443,7 @@ export class Rpt {
         this.doc.lineWidth(0.8).strokeColor(C.border).roundedRect(x, top, cardW, cardH, 5).stroke();
         // FIX-TERPOTONG: fit (shrink) instead of ellipsize — nothing cut
         this.text(c.label.toUpperCase(), x + 9, top + 10, { size: 6, color: C.muted, fit: true, width: cardW - 18 });
-        this.text(c.value, x + 9, top + 21, { font: 'Helvetica-Bold', size: 13.5, color: C.ink, fit: true, width: cardW - 18 });
+        this.text(c.value, x + 9, top + 21, { font: 'Helvetica-Bold', size: 13.5, color: c.valueColor ?? C.ink, fit: true, width: cardW - 18 });
         if (c.sub != null) {
           this.text(c.sub, x + 9, top + 39, { size: 6.8, color: c.subColor ?? C.muted, fit: true, width: cardW - 18 });
         }
