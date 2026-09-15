@@ -195,10 +195,19 @@ export async function queryParetoByDevBom(
 
   return {
     drivers,
-    remainderCount: 0,
+    // BUG-Q (population semantics, completing BUG-2-c): remainderCount /
+    // totalCount now report the FULL threshold-passing population, matching
+    // the population-honest sharePct/cumPct/remainderPct/totalAbsNominal
+    // above (same convention as computePareto8020 + the nested-Pareto
+    // populationTotal window). Previously totalCount was the top-N slice
+    // length (== drivers.length — the UI badge "N item · M total" showed
+    // N == M whenever the population exceeded maxDrivers) and remainderCount
+    // was hardcoded 0 while remainderPct honestly reported the rest of
+    // population.
+    remainderCount: itemAggs.length - topItems.length,
     remainderPct: Number(Math.max(0, 100 - cumPct).toFixed(1)),
     totalAbsNominal: grandTotal,
-    totalCount: topItems.length,
+    totalCount: itemAggs.length,
     thresholdPct: threshold,
   };
 }

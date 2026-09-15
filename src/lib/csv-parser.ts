@@ -13,7 +13,7 @@
 // ============================================================
 import { parse } from 'csv-parse';
 import { createReadStream } from 'fs';
-import { HEADER_ALIASES } from '@/lib/excel';
+import { normalizeHeader } from '@/lib/excel';
 
 export interface CsvRow {
   [key: string]: string;
@@ -29,9 +29,18 @@ export interface CsvRow {
 export async function* parseCsvStream(csvPath: string): AsyncGenerator<CsvRow> {
   const parser = parse({
     columns: (headers: string[]) => headers.map((h: string) => {
-      // Normalize headers same way as Excel parser
-      const cleaned = h.toLowerCase().replace(/\s+/g, ' ').trim();
-      return HEADER_ALIASES[cleaned] || HEADER_ALIASES[cleaned.replace(/\s*\/\s*/g, '/')] || cleaned;
+      // Normalize headers same way as Excel parser — via the SHARED
+      // normalizeHeader (excel.ts), which tries 4 alias strategies
+      // (exact / slash-normalized / %-stripped / %-stripped+slash).
+      // BUG-Q: this callback previously re-implemented only the first 2
+      // strategies inline, so a CSV header like "%deviasi to bom" or
+      // "%qty deviasi to bom" (% glued to the letters) fell through to the
+      // raw cleaned name in the CSV path while the xlsx path mapped it to
+      // the canonical column — those columns were silently dropped during
+      // CSV ingestion. normalizeHeader keeps the identical fallback
+      // (returns the cleaned name when no alias matches), so all
+      // previously-matching headers are unaffected — strictly a superset.
+      return normalizeHeader(h);
     }),
     skip_empty_lines: true,
     trim: true,

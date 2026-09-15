@@ -66,8 +66,9 @@ interface PreparedRow {
 }
 
 /** Distinct outlet to resolve (first-seen row wins, matching old upsert-on-first-encounter). */
-// PERF (PAKET B / F3): exported so process-ingestion.ts (the /api/ingest &
-// import-drive path) can reuse the exact same set-based resolution helpers.
+// PERF (PAKET B / F3): exported so process-ingestion/ (the /api/ingest &
+// import-drive path — a folder since the SPLIT-D code-motion split) can
+// reuse the exact same set-based resolution helpers.
 export interface OutletCandidate {
   code: string;
   name: string;

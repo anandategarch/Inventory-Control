@@ -30,7 +30,6 @@ export interface PrepareRowsResult {
   prepared: PreparedRow[];
   outletCandidates: Map<string, OutletCandidate>;
   itemCandidates: Map<string, string | null>;
-  skippedErrors: number;
 }
 
 export function prepareRows(args: {
@@ -46,8 +45,11 @@ export function prepareRows(args: {
   const prepared: PreparedRow[] = [];
   const outletCandidates = new Map<string, OutletCandidate>();
   const itemCandidates = new Map<string, string | null>();
+  // BUG-Q cleanup: the `skippedErrors` counter that used to live here was
+  // dead plumbing — the ERROR issues themselves ARE reported (allIssues →
+  // DQIssue rows + summarizeDQ → IngestResult.dqErrors), and no caller ever
+  // consumed the row-skip count. Removed (behavior unchanged).
   let totalRows = 0;
-  let skippedErrors = 0;
   for (const rawRow of allRows) {
     totalRows++;
     const rowNumber = totalRows + 1;
@@ -59,7 +61,6 @@ export function prepareRows(args: {
 
       const hasError = issues.some((i) => i.severity === 'ERROR');
       if (hasError) {
-        skippedErrors++;
         continue;
       }
     }
@@ -84,5 +85,5 @@ export function prepareRows(args: {
     }
   }
 
-  return { prepared, outletCandidates, itemCandidates, skippedErrors };
+  return { prepared, outletCandidates, itemCandidates };
 }

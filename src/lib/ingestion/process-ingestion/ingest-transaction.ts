@@ -30,8 +30,6 @@ export interface IngestTransactionArgs {
   monthLabel: string;
   monthKey: string;
   fastMode?: boolean;
-  /** PASS 1's error-skip count — returned unchanged (raced branch returns 0). */
-  skippedErrors: number;
   prepared: PreparedRow[];
   outletCandidates: Map<string, OutletCandidate>;
   itemCandidates: Map<string, string | null>;
@@ -43,7 +41,6 @@ export interface IngestTransactionArgs {
 
 export interface IngestTransactionResult {
   totalInserted: number;
-  skippedErrors: number;
   /** AUDIT-BUG-3 natural-key dup skips — surfaced so the orchestrator can log them */
   skippedDuplicates: number;
   dq: ReturnType<typeof summarizeDQ>;
@@ -53,7 +50,7 @@ export interface IngestTransactionResult {
 export async function runIngestTransaction(args: IngestTransactionArgs): Promise<IngestTransactionResult> {
   const {
     filePath, fileName, fileHash, monthLabel, monthKey, fastMode,
-    skippedErrors, prepared, outletCandidates, itemCandidates,
+    prepared, outletCandidates, itemCandidates,
     outletDbMap, itemDbMap, allIssues,
   } = args;
 
@@ -104,7 +101,7 @@ export async function runIngestTransaction(args: IngestTransactionArgs): Promise
         });
         if (racedCount > 0) {
           return {
-            totalInserted: 0, skippedErrors: 0,
+            totalInserted: 0,
             dq: { summary: [], severityCounts: { ERROR: 0, WARNING: 0, INFO: 0 }, status: 'OK' as const },
             duplicateOf: { id: racedFile.id, rowCount: racedCount },
           };
@@ -314,10 +311,13 @@ export async function runIngestTransaction(args: IngestTransactionArgs): Promise
         }
       }
 
-      return { totalInserted, skippedErrors, dq, duplicateOf: undefined };
+      return { totalInserted, dq, duplicateOf: undefined };
     },
     { timeout: 240_000, maxWait: 10_000 },
   );
 
-  return { totalInserted, skippedErrors, dq, duplicateOf, skippedDuplicates };
+  // BUG-Q cleanup: the `skippedErrors` field that used to ride this return
+  // was dead plumbing (PASS 1's row-skip count — never read by any caller;
+  // the ERROR issues themselves are reported via allIssues → dq). Removed.
+  return { totalInserted, dq, duplicateOf, skippedDuplicates };
 }

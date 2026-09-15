@@ -44,8 +44,9 @@ export async function listDriveFolderFiles(folderId: string): Promise<DriveFile[
   // ============================================================
   const files: DriveFile[] = [];
 
-  // Find all entry blocks — each starts with <div class="flip-entry" id="entry-... and ends before the next one
-  const entryBlocks: Array<{ fileId: string; block: string }> = [];
+  // BUG-Q cleanup: the `entryBlocks` array that used to live here was dead
+  // code from an old parser refactor (declared, never pushed to, never read —
+  // the loop below works off `starts` + html.slice blocks). Removed.
   // Bug 5 fix: limit [^>]* to {0,500} to prevent ReDoS catastrophic backtracking
   const entryStartRegex = /<div class="flip-entry"[^>]{0,500}id="entry-([^"]{1,100})"[^>]{0,500}>/g;
   const starts: Array<{ fileId: string; index: number }> = [];

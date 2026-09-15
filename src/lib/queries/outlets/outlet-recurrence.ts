@@ -24,13 +24,15 @@
 //    lossNominal= SUM(CASE WHEN nominalLossSurplus < 0
 //                          THEN ABS(nominalLossSurplus) ELSE 0 END)
 //  Threshold sources (both resolved at runtime via
-//  getRuntimeThresholds(), src/lib/settings.ts):
-//    - FALLBACK_TOLERANCE_PCT — default 0.05 (settings.ts:527;
+//  getRuntimeThresholds(), src/lib/settings — a folder since the
+//  SPLIT-D code-motion split; defaults live in settings/definitions.ts):
+//    - FALLBACK_TOLERANCE_PCT — default 0.05
+//      (settings/definitions.ts;
 //      canonical tolerance fallback, same one used by
 //      build-resto-profile.ts abnormalCount when an item has no
 //      per-item tolerance).
 //    - HIGH_LOSS_NOMINAL_THRESHOLD — default 50_000_000
-//      (settings.ts:551); this IS the P1 nominal threshold
+//      (settings/definitions.ts); this IS the P1 nominal threshold
 //      (metrics/definitions.ts:196: "P1_NOMINAL_THRESHOLD =
 //      HIGH_LOSS_NOMINAL_THRESHOLD (default 50,000,000)").
 //

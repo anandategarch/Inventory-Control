@@ -159,14 +159,14 @@ export async function processIngestion(body: IngestRequestBody, fastMode?: boole
       // upsert per new master-data code (~442 round-trips on the first
       // import of new outlet/item codes, 5-15ms per hop via the pooler).
       // ============================================================
-      const { prepared, outletCandidates, itemCandidates, skippedErrors } = prepareRows({
+      const { prepared, outletCandidates, itemCandidates } = prepareRows({
         allRows, fileName, monthLabel, fastMode,
         numberLocale: body.numberLocale, seenKeys, allIssues,
       });
 
       const { totalInserted, dq, duplicateOf, skippedDuplicates } = await runIngestTransaction({
         filePath, fileName, fileHash, monthLabel, monthKey, fastMode,
-        skippedErrors, prepared, outletCandidates, itemCandidates,
+        prepared, outletCandidates, itemCandidates,
         outletDbMap, itemDbMap, allIssues,
       });
 
