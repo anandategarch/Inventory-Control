@@ -18,7 +18,7 @@
 
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import type { ItemComparisonResponse, TrendResponse, PeerAverages, PeerRow } from '@/components/dashboard/peer-comparison/types';
+import type { ItemComparisonResponse, TrendResponse, PeerAverages, PeerRow, PeerTopItemsResponse } from '@/components/dashboard/peer-comparison/types';
 import type { BenchmarkOpportunityResponse } from '@/components/dashboard/peer-comparison/benchmark-opportunity-card';
 import {
   computePeerEfficiencyScore,
@@ -204,6 +204,49 @@ export function usePeerQueries({ activeOutlet, monthLabel, currentWeek, kelompok
     placeholderData: keepPreviousData,
   });
 
+  // Top Items query (PEERTOP-2) — "top item di tiap peer": each peer
+  // outlet's own top-N items + the cross-peer union. Independent inputs
+  // (outlet/month/week/mode/kelompok), fires in parallel with main/items.
+  // `limit` MUST equal peerLimit above so the peer band (ORDER BY sales
+  // proximity, LIMIT limit+1) is IDENTICAL to the main query's — perPeer
+  // entries then map 1:1 onto the Peer Table rows.
+  const { data: topItemsData, isLoading: topItemsLoading, error: topItemsError } = useQuery({
+    // kelompok in queryKey + URL params — same BUG2-RESTO-1 / FIX-P1-PEER-1
+    // rationale as the sibling queries.
+    queryKey: ['peer-comparison', 'top-items', activeOutlet, monthLabel, currentWeek, kelompok],
+    queryFn: async () => {
+      // Guard instead of non-null assertion (same convention as the
+      // benchmark-opportunity query above) — `enabled` guarantees both are
+      // defined by the time this runs, but the runtime check keeps TS strict
+      // happy without adding a new lint warning.
+      if (!activeOutlet || !monthLabel) throw new Error('Outlet dan periode belum dipilih');
+      const p = new URLSearchParams();
+      p.set('outletCode', activeOutlet);
+      p.set('month', monthLabel);
+      if (currentWeek) p.set('week', currentWeek);
+      p.set('mode', mode);
+      p.set('topN', '5');
+      p.set('limit', String(peerLimit));
+      // Same kelompok scoping as the sibling peer modules.
+      if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
+      const res = await fetch(`/api/peer-comparison/top-items?${p.toString()}`);
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) throw new Error('Server error');
+      // FIX (BUG-H cross-domain): see main query — JSON error body must not
+      // become query data.
+      if (!res.ok) {
+        const e = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(e?.error || `HTTP ${res.status}`);
+      }
+      return res.json() as Promise<PeerTopItemsResponse>;
+    },
+    enabled: Boolean(activeOutlet && monthLabel && currentWeek),
+    // PERF-FE (PAKET A): see main query — 5 min staleTime + 10 min gcTime
+    // instead of the 30s default refetch-on-remount storm.
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
+  });
+
   // Peer averages object (used by subcomponents) — memoized
   // FIX (rules-of-hooks): moved BEFORE early return so hooks are called unconditionally.
   const peerAverages: PeerAverages = useMemo(() => {
@@ -268,6 +311,11 @@ export function usePeerQueries({ activeOutlet, monthLabel, currentWeek, kelompok
     trendData,
     trendLoading,
     trendError,
+    // Top items query (PEERTOP-2 — "Top Items Across Peers" + Peer Table
+    // expand rows)
+    topItemsData,
+    topItemsLoading,
+    topItemsError,
     // Benchmark opportunity query
     opportunityData,
     opportunityLoading,

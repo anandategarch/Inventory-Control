@@ -157,25 +157,31 @@ export async function queryPeerComparison(
         SUM(ir."nominalLossSurplus") as "nominalLossSurplusSigned",
         -- FIX CALC-3: use nominalLossSurplus < 0 (LOSS) instead of stored ir.direction (which may be inverted)
         SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualQty") ELSE 0 END) as "residualQty",
-        COUNT(DISTINCT ir."itemId") as "itemCount",
-        MAX(ABS(ir."absNominalDeviasi")) as "topItemNominalRaw"
+        COUNT(DISTINCT ir."itemId") as "itemCount"
       FROM "InventoryRecord" ir
       WHERE ir."monthLabel" = ${month}
         ${weekFilter}
       GROUP BY ir."outletId"
     ),
+    -- FIX (PEERTOP-1): "top item" is now the AGGREGATE per (outlet, item) —
+    -- SUM(absNominalDeviasi) — matching queryPeerComparisonItems'
+    -- target_top_items and the new queryPeerTopItems. Was a single RECORD's
+    -- absNominalDeviasi (ROW_NUMBER over records), which could disagree with
+    -- the item-level cards for the same outlet (one definition everywhere).
     top_items AS (
       SELECT "outletId", "topItem", "topItemNominal" FROM (
         SELECT
           ir."outletId",
+          i.id as "itemId",
           i.name as "topItem",
-          ir."absNominalDeviasi" as "topItemNominal",
-          ROW_NUMBER() OVER (PARTITION BY ir."outletId" ORDER BY ir."absNominalDeviasi" DESC) as rn
+          SUM(ir."absNominalDeviasi") as "topItemNominal",
+          ROW_NUMBER() OVER (PARTITION BY ir."outletId" ORDER BY SUM(ir."absNominalDeviasi") DESC) as rn
         FROM "InventoryRecord" ir
         JOIN "Item" i ON ir."itemId" = i.id
         WHERE ir."monthLabel" = ${month}
           ${weekFilter}
           AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+        GROUP BY ir."outletId", i.id, i.name
       ) ranked WHERE rn = 1
     )
     SELECT

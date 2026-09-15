@@ -59,6 +59,47 @@ export interface ItemComparisonResponse {
   }>;
 }
 
+/** Response shape of `/api/peer-comparison/top-items` (PEERTOP-2 —
+ *  "Top Items Across Peers" card + Peer Table expand rows).
+ *  CLIENT-SAFE duplicate of the backend result types
+ *  (src/lib/queries/outlets/peer-top-items.ts) — do NOT import from
+ *  @/lib/queries/** here (that module pulls Prisma; this file is
+ *  imported by client components), same policy as
+ *  ItemComparisonResponse above. */
+export interface PeerTopItemsResponse {
+  success: boolean;
+  error?: string;
+  topN?: number;
+  /** Cross-peer UNION rows (server pre-sorted: peerTopCount desc →
+   *  target absNominal desc → peerMaxAbsNominal desc → name asc). */
+  items: Array<{
+    itemId: number;
+    itemName: string;
+    satuan: string | null;
+    /** Non-target peers carrying this item in THEIR top-N. */
+    peerTopCount: number;
+    /** Those peers' outlet codes (map → names via perPeer below). */
+    peerTopCodes: string[];
+    /** ABSOLUTE-basis average across those peers ("Rata-Rata Absolute"). */
+    peerAvgAbsNominal: number;
+    peerAvgDevBom: number;
+    /** Worst (largest absNominal) among those peers. */
+    peerMaxAbsNominal: number;
+    /** Target's own row. rank > topN = "di luar top-N"; null = item has
+     *  NO deviation records at the target ("blind spot"). */
+    target: { rank: number; absNominal: number; devBom: number; direction: string } | null;
+  }>;
+  /** Per-outlet top-N (target included). NOTE: ordered by outletCode —
+   *  peers with ZERO deviation records have NO entry here (callers show
+   *  "tidak ada item deviasi" for those codes). */
+  perPeer: Array<{
+    outletCode: string;
+    outletName: string;
+    isTarget: boolean;
+    items: Array<{ itemName: string; absNominal: number; devBom: number; direction: string }>;
+  }>;
+}
+
 /** Response shape of `/api/peer-comparison/trend` (Feature 6). */
 export interface TrendResponse {
   success: boolean;

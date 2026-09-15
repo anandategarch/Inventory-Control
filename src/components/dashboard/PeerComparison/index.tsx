@@ -36,6 +36,7 @@ import {
 } from '@/components/dashboard/shared/peer-comparison-cards';
 import { BenchmarkOpportunityCard } from '@/components/dashboard/peer-comparison/benchmark-opportunity-card';
 import { ItemLevelComparison } from '@/components/dashboard/peer-comparison/items-table';
+import { TopItemsAcrossPeers } from '@/components/dashboard/peer-comparison/top-items-card';
 import { TrendChartCard } from '@/components/dashboard/peer-comparison/trend-chart';
 import { CorrelationInsightCard } from '@/components/dashboard/peer-comparison/correlation-insight-card';
 import { usePeerQueries } from './use-peer-queries';
@@ -44,7 +45,7 @@ import { PeerTableCard } from './peer-table-card';
 
 // Re-export shared types so callers importing from this file still work.
 export type {
-  PeerRow, MetricDef, ItemComparisonResponse, TrendResponse, PeerAverages,
+  PeerRow, MetricDef, ItemComparisonResponse, TrendResponse, PeerAverages, PeerTopItemsResponse,
 } from '@/components/dashboard/peer-comparison/types';
 
 export function PeerComparison() {
@@ -68,6 +69,7 @@ export function PeerComparison() {
     peers, targetRow, otherPeers,
     itemsData, itemsLoading, itemsError,
     trendData, trendLoading, trendError,
+    topItemsData, topItemsLoading, topItemsError,
     opportunityData, opportunityLoading, opportunityError, refetchOpportunity,
     peerAverages, efficiencyScore, gapRows, scatterPoints, rankData,
   } = usePeerQueries({ activeOutlet, monthLabel, currentWeek, kelompok });
@@ -175,6 +177,8 @@ export function PeerComparison() {
       </div>
 
       {/* ============ 6. PEER TABLE + ANOMALY FLAGS (Feature 5) ============ */}
+      {/* PEERTOP-2: also carries the expandable per-outlet top-item rows
+          (topItemsData drives the ▸/▾ expansion under each resto row). */}
       <PeerTableCard
         mainData={mainData}
         mainLoading={mainLoading}
@@ -186,6 +190,21 @@ export function PeerComparison() {
         targetRow={targetRow}
         onSelectOutlet={setFocusOutlet}
         onRetryMain={refetchMain}
+        topItemsData={topItemsData}
+        topItemsLoading={topItemsLoading}
+      />
+
+      {/* ============ 6b. TOP ITEMS ACROSS PEERS (PEERTOP-2) ============ */}
+      {/* Peer-centric block grouped together (right after the Peer Table):
+          cross-peer union of every peer's own top-N items — shared vs
+          local problems + blind spots. Always mounted (P1) — fires its
+          query in parallel with the main query. Own loading/error states. */}
+      <TopItemsAcrossPeers
+        data={topItemsData}
+        isLoading={topItemsLoading}
+        error={topItemsError}
+        totalPeers={otherPeers.length}
+        topN={5}
       />
 
       {/* ============ 7. ITEM-LEVEL COMPARISON (Feature 3) ============ */}

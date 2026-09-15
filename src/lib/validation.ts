@@ -169,6 +169,18 @@ export const peerComparisonTrendQuerySchema = z.object({
   kelompok: kelompokSchema,
 });
 
+// /api/peer-comparison/top-items?outletCode=&month=&week=&kelompok=
+// PEERTOP-1 — per-peer top-N items + cross-peer union. topN/limit/mode are
+// parsed + clamped manually in the route (same style as the items route's
+// topItems: bogus values must not reach the cache key, so they never enter
+// the zod schema).
+export const peerTopItemsQuerySchema = z.object({
+  outletCode: z.string().min(1).max(50),
+  month: monthLabelSchema,
+  week: weekLabelSchema,
+  kelompok: kelompokSchema,
+});
+
 // /api/benchmark-opportunity?month=&week=&kelompok=
 // ANA-1-E ("Peluang Perbaikan (Rp)" — Rp gap vs AREA MEDIAN loss, PEER tab).
 // Same filter scope as the peer-comparison family (kelompok scopes the

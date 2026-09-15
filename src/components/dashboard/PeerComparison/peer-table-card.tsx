@@ -14,11 +14,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, BarChart3, RotateCcw } from 'lucide-react';
+import { Loader2, BarChart3, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
+import { Fragment, memo, useMemo, useState } from 'react';
 import type { Dispatch } from 'react';
-import { fmtIDR } from '@/lib/format';
+import { fmtIDR, fmtPct } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
-import type { MetricDef, PeerAverages, PeerRow } from '@/components/dashboard/peer-comparison/types';
+import type { MetricDef, PeerAverages, PeerRow, PeerTopItemsResponse } from '@/components/dashboard/peer-comparison/types';
 import { COLUMNS, colorCell } from '@/components/dashboard/peer-comparison/helpers';
 import { computePeerAnomalyFlags } from '@/components/dashboard/peer-computation';
 import { AnomalyFlags } from '@/components/dashboard/shared/peer-comparison-cards';
@@ -44,6 +45,18 @@ export interface PeerTableCardProps {
    *  repo's base no-unused-vars rule flags type-position param names.) */
   onSelectOutlet: Dispatch<string>;
   onRetryMain: () => void;
+  /** PEERTOP-2: /api/peer-comparison/top-items perPeer data driving the
+   *  expandable per-outlet top-item rows. Same peer band as the main
+   *  query (limit=50), so entries map 1:1 onto these rows. */
+  topItemsData: PeerTopItemsResponse | undefined;
+  topItemsLoading: boolean;
+}
+
+/** Direction letter color — same convention as the Dir column above. */
+function dirColor(direction: string | undefined): string {
+  if (direction === 'LOSS') return 'text-red-600 dark:text-red-400';
+  if (direction === 'SURPLUS') return 'text-emerald-600 dark:text-emerald-400';
+  return 'text-muted-foreground';
 }
 
 export function PeerTableCard({
@@ -57,8 +70,26 @@ export function PeerTableCard({
   targetRow,
   onSelectOutlet,
   onRetryMain,
+  topItemsData,
+  topItemsLoading,
 }: PeerTableCardProps) {
   const columns: MetricDef[] = COLUMNS;
+
+  // PEERTOP-2: which outlet row's top-item list is expanded (single-open
+  // accordion — opening one row collapses the previous).
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  // code → perPeer top-N entry (peers with ZERO deviation records have no
+  // perPeer entry → undefined → "tidak ada item deviasi" branch below).
+  const perPeerByCode = useMemo(() => {
+    const m = new Map<string, PeerTopItemsResponse['perPeer'][number]>();
+    for (const pp of topItemsData?.perPeer || []) m.set(pp.outletCode, pp);
+    return m;
+  }, [topItemsData]);
+
+  // Expansion row spans the FULL table width: Resto/Area/PIC/TopItem (4)
+  // + metric columns + Dir/Flags (2).
+  const expansionColSpan = 4 + columns.length + 2;
 
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
@@ -137,13 +168,43 @@ export function PeerTableCard({
                 )}
                 {/* Outlet Rows */}
                 {peers.map((p, i) => (
+                  <Fragment key={p.outletCode}>
                   <TableRow
-                    key={p.outletCode}
                     className={`cursor-pointer hover:bg-muted/40 transition-colors ${p.isTarget ? 'bg-amber-50/60 dark:bg-amber-950/20 border-l-2 border-l-amber-500' : i % 2 === 1 ? 'bg-muted/20' : ''}`}
                     {...clickableRowProps(() => onSelectOutlet(p.outletCode))}
                   >
                     <TableCell className="text-xs font-medium sticky left-0 bg-background z-10">
                       <div className="flex items-center gap-1.5">
+                        {/* PEERTOP-2: expand toggle for this outlet's top items.
+                            stopPropagation keeps the ROW's click-to-retarget
+                            behavior (clickableRowProps) intact. */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            setExpanded(expanded === p.outletCode ? null : p.outletCode);
+                          }}
+                          // Keyboard: without this, Enter/Space on the focused
+                          // chevron would bubble to the row's clickableRowProps
+                          // onKeyDown and RETARGET instead of expanding.
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              setExpanded(expanded === p.outletCode ? null : p.outletCode);
+                            }
+                          }}
+                          className="flex h-9 w-9 items-center justify-center rounded-md hover:bg-muted shrink-0"
+                          aria-expanded={expanded === p.outletCode}
+                          aria-label={`Lihat top item ${p.outletName}`}
+                        >
+                          {expanded === p.outletCode ? (
+                            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                          ) : (
+                            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                          )}
+                        </button>
                         {p.isTarget && <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />}
                         <span className="truncate">{p.outletName}</span>
                       </div>
@@ -169,6 +230,21 @@ export function PeerTableCard({
                       <AnomalyFlags flags={computePeerAnomalyFlags(p, peerAverages)} textSize="11px" />
                     </TableCell>
                   </TableRow>
+                  {/* PEERTOP-2: expansion row — this outlet's own top-N items
+                      (SUM |nominal deviasi| per item, aggregate). A normal row
+                      spanning all columns (sticky-column styling unaffected). */}
+                  {expanded === p.outletCode && (
+                    <TableRow className="bg-muted/5">
+                      <TableCell colSpan={expansionColSpan} className="py-2">
+                        <PeerTopItemsExpansion
+                          outletName={p.outletName}
+                          entry={perPeerByCode.get(p.outletCode)}
+                          loading={topItemsLoading}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  </Fragment>
                 ))}
               </TableBody>
             </Table>
@@ -177,8 +253,52 @@ export function PeerTableCard({
         <div className="p-3 text-xs text-muted-foreground border-t bg-muted/20 dark:bg-zinc-900/20">
           💡 Klik baris untuk deep dive ke Resto Analysis. <span className="text-emerald-600 dark:text-emerald-400 font-medium">Hijau</span> = lebih baik dari peer avg, <span className="text-red-600 dark:text-red-400 font-medium">Merah</span> = lebih buruk.
           Sales range: ±10% dari <span className="font-medium tabular-nums">{targetRow ? fmtIDR(targetRow.sales) : 'target'}</span>.
+          Klik ▸/▾ di baris untuk lihat top item resto tersebut.
         </div>
       </CardContent>
     </Card>
   );
 }
+
+/** PEERTOP-2: compact expandable list of ONE outlet's top-N deviation
+ *  items (visual language mirrors ItemComparisonBlock in items-table.tsx). */
+const PeerTopItemsExpansion = memo(function PeerTopItemsExpansion({
+  outletName,
+  entry,
+  loading,
+}: {
+  outletName: string;
+  entry: PeerTopItemsResponse['perPeer'][number] | undefined;
+  loading: boolean;
+}) {
+  // No perPeer entry = this outlet has ZERO deviation records in the period
+  // (or the top-items query is still in flight).
+  if (!entry) {
+    return (
+      <p className="text-xs text-muted-foreground py-1.5">
+        {loading ? 'Memuat top item…' : 'Tidak ada item deviasi pada periode ini.'}
+      </p>
+    );
+  }
+  return (
+    <div className="rounded-lg border bg-muted/10 px-3 py-2">
+      <div className="flex items-baseline justify-between gap-2 mb-1.5">
+        <h5 className="text-xs font-semibold">Top item di {outletName}</h5>
+        <span className="text-[11px] text-muted-foreground tabular-nums">{entry.items.length} item</span>
+      </div>
+      <div className="space-y-1">
+        {entry.items.map((it, i) => (
+          <div key={`${it.itemName}-${i}`} className="flex items-center gap-2 text-xs">
+            <span className="w-7 shrink-0 text-right text-muted-foreground tabular-nums">#{i + 1}</span>
+            <span className="min-w-0 flex-1 truncate font-medium" title={it.itemName}>{it.itemName}</span>
+            <span className="shrink-0 text-right font-mono tabular-nums">{fmtIDR(it.absNominal)}</span>
+            <span className="w-16 shrink-0 text-right font-mono tabular-nums text-muted-foreground">{fmtPct(it.devBom, false)}</span>
+            <span className={`w-4 shrink-0 text-center font-bold ${dirColor(it.direction)}`}>
+              {it.direction?.[0] || '—'}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+});

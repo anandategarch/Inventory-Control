@@ -18,6 +18,9 @@ export * from './outlets/peer-comparison';
 // MERGE-1-a (audit A1): item-level peer comparison pipeline moved out of
 // /api/peer-comparison/items/route.ts (SQL colocation convention).
 export * from './outlets/peer-comparison-items';
+// PEERTOP-1: "top item di tiap peer" — per-outlet top-N items + cross-peer
+// union (shared vs local problems, blind spots) for the Peer tab + PDF 8.3/8.4.
+export * from './outlets/peer-top-items';
 export * from './outlets/resto-recommendations';
 // ANA-1-D: outlet recurrence/persistence history (additive `history` field
 // for /api/recommendations — no interaction with the existing queries).

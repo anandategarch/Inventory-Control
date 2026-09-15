@@ -204,6 +204,44 @@ export interface PeerItemRow {
   peerCount: number;
 }
 
+// ============================================================
+//  PEERTOP-2-b — section 8.3/8.4 payloads ("top item tiap resto
+//  setara" + "bersama vs khusus"). Both live on PeerComparisonData
+//  as OPTIONAL fields so the whole feature degrades gracefully:
+//  absent (undefined) = fetch failed/skipped → the PDF section code
+//  skips the table; [] = fetched but no deviation records in the
+//  band → also skipped. Sales values are intentionally NOT part of
+//  the mapped payload (SALES SECRECY — same rule as `peers`).
+// ============================================================
+
+/** 8.3 row — cross-peer union of every resto setara's top items
+ *  (server-sorted: peerTopCount desc → target absNominal desc →
+ *  peerMaxAbsNominal desc → itemName). `target` null = the item has
+ *  NO deviation records at the target resto ("blind spot" — top at
+ *  peers, absent at the target). */
+export interface PeerTopItemRow {
+  itemName: string;
+  /** MAX(ir."satuan") — unit of measure (REFINE-2 "Satuan" convention). */
+  satuan: string | null;
+  /** Non-target resto setara carrying this item in THEIR top-N. */
+  peerTopCount: number;
+  /** ABSOLUTE-basis average across those restos ("Rata-rata Absolute"). */
+  peerAvgAbsNominal: number;
+  /** Worst (largest absNominal) among those restos. */
+  peerMaxAbsNominal: number;
+  /** The target's own row for the item; rank > topN = "di luar top-N". */
+  target: { rank: number; absNominal: number; devBom: number; direction: string } | null;
+}
+
+/** 8.4 entry — one resto setara's own top-N items (target included),
+ *  ordered by sales proximity to match the 8.1 Peer Table rows. */
+export interface PeerTopItemOutletRow {
+  outletCode: string;
+  outletName: string;
+  isTarget: boolean;
+  items: Array<{ itemName: string; absNominal: number; devBom: number; direction: string }>;
+}
+
 /** Section 7 payload. `peers` includes the target row (isTarget=true).
  *  Sales nominals are intentionally NOT exposed to the builder — the user
  *  keeps penjualan figures confidential; only the ±10% band membership is
@@ -213,6 +251,12 @@ export interface PeerComparisonData {
   autoTarget: boolean;
   peers: PeerComparisonRow[];
   items: PeerItemRow[];
+  /** PEERTOP-2-b — 8.3 cross-peer union of top items (undefined = fetch
+   *  failed/skipped; [] = no deviation records → section skips). */
+  topItems?: PeerTopItemRow[];
+  /** PEERTOP-2-b — 8.4 per-outlet top items in Peer Table order
+   *  (undefined = fetch failed/skipped; [] = no entries → section skips). */
+  peerTopItems?: PeerTopItemOutletRow[];
 }
 
 // trend row — derived at route.ts:600-603 from trendAggRows (queryTrendAgg).

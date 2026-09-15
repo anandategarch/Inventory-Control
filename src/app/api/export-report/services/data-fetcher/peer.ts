@@ -13,11 +13,13 @@ import {
   // Kurang Lebih Sama") — outlet-level peers + per-item breakdown.
   queryPeerComparison,
   queryPeerComparisonItems,
+  // PEERTOP-2-b: 8.3/8.4 — per-peer top items + cross-peer union.
+  queryPeerTopItems,
 } from '@/lib/queries';
 import { cachedSharedQuery } from '@/lib/queries/query-cache';
 import { withStatementTimeout, buildSqlFilters } from '@/lib/queries/shared';
 import { logger } from '@/lib/logger';
-import type { PeerItemRow, PeerComparisonData } from '../types';
+import type { PeerItemRow, PeerTopItemOutletRow, PeerTopItemRow, PeerComparisonData } from '../types';
 import type { FetcherContext } from './context';
 
 // ============================================================
@@ -32,8 +34,8 @@ import type { FetcherContext } from './context';
 //  concrete target (labeled in the report — factual, not narrative).
 //
 //  Dependent fetch (AFTER the Promise.all): the auto-target needs its
-//  own scan, and both peer queries take the resolved target code —
-//  this is the one intentionally-serial wave in the pipeline (≤3 extra
+//  own scan, and the peer queries take the resolved target code —
+//  this is the one intentionally-serial wave in the pipeline (≤4 extra
 //  RTTs, only when the section is selected).
 //  Non-fatal by design: a failure (or a target with no records) leaves
 //  peerComparison = null → the builder renders a factual "data tidak
@@ -109,11 +111,48 @@ export async function fetchPeerComparison(ctx: FetcherContext): Promise<PeerComp
             : null;
           return { itemName: g.itemName, satuan: g.satuan ?? null, target: g.target, peerAvg, peerCount: real.length };
         });
+        // PEERTOP-2-b — third dependent call, same cachedSharedQuery
+        // pattern as the two above. limit 10 MUST match the
+        // queryPeerComparison call (limit 10) so the peer band is
+        // EXACTLY the restos rendered in 8.1; topN 5 matches the 8.4
+        // subhead ("masing-masing sampai 5 item"). Stays inside the
+        // same try → a failure leaves peerComparison null (the whole
+        // fetch is already non-fatal — nothing new to catch).
+        const topRes = await cachedSharedQuery(
+          'q-peer-topitems',
+          { month, week, filters: filterOpts, extra: { target: targetCode, topN: 5, limit: 10, sv: 1 } },
+          () => queryPeerTopItems(targetCode as string, month, week, 'week', 5, 10, kelompokParam),
+        );
+        // 8.3 — cross-peer union, capped at 10 rows; rendered in the
+        // server's sort order (rowBold not needed — the target is a
+        // COLUMN here, not a row). Mapped WITHOUT sales values (SALES
+        // SECRECY — the query rows carry none anyway).
+        const topItems: PeerTopItemRow[] = topRes.items.slice(0, 10).map((u) => ({
+          itemName: u.itemName,
+          satuan: u.satuan ?? null,
+          peerTopCount: u.peerTopCount,
+          peerAvgAbsNominal: u.peerAvgAbsNominal,
+          peerMaxAbsNominal: u.peerMaxAbsNominal,
+          target: u.target,
+        }));
+        // 8.4 — per-outlet top items REORDERED to match the 8.1 Peer
+        // Table order (sales proximity): perPeer arrives ordered by
+        // outletCode (SQL), so walk peerRes.peers and look each code up.
+        // Peers with zero deviation records have no entry — skipped.
+        const perByCode = new Map(topRes.perPeer.map((p) => [p.outletCode, p]));
+        const peerTopItems: PeerTopItemOutletRow[] = [];
+        for (const p of peerRes.peers) {
+          const entry = perByCode.get(p.outletCode);
+          if (entry) peerTopItems.push(entry);
+        }
         return {
           targetOutlet: { code: targetRow.outletCode, name: targetRow.outletName, area: targetRow.area },
           autoTarget,
           peers: peerRes.peers,
           items,
+          // Empty arrays are fine — the PDF section code guards on length.
+          topItems,
+          peerTopItems,
         };
       }
     }
