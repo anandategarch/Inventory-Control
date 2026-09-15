@@ -8,7 +8,10 @@
 //  full height first.
 //
 //  Charts:
-//    barChartV        — vertical bars + value labels + y grid
+//    barChartV        — vertical bars + value labels + y grid. DIVERGING:
+//                      negative values grow DOWN from the zero baseline
+//                      (BUG-HUNT — was silently clamped to the 0..maxV
+//                      scale, mismatching the signed table next to it)
 //    hBarChart        — horizontal bars, per-bar color, highlight index
 //    stackedBarChartV — stacked vertical bars (composition) + legend
 //                      (REFINE-3: Waste/Susut/Trial/Loss-Surplus per week)
@@ -157,19 +160,59 @@ export function barChartV(
   const { x, y, w, h, labels, values, fmt } = o;
   const padL = 38, padB = 20, padT = 14;
   const px = x + padL, py = y + padT, pw = w - padL - 4, ph = h - padT - padB;
+  // BUG-HUNT (signed-vs-ABS mismatch): the old 0..maxV scale clamped
+  // negative values away — the "Nominal Deviasi per Periode" chart drew an
+  // UP bar for a net-negative (LOSS-side) period while its own table row
+  // showed "-Rp …". With any negative value the axis now spans a nice
+  // negative floor and bars grow DOWN from the zero baseline (danger red);
+  // all-positive inputs render EXACTLY as before (same yGrid + scale).
+  const hasNeg = values.some((v) => v < 0);
   const maxV = niceMax(Math.max(...values, 0));
-  yGrid(doc, px, py, pw, ph, maxV, 4, fmt);
+  const minV = hasNeg ? -niceMax(-Math.min(...values, 0)) : 0;
+  const span = maxV - minV || 1;
+  const zeroY = py + ph - ((0 - minV) / span) * ph;
+  if (hasNeg) {
+    // nice-step ticks across [minV, maxV]; the zero baseline is stroked
+    // exactly + darker (the anchor the eye follows).
+    // BUG-HUNT (found while verifying this chart): the first draft's
+    // `±1e-9` absolute epsilon was at the WRONG SCALE for IDR values —
+    // the ulp of 2e7 is ≈3.7e-9, so `maxV - 1e-9` rounded back to maxV
+    // and the top tick only rendered by fp luck. Iterate integer steps
+    // with a STEP-RELATIVE tolerance instead (k*step is exact fp).
+    const rawStep = span / 4;
+    const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const step = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].map((m) => m * mag).find((s) => s >= rawStep) ?? 10 * mag;
+    doc.lineWidth(0.5);
+    const kStart = Math.ceil(minV / step - 1e-9);
+    const kEnd = Math.floor(maxV / step + 1e-9);
+    for (let k = kStart; k <= kEnd; k++) {
+      const v = k * step;
+      const gy = py + ph - ((v - minV) / span) * ph;
+      doc.strokeColor(k === 0 ? C.border : C.borderSoft)
+        .moveTo(px, gy).lineTo(px + pw, gy).stroke();
+      tinyText(doc, fmt(v), px - 4, gy - 3, { align: 'right', size: 5.8, color: C.faint });
+    }
+  } else {
+    yGrid(doc, px, py, pw, ph, maxV, 4, fmt);
+  }
   const n = values.length;
   const slot = pw / Math.max(1, n);
   const bw = Math.min(30, slot * 0.6);
   values.forEach((v, i) => {
-    const bh = Math.max(0, (v / maxV) * ph);
+    const bh = Math.max(0, (Math.abs(v) / span) * ph);
     const bx = px + slot * i + (slot - bw) / 2;
     const isLast = i === n - 1;
-    // DESAIN-SIMPEL: neutral gray bars, current period darker (no amber)
-    const color = o.colors?.[i] ?? (o.highlightLast === false ? (o.barColor ?? C.bar) : isLast ? C.barCur : C.bar);
-    doc.fillColor(color).roundedRect(bx, py + ph - bh, bw, bh, 1.5).fill();
-    tinyText(doc, fmt(v), bx + bw / 2, py + ph - bh - 8, { align: 'center', size: 5.6, color: C.inkSoft, bold: isLast, maxW: slot });
+    // DESAIN-SIMPEL: neutral gray bars, current period darker (no amber).
+    // BUG-HUNT: a NEGATIVE bar is the net-LOSS side — danger red (the same
+    // red the Loss line uses), so direction is readable without a legend.
+    const color = o.colors?.[i] ?? (v < 0 ? C.danger : o.highlightLast === false ? (o.barColor ?? C.bar) : isLast ? C.barCur : C.bar);
+    const by = v >= 0 ? zeroY - bh : zeroY;
+    doc.fillColor(color).roundedRect(bx, by, bw, bh, 1.5).fill();
+    // value label: above the bar top (positive) / just above the zero
+    // baseline in the bar's own empty slot airspace (negative — never
+    // collides with the x-axis labels below the plot).
+    const labY = v >= 0 ? zeroY - bh - 8 : zeroY - 8;
+    tinyText(doc, fmt(v), bx + bw / 2, labY, { align: 'center', size: 5.6, color: C.inkSoft, bold: isLast, maxW: slot });
     tinyText(doc, labels[i] ?? '', bx + bw / 2, py + ph + 5, { align: 'center', size: 5.8, color: isLast ? C.ink : C.muted, bold: isLast, maxW: slot });
   });
 }

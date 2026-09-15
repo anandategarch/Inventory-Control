@@ -137,8 +137,9 @@ export function useDashboardActions({
       // Report design version (busts the CDN/edge cache after a design
       // change — keep in sync with the `rv` extra in /api/export-report's
       // cache key). Ignored server-side (Zod strips unknown params).
-      // REFINE-2: rv 4 — minimal header, Satuan columns, phantom-wrap fix.
-      params.set('rv', '4');
+      // REFINE-3: rv 5 — heat text fix, section 6 anomali, vs Rata-rata
+      // Area column, weekly composition + accumulation charts, renumbering.
+      params.set('rv', '5');
 
       // FIX (BUG-3-b A3): AbortController + 120s timeout — a hung export no
       // longer spins forever; the fetch is aborted and the user gets a

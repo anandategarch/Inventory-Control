@@ -111,6 +111,36 @@
 //      month's deviation magnitude, "Week 1+2+…" labels — the last bar is
 //      the month-to-date total as of the exported week).
 //
+//  BUG-HUNT (detailed pass over the whole report pipeline):
+//    - CACHE VERSION: the `rv` cache-key bump was missing for REFINE-3 —
+//      users would keep downloading the PREVIOUS design's PDF for up to
+//      5 min (+ stale-while-revalidate) after the deploy. rv 4 → 5, both
+//      sides (route.ts + useDashboardActions.ts).
+//    - SIGNED-VS-ABS: the "Nominal Deviasi per Periode" bar chart passed
+//      ABS values while its own table column (and sections 1/2 + the KPI
+//      card) render SIGNED — a net-negative period drew an UP bar next to
+//      a "-Rp …" row. Same class of bug in the trend table's "Nominal
+//      Deviasi to Sales" (ABS — inconsistent with sections 1/2). Both now
+//      signed; barChartV gained a diverging axis (negative bars grow DOWN
+//      from the zero baseline, danger red).
+//    - SECTION 5 RANKING: topItems scored each item by its MAX across all
+//      shown months — an item that peaked in an old month but has no
+//      current-period rows could crowd out the period's actual biggest
+//      deviations. Ranked by the CURRENT month now (historical-only items
+//      only fill leftover slots). trendPct anchored to the CURRENT month
+//      too (an old-period % no longer masquerades as this period's trend).
+//    - NUMBERING CONTINUITY: sections 4/5/7 skipped their HEADER when their
+//      data was empty — the FIXED numbers then jumped (…3 → 5…). Headers
+//      now always render when the section is selected, with a factual
+//      noteBox when empty (convention of sections 6/8/9). Section 3 gains
+//      the same note when all 6 top lists are empty.
+//    - PAGE RESERVE: the four h:140 charts in section 7 reserved
+//      ensure(150) but their block (subhead ≈14.5 + chart 140) is ≈154.5
+//      — the chart's bottom edge spilled ~4.5pt into the bottom margin.
+//      ensure(160) now.
+//    - fmtVsHist: "+ x%" → "+x%" (spacing inconsistent with the +x% style
+//      of every other change column in the report).
+//
 //  Section map (FIXED numbers — stable across ?sections= selections;
 //  keep in sync with EXPORT_SECTION_KEYS in validation.ts + the
 //  SECTIONS list in ExportDialog.tsx):
@@ -153,12 +183,15 @@ function fmtPp(v: number | null | undefined): string {
   return `${sign}${pp.toFixed(2)} pp`;
 }
 
-/** FIX-TERPOTONG: vs-historical delta now carries the ▲/▼ marker. */
+/** FIX-TERPOTONG: vs-historical delta now carries the ▲/▼ marker.
+ *  BUG-HUNT: sign spacing normalized to "+x%"/"-x%" (was "+ x%" with a
+ *  space — inconsistent with the "+x%" style of every other change column
+ *  in the report: Perubahan, Growth %, Selisih). */
 function fmtVsHist(current: number | null, histAvg: number | null): string {
   if (current == null || histAvg == null || histAvg === 0) return '\u2014';
   const pctChange = (current - histAvg) / Math.abs(histAvg);
   if (pctChange === 0) return '= 0%';
-  const sign = pctChange > 0 ? '+ ' : '- ';
+  const sign = pctChange > 0 ? '+' : '-';
   return markOf(pctChange) + sign + `${(Math.abs(pctChange) * 100).toFixed(1)}%`;
 }
 
@@ -551,6 +584,14 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   // ============================================================
   if (hasSection('topItems')) {
     rpt.sectionHeader(3, 'Item Prioritas (Top Items)');
+    // BUG-HUNT (numbering continuity): when EVERY top list is empty the
+    // section used to render as a bare header with nothing under it — now a
+    // factual note states why (same convention as sections 6/8/9).
+    if (data.topItemsByNominal.length === 0 && data.topItemsByDevBom.length === 0
+      && data.topItemsByWaste.length === 0 && data.topItemsBySusut.length === 0
+      && data.topItemsByTrial.length === 0 && data.topItemsByLossSurplus.length === 0) {
+      rpt.noteBox('Tidak ada item dengan deviasi pada scope ini.');
+    }
 
     // 3.1 nominal — REFINE-1: + "% Deviasi To BOM" column (user: "3.1
     // Nominal Deviasi Terbesar tambahkan % Deviasi to bom nya juga").
@@ -649,10 +690,14 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   // ============================================================
   if (hasSection('variance')) {
     const va = data.varianceAnalysis;
-    if (va.topWorsened.length > 0 || va.topImproved.length > 0) {
-      // REFINE-1: the comparator period is NAMED ("vs Agustus 2026 Week 1")
-      // instead of the generic "vs Periode Pembanding".
-      rpt.sectionHeader(4, cmpFull ? `Perubahan Item (vs ${cmpFull})` : 'Perubahan Item');
+    // BUG-HUNT (numbering continuity): the section HEADER itself used to be
+    // skipped when both lists were empty — the report's section numbers
+    // then jumped (…3 → 5…) because the numbers are FIXED, not
+    // re-flowed. Render the header + a factual note instead (same
+    // convention as sections 6/8/9).
+    rpt.sectionHeader(4, cmpFull ? `Perubahan Item (vs ${cmpFull})` : 'Perubahan Item');
+    if (va.topWorsened.length === 0 && va.topImproved.length === 0) {
+      rpt.noteBox('Tidak ada perubahan item vs periode pembanding pada scope ini.');
     }
     if (va.topWorsened.length > 0) {
       rpt.subhead(`4.1 Memburuk \u2014 selisih nominal terbesar (${currCol} vs ${prevCol})`, { size: 8.5 });
@@ -711,9 +756,14 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   // ============================================================
   //  5 — TREND ITEM MULTI-PERIODE  (EXPORT-PDF — NEW; EXPORT-TRIM: was 9)
   // ============================================================
-  if (hasSection('itemTrend') && data.itemTrendMatrix.length > 0) {
+  if (hasSection('itemTrend')) {
+    // BUG-HUNT (numbering continuity): an empty matrix used to skip the
+    // whole section → the numbers jumped (…4 → 6…). Header + factual note
+    // instead (convention of sections 6/8/9).
     rpt.sectionHeader(5, 'Trend Item Multi-Periode');
-
+    if (data.itemTrendMatrix.length === 0) {
+      rpt.noteBox('Tidak ada data trend item multi-periode pada scope ini.');
+    } else {
     // group rows: item → month → absNominal
     const byMonth = new Map<string, string>(); // monthLabel → monthKey (for sort)
     const byItem = new Map<string, Map<string, number>>();
@@ -741,12 +791,24 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
     // (the exported month is always the LAST shown column — the header row
     // is self-evident, no extra marker needed)
 
-    // top 15 items by current-month absNominal (fallback: latest period they appear in)
-    const itemScore = (m: Map<string, number>): number =>
+    // BUG-HUNT (ranking): the old itemScore took the item's MAX across ALL
+    // shown months, so an item that peaked in an old month but has no
+    // current-period rows could crowd out the period's actual biggest
+    // deviations — in a report titled by the CURRENT period. Rank by the
+    // CURRENT month's absNominal; historical-only items only fill leftover
+    // slots (tie-break: their own historical max).
+    const curMl = shownMonths.find((ml) => ml === data.period.monthLabel)
+      ?? shownMonths[shownMonths.length - 1]
+      ?? null;
+    const histMax = (m: Map<string, number>): number =>
       [...m.entries()].filter(([ml]) => shownMonths.includes(ml)).reduce((acc, [, v]) => Math.max(acc, v), 0);
     const topItems = [...byItem.entries()]
       .filter(([_, m]) => shownMonths.some((ml) => m.has(ml)))
-      .sort((a, b2) => itemScore(b2[1]) - itemScore(a[1]))
+      .sort((a, b2) => {
+        const ca = curMl != null ? (a[1].get(curMl) ?? 0) : histMax(a[1]);
+        const cb = curMl != null ? (b2[1].get(curMl) ?? 0) : histMax(b2[1]);
+        return cb - ca || histMax(b2[1]) - histMax(a[1]);
+      })
       .slice(0, 15);
 
     // REFINE-1 ("warna heat map buat lebih akurat lagi"): the color scale
@@ -761,10 +823,15 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
     const heatScale = cellVals.length > 0 ? cellVals[Math.floor((cellVals.length - 1) * 0.9)] : 0;
     // FIX-TERPOTONG: trend % carries the ▲/▼ marker (BARU = item muncul
     // baru → treated as an increase).
+    // BUG-HUNT: the % is anchored to the CURRENT month — the old code used
+    // the item's LAST APPEARING month, so an item missing from the current
+    // period showed an old-period % that read as this period's trend. Such
+    // items now show '—' (their current-month cell is '—' too).
     const trendPct = (m: Map<string, number>): string => {
-      const curIdx = shownMonths.reduce((acc, ml, i) => (m.has(ml) ? i : acc), -1);
+      if (curMl == null || !m.has(curMl)) return '\u2014';
+      const curIdx = shownMonths.reduce((acc, ml, i) => (ml === curMl ? i : acc), -1);
       if (curIdx < 1) return '\u2014';
-      const cur = m.get(shownMonths[curIdx]) ?? 0;
+      const cur = m.get(curMl) ?? 0;
       const prev = m.get(shownMonths[curIdx - 1]) ?? 0;
       if (prev === 0) return cur === 0 ? '= 0%' : MK_UP + 'BARU';
       const pct = ((cur - prev) / Math.abs(prev)) * 100;
@@ -820,6 +887,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
         return undefined;
       },
     });
+    } // else (matrix non-empty)
   }
 
   // ============================================================
@@ -837,9 +905,11 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
     rpt.sectionHeader(6, 'Item Anomali vs Riwayat Sendiri');
     const an = data.selfHistoryAnomaly;
     if (an.length === 0) {
+      // BUG-HUNT (found in render test): '≥' is NOT WinAnsi-encodable —
+      // sanitizePdfText maps it to '?' in the PDF. Plain wording instead.
       rpt.noteBox(ctx.historicalPeriods.length === 0
         ? 'Belum ada periode riwayat (bulan sebelumnya dengan minggu yang sama) untuk dibandingkan.'
-        : 'Tidak ada item dengan penyimpangan \u2265 50% dari rata-rata riwayatnya sendiri pada scope ini.');
+        : 'Tidak ada item dengan penyimpangan minimal 50% dari rata-rata riwayatnya sendiri pada scope ini.');
     } else {
       const nBulan = an.reduce((mx, it) => Math.max(mx, it.histCount), 0);
       rpt.subhead(`6.1 Kuantitas vs Rata-rata Riwayat Sendiri (same-week, maks ${nBulan} bulan)`, { size: 8.5 });
@@ -893,8 +963,13 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   //  "Grafik komposisi Waste/Susut/Trial/Loss-Surplus") + the weekly
   //  accumulation chart (user: "Tren akumulasi mingguan (Week 1+2+)").
   // ============================================================
-  if (hasSection('trend') && data.trend.length > 0) {
+  if (hasSection('trend')) {
+    // BUG-HUNT (numbering continuity): empty trend data used to skip the
+    // whole section → the numbers jumped. Header + factual note instead.
     rpt.sectionHeader(7, 'Trend Antar Periode');
+    if (data.trend.length === 0) {
+      rpt.noteBox('Tidak ada data trend antar periode pada scope ini.');
+    } else {
     rpt.table({
       cols: [
         { header: 'Periode' },
@@ -906,25 +981,31 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
         t.weekLabel,
         fmtIDR(t.nominal),
         fmtPct(t.devBom, false),
-        t.sales && t.sales > 0 ? fmtPct(Math.abs(t.nominal) / t.sales, false) : '\u2014',
+        // BUG-HUNT: SIGNED (was Math.abs — the same metric renders signed
+        // in sections 1/2 + the KPI card; an ABS here contradicted the
+        // signed "Nominal Deviasi" column right next to it).
+        t.sales && t.sales > 0 ? fmtPct(t.nominal / t.sales, false) : '\u2014',
       ]),
     });
 
     const labels = data.trend.map((t) => t.weekLabel.replace(` ${currLabel.split(' ')[0]}`, '').replace(/\s*$/, '')).map((l, i) => (data.trend.length > 8 && i % 2 === 1 ? '' : l));
     // bar — nominal per period
-    rpt.ensure(150);
+    // BUG-HUNT: SIGNED values (was Math.abs) + barChartV's new diverging
+    // axis — a net-negative period now draws a red bar DOWN from the zero
+    // baseline, matching the signed table instead of contradicting it.
+    rpt.ensure(160);
     rpt.subhead('Nominal Deviasi per Periode (Rp)', { size: 8.5, gapAfter: 2 });
     barChartV(doc, {
       x: PAGE.M, y: rpt.y, w: CONTENT_W, h: 140,
       labels,
-      values: data.trend.map((t) => Math.abs(t.nominal)),
+      values: data.trend.map((t) => t.nominal),
       fmt: tickIDR,
     });
     rpt.y += 140 + 16;
 
     // line — loss vs surplus
     if (data.trend.length >= 2) {
-      rpt.ensure(150);
+      rpt.ensure(160);
       rpt.subhead('Loss vs Surplus per Periode (Rp)', { size: 8.5, gapAfter: 2 });
       lineChart(doc, {
         x: PAGE.M, y: rpt.y, w: CONTENT_W, h: 140,
@@ -949,7 +1030,9 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
     // residual (the unexplained remainder is the flag-worthy category).
     const wc = data.weeklyComposition;
     if (wc.length > 0) {
-      rpt.ensure(150);
+      // BUG-HUNT: reserve subhead (≈14.5) + chart (140) — the old 150 let
+      // the chart's bottom edge spill ~4.5pt into the bottom margin.
+      rpt.ensure(160);
       rpt.subhead(`Komposisi Deviasi per Minggu — ${titleCase(data.period.monthLabel)} (Rp)`, { size: 8.5, gapAfter: 2 });
       stackedBarChartV(doc, {
         x: PAGE.M, y: rpt.y, w: CONTENT_W, h: 140,
@@ -972,7 +1055,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       let acc = 0;
       const cum = wc.map((r) => { acc += r.absTotal; return acc; });
       const cumLabels = wc.map((_r, j) => 'W' + wc.slice(0, j + 1).map((r) => r.weekNo).join('+'));
-      rpt.ensure(150);
+      rpt.ensure(160);
       rpt.subhead('Akumulasi Mingguan — Total Deviasi (Rp)', { size: 8.5, gapAfter: 2 });
       barChartV(doc, {
         x: PAGE.M, y: rpt.y, w: CONTENT_W, h: 140,
@@ -982,6 +1065,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       });
       rpt.y += 140 + 16;
     }
+    } // else (trend rows exist)
   }
 
   // ============================================================

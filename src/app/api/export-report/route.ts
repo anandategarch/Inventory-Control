@@ -107,7 +107,7 @@ export async function GET(req: NextRequest) {
     }
 
     // PERF: DB-level cache check — export-report is the heaviest route.
-    // Cache the generated .docx buffer for 5 min. Same filter params = same report.
+    // Cache the generated .pdf buffer for 5 min. Same filter params = same report.
     //
     // PERF-CACHE-04: cache key now includes `sections` (was missing → two requests
     //   with different `?sections=` values shared one cache entry → wrong sections
@@ -147,10 +147,13 @@ export async function GET(req: NextRequest) {
       // `rv` param in useDashboardActions.ts handleExport.
       extra: {
         sections: sections === null ? null : (sections.length > 0 ? [...sections].sort().join(',') : '__NONE__'),
-        // REFINE-2: design/content change (minimal header, Satuan columns in
-        // 4.1/4.2/5/7.2/8, phantom-wrap fix) — bump together with the `rv`
-        // param in useDashboardActions.ts handleExport.
-        rv: '4',
+        // REFINE-3: design/content change (heat text fix, section 6 anomali,
+        // vs Rata-rata Area column, weekly composition + accumulation charts,
+        // section renumbering 6→7/7→8/8→9) — BUG-HUNT: this bump was MISSING
+        // when REFINE-3 landed, so users kept downloading the pre-REFINE-3
+        // PDF from the 5-min cache after a deploy. Bump together with the
+        // `rv` param in useDashboardActions.ts handleExport.
+        rv: '5',
       },
     });
     const EXPORT_CACHE_TTL = 5 * 60 * 1000; // 5 min
