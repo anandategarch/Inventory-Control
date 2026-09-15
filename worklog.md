@@ -40549,3 +40549,25 @@ Stage Summary:
 - pdf-primitives.ts (663) SENGAJA tidak disentuh (kohesif sebagai pustaka primitive; preseden b4b37d2).
 - Laporan per domain: agent-ctx/SPLIT-{A..G}-split.md.
 - Batch ini ter-push ke origin/main pada sesi ini (lihat git log; token PAT tidak pernah ditulis ke file mana pun — secret-scan CLEAN).
+
+---
+Task ID: BUG-HUNT-2 (batch 4 agent paralel + verifikasi SPLIT-A oleh Main)
+Agent: Main (Z.ai Code) + 4 subagent (BUG-B, BUG-G, BUG-H, BUG-Q)
+Task: User: "Cari bug dan fix" — bug hunt menyeluruh pasca-batch SPLIT-2, prioritas domain yang kemarin hanya diverifikasi statis (SPLIT-A/B/G tanpa audit perilaku).
+
+Work Log:
+- Prelim Main: repo sync (HEAD=origin/main=cfbac95); dedup validasi SPLIT-C diperiksa (aman, terdokumentasi); paritas cache rv=7 dua sisi + sv=2 utuh; verifikasi diferensial SPLIT-A data-fetcher via harness python (.tmp-render, dihapus): multiset panggilan 46/46 identik (extra hanya nama fungsi modul), kunci cache q-* 16/16, sv=2 x8 dua sisi, 3 gelombang Promise.all, 17/17 objek extra cache MULTSET IDENTIK, limit identik; folder pdf/ dipastikan untouched sejak verifikasi byte-identical b4b37d2. SPLIT-A = pure motion terbukti.
+- 4 subagent domain disjoint: BUG-B (ItemTrendTab), BUG-G (kartu dashboard+filters), BUG-H (hooks+routes non-export), BUG-Q (src/lib).
+- BUG-B: audit diferensial 2-arah + token multiset — SPLIT-B PARITAS PENUH, 0 bug perilaku. Temuan non-perilaku: 4 file .tsx ItemTrendTable tanpa 'use client' (netral karena semua importer client; Main tambahkan direktif sebagai hygiene).
+- BUG-G: audit diferensial penuh 6 file baseline (3.437 baris) vs 32 modul — SPLIT-G/C bersih; 1 fix kosmetik ('open' unused via Dispatch<boolean>); terbukti timeout 120s/60s/300s, cancel identity, chunk pool 3-concurrency verbatim.
+- BUG-H: 3 bug nyata DIPERBAIKI: (1) HIGH /api/analysis — awaiter in-flight menyajikan payload 404 sebagai HTTP 200+cached:true → payload cacat dirender → TypeError ExecutiveStatus; kini 404 identik jalur langsung, fresh copy, tanpa header cache; (2) LOW-MED /api/peer-comparison/items — ?topItems=-5 lolos || 5 → LIMIT -5 → Postgres 500; kini clamp Math.max(1,..); (3) MED useRecommendations — error HTTP ber-JSON ditelan sebagai data query (satu-satunya hook tanpa res.ok) → hero "0 resto prioritas" palsu; kini throw.
+- BUG-Q: 5 file split terbukti pure motion; 2 bug nyata DIPERBAIKI: (1) queryParetoByDevBom totalCount=panjang slice + remainderCount hardcode 0 (badge "20 item · 20 total" salah saat populasi>20) → itemAggs.length + sisa populasi (menuntaskan BUG-2-c); (2) csv-parser callback columns hanya 2/4 strategi alias → header "%deviasi to bom" gagal dipetakan jalur CSV (kolom hilang diam-diam saat ingest Sheets/CSV) → pakai normalizeHeader shared (superset murni 25/27). Dead code entryBlocks + skippedErrors dibersihkan setelah diinvestigasi bukan bug fungsional (issue tetap via allIssues).
+- Cross-domain findings BUG-H dieksekusi Main (agent tak boleh sentuh domain lain): res.ok guard di use-peer-queries (4 queryFn) + use-lens-data (2 queryFn) — kelas bug yang sama dengan BUG-H-3; normalisasi mode di peer-comparison{,/items} (cast 'as week|month' bohong → mode=foo bikin entri cache 5-menit palsu; mode hanya dipakai === 'week' jadi tidak masuk SQL — dampak cache pollution, bukan SQL injection).
+- Gerbang global: tsc 0 error; eslint 0 error (379 warning — TURUN dari 382 baseline karena cleanup BUG-G/BUG-Q); vitest 512/512 penuh tanpa edit test.
+- 4 commit atomik: 81b3556 BUGFIX-API, f80c972 BUGFIX-FE, 70a9762 BUGFIX-LIB, 8c4a3bb AUDIT-BUG (+ laporan agent-ctx/BUG-{B,G,H,Q}-fix.md). Secret-scan range diff CLEAN.
+
+Stage Summary:
+- 7 bug perilaku nyata diperbaiki: 404-as-200 awaiter /api/analysis (HIGH), LIMIT -5 → 500, error-swallow di 7 queryFn frontend, pareto totalCount/remainderCount, drift normalisasi header CSV→kolom hilang, mode cast cache pollution, 'use client' hygiene.
+- Verifikasi tuntas yang kemarin hilang karena agent timeout: SPLIT-A (sekuen+cache+extra identik), SPLIT-B (paritas penuh), SPLIT-G (paritas penuh) — seluruh batch SPLIT-2 kini terverifikasi perilaku, bukan hanya statis.
+- Temuan tidak diperbaiki (didokumentasi di laporan): race teoretis klik-ganda export (tertutup batching React), handleLoadMore tanpa res.ok (no-op retry-safe), overlap timer useIngest 8s (pre-existing minor), schema peer items tak strict (kini tak relevan — mode/topItems dinormalisasi di route).
+- Batch ter-push ke origin/main sesi ini (lihat git log; PAT tetap tidak pernah ditulis ke file — scan CLEAN).
