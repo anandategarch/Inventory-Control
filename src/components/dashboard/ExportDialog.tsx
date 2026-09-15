@@ -28,15 +28,20 @@ interface SectionOption {
 // Lebih Sama — peer-to-peer dengan breakdown per item) + section 8 (Item
 // yang Kemungkinan Plus Minus antar Periode — flip antar periode). Nominal
 // penjualan tidak pernah dicetak di laporan (angka rahasia).
+// REFINE-3 (user request): + section 6 (Item Anomali vs Riwayat Sendiri —
+// kuantitas vs rata-rata riwayat sendiri, same-week antar bulan); trend
+// renumbered 6→7 (+ komposisi per minggu & akumulasi mingguan), peer 7→8,
+// flip 8→9.
 const SECTIONS: SectionOption[] = [
   { key: 'exec', label: '1. Ringkasan', description: 'Kartu KPI + tabel metrik: Nominal Deviasi, QTY, rasio — dengan growth vs pembanding (nominal penjualan disembunyikan)', default: true },
   { key: 'growth', label: '2. Perubahan vs Periode Pembanding', description: 'Tabel nilai vs pembanding (selisih absolut / pp / growth %) + grafik batang growth per metrik', default: true },
-  { key: 'topItems', label: '3. Item Prioritas (Top Items)', description: '6 ranking: Nominal + % Dev/BOM, Dev/BOM + Nominal, Waste, Susut, Trial, Loss/Surplus — dengan QTY prev, rata-rata per bulan, rata-rata area', default: true },
+  { key: 'topItems', label: '3. Item Prioritas (Top Items)', description: '6 ranking: Nominal + % Dev/BOM, Dev/BOM + Nominal, Waste, Susut, Trial, Loss/Surplus — dengan QTY prev, rata-rata per bulan, rata-rata area + vs rata-rata area', default: true },
   { key: 'variance', label: '4. Perubahan Item (vs Pembanding)', description: 'Memburuk + Membaik: selisih nominal terbesar vs periode pembanding + grafik batang', default: true },
   { key: 'itemTrend', label: '5. Trend Item Multi-Periode', description: 'Matriks 15 item teratas × periode (maks 7 bulan) dengan sel warna panas + trend terakhir', default: true },
-  { key: 'trend', label: '6. Trend Antar Periode', description: 'Nominal Deviasi, % Dev/BOM, Nominal Deviasi to Sales per periode + grafik batang & garis', default: true },
-  { key: 'peer', label: '7. Resto dengan Penjualan Kurang Lebih Sama', description: 'Resto lain dengan total penjualan kurang lebih sama: nominal deviasi yang dihasilkan + breakdown per item (kuantitas, % to BOM)', default: true },
-  { key: 'flip', label: '8. Item yang Kemungkinan Plus Minus antar Periode', description: 'Item yang QTY deviasinya berbalik arah (plus menjadi minus / sebaliknya) antar periode sejenis', default: true },
+  { key: 'anomali', label: '6. Item Anomali vs Riwayat Sendiri', description: 'Item dengan QTY deviasi paling jauh dari rata-rata riwayatnya sendiri (same-week antar bulan, penyimpangan ≥ 50% dari baseline)', default: true },
+  { key: 'trend', label: '7. Trend Antar Periode', description: 'Nominal Deviasi, % Dev/BOM, Nominal Deviasi to Sales per periode + grafik batang & garis + komposisi per minggu (Waste/Susut/Trial/Loss-Surplus) + akumulasi mingguan (Week 1+2+…)', default: true },
+  { key: 'peer', label: '8. Resto dengan Penjualan Kurang Lebih Sama', description: 'Resto lain dengan total penjualan kurang lebih sama: nominal deviasi yang dihasilkan + breakdown per item (kuantitas, % to BOM)', default: true },
+  { key: 'flip', label: '9. Item yang Kemungkinan Plus Minus antar Periode', description: 'Item yang QTY deviasinya berbalik arah (plus menjadi minus / sebaliknya) antar periode sejenis', default: true },
 ];
 
 interface ExportDialogProps {

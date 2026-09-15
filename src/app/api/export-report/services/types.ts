@@ -41,6 +41,10 @@ import type { queryVarianceAnalysis } from '@/lib/queries/health-ranking';
 import type { ItemTrendMatrixRow } from '@/lib/queries/items/item-trend-matrix';
 import type { PeerComparisonRow } from '@/lib/queries/outlets/peer-comparison';
 import type { FlipRankResult } from '@/lib/queries/items/flip-ranking';
+// REFINE-3 — section 6 "Item Anomali vs Riwayat Sendiri" + the trend
+// section's weekly composition/accumulation charts.
+import type { SelfHistoryAnomalyRow } from '@/lib/queries/items/self-history-anomaly';
+import type { WeeklyCompositionRow } from '@/lib/queries/weekly-composition';
 
 // PERF-CACHE-06: helper used to short-circuit the cache wrapper for early-return
 // error paths (404 No records found). Throwing this error propagates through
@@ -259,6 +263,13 @@ export interface ReportData {
   trend: TrendRow[];
   // EXPORT-PDF — section 'itemTrend': per-(month × item) rows ([] when off).
   itemTrendMatrix: ItemTrendMatrixRow[];
+  // REFINE-3 — section 'anomali': top items departing from their OWN
+  // same-week historical average ([] when off / no historical periods).
+  selfHistoryAnomaly: SelfHistoryAnomalyRow[];
+  // REFINE-3 — per-week category composition of the exported month
+  // (already sliced to weeks ≤ the exported week; [] when the trend
+  // section is off).
+  weeklyComposition: WeeklyCompositionRow[];
   // REFINE-1 — section 'peer' (null when off / no target resolvable).
   peerComparison: PeerComparisonData | null;
   // REFINE-1 — section 'flip' (null when off).

@@ -8,9 +8,11 @@
 //  full height first.
 //
 //  Charts:
-//    barChartV      — vertical bars + value labels + y grid
-//    hBarChart      — horizontal bars, per-bar color, highlight index
-//    lineChart      — multi-series lines + dots + legend + y grid
+//    barChartV        — vertical bars + value labels + y grid
+//    hBarChart        — horizontal bars, per-bar color, highlight index
+//    stackedBarChartV — stacked vertical bars (composition) + legend
+//                      (REFINE-3: Waste/Susut/Trial/Loss-Surplus per week)
+//    lineChart        — multi-series lines + dots + legend + y grid
 //
 //  EXPORT-TRIM: paretoChart / stackedHBar / donutChart / sparkbars /
 //  flipPairBars were removed together with their report sections
@@ -218,6 +220,59 @@ export function hBarChart(
       tinyText(doc, fmt(v), x + w - 2, by + 3.5, { align: 'right', size: 6.2, color: C.ink, maxW: valW });
     }
   });
+}
+
+// ------------------------------------------------------------
+//  Stacked vertical bar chart — composition
+//  REFINE-3 (user request: "Grafik komposisi Waste/Susut/Trial/
+//  Loss-Surplus"): series stack bottom-up in array order; the label
+//  above each bar is the stack TOTAL (not the top segment).
+// ------------------------------------------------------------
+export function stackedBarChartV(
+  doc: PDFKit.PDFDocument,
+  o: {
+    x: number; y: number; w: number; h: number;
+    labels: string[];
+    /** series[i].values[j] — the j-th bar's i-th segment. */
+    series: Array<{ name: string; values: number[]; color: string }>;
+    fmt: FmtFn;
+  },
+): void {
+  const { x, y, w, h, labels, series, fmt } = o;
+  const padL = 38, padB = 20, padT = 14;
+  const px = x + padL, py = y + padT, pw = w - padL - 4, ph = h - padT - padB;
+  const totals = labels.map((_, j) => series.reduce((s, sr) => s + Math.max(0, sr.values[j] ?? 0), 0));
+  const maxV = niceMax(Math.max(...totals, 0));
+  yGrid(doc, px, py, pw, ph, maxV, 4, fmt);
+  const n = labels.length;
+  const slot = pw / Math.max(1, n);
+  const bw = Math.min(34, slot * 0.6);
+  labels.forEach((lb, j) => {
+    const bx = px + slot * j + (slot - bw) / 2;
+    let acc = 0;
+    series.forEach((sr) => {
+      const v = Math.max(0, sr.values[j] ?? 0);
+      const segH = (v / maxV) * ph;
+      if (segH > 0) doc.fillColor(sr.color).rect(bx, py + ph - acc - segH, bw, segH).fill();
+      acc += segH;
+    });
+    // total label above the stack (marker-aware via tinyText)
+    tinyText(doc, fmt(totals[j]), bx + bw / 2, py + ph - (totals[j] / maxV) * ph - 8, { align: 'center', size: 5.6, color: C.inkSoft, maxW: slot });
+    tinyText(doc, lb, bx + bw / 2, py + ph + 5, { align: 'center', size: 5.8, color: C.muted, maxW: slot });
+  });
+  // legend: top-right, small color square + name (lineChart convention)
+  if (series.length > 1) {
+    let lx = x + w;
+    for (let i = series.length - 1; i >= 0; i--) {
+      const s = series[i];
+      doc.font('Helvetica').fontSize(6);
+      lx -= doc.widthOfString(sanitizePdfText(s.name));
+      tinyText(doc, s.name, lx, y + 1, { size: 6, color: C.inkSoft });
+      lx -= 13;
+      doc.fillColor(s.color).rect(lx, y + 1.5, 8, 4.5).fill();
+      lx -= 4;
+    }
+  }
 }
 
 // ------------------------------------------------------------

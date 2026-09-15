@@ -88,6 +88,29 @@
 //      is passed anymore (see the note there) — single-line draws stay
 //      single-line, deterministically.
 //
+//  REFINE-3 (user request, 5 items):
+//    - HEAT TEXT CONFLICT ("Trend Item Multi-Periode warna nya konflik
+//      dengan warna text"): the top heat step deepened to #DC2626 and
+//      heat cells now pick their ink by fill luminance (heatText — white
+//      on the deep step, full ink on the light ones; every step ≥ 4.5:1).
+//      The old rowText that painted WHOLE rows red/green (readable mush
+//      on the deeper heat fills) is gone — only the Trend column carries
+//      the semantic color now.
+//    - 3.3-3.6 gain a "vs Rata-rata Area" column (QTY as a % of the area
+//      average — mirrors "vs Rata-rata"; data via the existing q-area-catavg
+//      fetch, no new SQL).
+//    - NEW section 6 "Item Anomali vs Riwayat Sendiri" (querySelfHistoryAnomaly:
+//      current QTY vs the item-outlet's OWN same-week historical average,
+//      eligibility departure ≥ 50% of the baseline, ranked by biggest
+//      absolute departure; trend renumbered 6→7, peer 7→8, flip 8→9).
+//    - NEW chart in section 7: "Komposisi Deviasi per Minggu" (stacked
+//      Waste/Susut/Trial/Loss-Surplus magnitudes per week of the exported
+//      month — queryWeeklyComposition, weeks after the exported week
+//      excluded like the itemTrend matrix's future months).
+//    - NEW chart in section 7: "Akumulasi Mingguan" (running total of the
+//      month's deviation magnitude, "Week 1+2+…" labels — the last bar is
+//      the month-to-date total as of the exported week).
+//
 //  Section map (FIXED numbers — stable across ?sections= selections;
 //  keep in sync with EXPORT_SECTION_KEYS in validation.ts + the
 //  SECTIONS list in ExportDialog.tsx):
@@ -96,9 +119,12 @@
 //     3 topItems    — Item Prioritas (6 sub-tables)
 //     4 variance    — Perubahan Item: Memburuk / Membaik (tables + bars)
 //     5 itemTrend   — Trend Item Multi-Periode (heat matrix)
-//     6 trend       — Trend Antar Periode (table + bar + line charts)
-//     7 peer        — Resto dengan Penjualan Kurang Lebih Sama (REFINE-1)
-//     8 flip        — Item yang Kemungkinan Plus Minus antar Periode (REFINE-1)
+//     6 anomali     — Item Anomali vs Riwayat Sendiri (REFINE-3 — NEW;
+//                     trend renumbered 6→7, peer 7→8, flip 8→9)
+//     7 trend       — Trend Antar Periode (table + bar + line charts +
+//                     weekly composition + weekly accumulation)
+//     8 peer        — Resto dengan Penjualan Kurang Lebih Sama (REFINE-1)
+//     9 flip        — Item yang Kemungkinan Plus Minus antar Periode (REFINE-1)
 //
 //  Content rule (user request, EXPAND-1): EVERY rendered line is a SQL
 //  aggregate, a factual label, or a formula definition — no generated
@@ -113,7 +139,7 @@ import { fmtIDR, fmtNum, fmtPct } from '../format-helpers';
 import type { ReportData, ReportContext } from '../types';
 import { Rpt, C, PAGE, CONTENT_W, MK_UP, markOf, stripMark } from './pdf-primitives';
 import {
-  barChartV, hBarChart, lineChart,
+  barChartV, hBarChart, lineChart, stackedBarChartV,
 } from './pdf-charts';
 
 // ------------------------------------------------------------
@@ -188,7 +214,12 @@ function periodFull(monthLabel: string | null | undefined, weekLabel: string | n
  *  not the global max — one outlier row no longer compresses every other
  *  cell into the palest bucket — and the ramp has 6 steps instead of 5, so
  *  adjacent magnitudes are easier to tell apart. Values above the p90
- *  saturate at the deepest red. */
+ *  saturate at the deepest red.
+ *  REFINE-3 (user: "Trend Item Multi-Periode warna nya konflik dengan
+ *  warna text"): the top step deepened #EF4444 → #DC2626 so the DEEPEST
+ *  cells can carry WHITE text at 4.8:1 contrast (dark ink on #EF4444 was
+ *  only 2.7:1 with the old body ink). Every step now pairs with its text
+ *  color at ≥ 4.5:1 — see heatText. */
 function heatColor(v: number, scale: number): string | undefined {
   if (scale <= 0 || v <= 0) return undefined;
   const r = Math.min(1, v / scale);
@@ -197,7 +228,25 @@ function heatColor(v: number, scale: number): string | undefined {
   if (r < 3 / 6) return '#FECACA';
   if (r < 4 / 6) return '#FCA5A5';
   if (r < 5 / 6) return '#F87171';
-  return '#EF4444';
+  return '#DC2626';
+}
+
+/** REFINE-3 (user: "warna nya konflik dengan warna text, perbaiki dan cari
+ *  opsi terbaik"): contrast-aware ink for a heat cell. Options considered:
+ *  (a) soften the ramp so dark ink always works — loses the p90 range the
+ *  user asked for in REFINE-1; (b) white text everywhere — 2.8:1 on the
+ *  mid steps #F87171/#EF4444, worse than ink; (c) WCAG relative luminance:
+ *  white when the fill is dark, FULL ink (#111827, not the softer #374151
+ *  body ink) otherwise. Chose (c): every ramp step renders ≥ 4.5:1 —
+ *  #FEF2F2…#F87171 with ink = 6.4–16.3:1, #DC2626 with white = 4.8:1 —
+ *  and any future darker fill flips to white automatically. */
+function heatText(fill: string): string {
+  const r = parseInt(fill.slice(1, 3), 16) / 255;
+  const g = parseInt(fill.slice(3, 5), 16) / 255;
+  const b = parseInt(fill.slice(5, 7), 16) / 255;
+  const lin = (c: number): number => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return L < 0.2 ? C.white : C.ink;
 }
 
 /** Signed compact IDR for chart tick labels (no 'Rp' prefix — axis stays narrow). */
@@ -563,6 +612,10 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
           { header: 'Rata-rata per Bulan', align: 'right' },
           { header: 'vs Rata-rata', align: 'right' },
           { header: 'Rata-rata Area', align: 'right' },
+          // REFINE-3 (user: "Kolom 'vs Rata-rata Area'"): the item's QTY as
+          // a % of the area average — mirrors the "vs Rata-rata" column so
+          // the two benchmarks read side by side.
+          { header: 'vs Rata-rata Area', align: 'right' },
         ],
         rows: ct2.items.map((it, i) => [
           String(i + 1),
@@ -574,14 +627,18 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
           it.histAvgQty != null ? fmtNum(it.histAvgQty) : '\u2014',
           fmtVsHist(it.qty, it.histAvgQty),
           it.areaAvgQty != null ? fmtNum(it.areaAvgQty) : '\u2014',
+          fmtVsHist(it.qty, it.areaAvgQty),
         ]),
-        // ▲/▼ semantic color on the "vs Rata-rata" delta column (up = bad —
-        // these are all deviation-magnitude rankings).
+        // ▲/▼ semantic color on the two "vs …" delta columns (up = bad —
+        // these are all deviation-magnitude rankings). REFINE-3: the vs
+        // Rata-rata Area column (ci 9) follows the same rule.
         cellColor: (row, ri, ci) => {
-          if (ci !== 7) return undefined;
+          if (ci !== 7 && ci !== 9) return undefined;
           const it = ct2.items[ri];
-          if (it == null || it.histAvgQty == null || it.histAvgQty === 0) return undefined;
-          return it.qty > it.histAvgQty ? C.danger : it.qty < it.histAvgQty ? C.success : undefined;
+          if (it == null) return undefined;
+          const base = ci === 7 ? it.histAvgQty : it.areaAvgQty;
+          if (base == null || base === 0) return undefined;
+          return it.qty > base ? C.danger : it.qty < base ? C.success : undefined;
         },
       });
     }
@@ -721,6 +778,16 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
     for (const r of data.itemTrendMatrix) {
       if (r.satuan != null) satuanByItem.set(r.itemName, r.satuan);
     }
+    // REFINE-3 (user: "Trend Item Multi-Periode warna nya konflik dengan
+    // warna text"): hoisted heat-fill lookup shared by cellFill + cellColor.
+    const heatAt = (row: string[], ci: number): string | undefined => {
+      // ci 0 = Item, ci 1 = Satuan, last = Trend — no heat fill; the month
+      // columns start at ci 2.
+      if (ci <= 1 || ci > shownMonths.length + 1) return undefined;
+      const ml = shownMonths[ci - 2];
+      const val = byItem.get(row[0])?.get(ml) ?? 0;
+      return heatColor(val, heatScale);
+    };
     rpt.table({
       cols: [
         { header: 'Item' },
@@ -734,29 +801,100 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
         ...shownMonths.map((ml) => (m.has(ml) ? fmtIDR(m.get(ml)) : '\u2014')),
         trendPct(m),
       ]),
-      cellFill: (row, _ri, ci) => {
-        // ci 0 = Item, ci 1 = Satuan, last = Trend — no heat fill; the month
-        // columns start at ci 2.
-        if (ci <= 1 || ci > shownMonths.length + 1) return undefined;
-        const ml = shownMonths[ci - 2];
-        const val = byItem.get(row[0])?.get(ml) ?? 0;
-        return heatColor(val, heatScale);
-      },
-      rowText: (row) => {
-        const t = stripMark(row[row.length - 1]);
-        return t.startsWith('+') || t === 'BARU' ? C.danger : t.startsWith('-') ? C.success : undefined;
+      cellFill: (row, _ri, ci) => heatAt(row, ci),
+      // REFINE-3: the OLD rowText painted the WHOLE row (item name + the
+      // heat cells themselves) in the trend's red/green — red-on-red mush
+      // on the deeper heat steps. Now ONLY the Trend column carries the
+      // semantic color (DESAIN-SIMPEL "only the change column is colored"
+      // convention, same as sections 1/2/4), and heat cells pick their ink
+      // by the fill's luminance (heatText: white on the deep step, full ink
+      // on the light steps).
+      cellColor: (row, _ri, ci) => {
+        const fill = heatAt(row, ci);
+        if (fill != null) return heatText(fill);
+        const last = row.length - 1;
+        if (ci === last) {
+          const t = stripMark(row[last]);
+          return t.startsWith('+') || t === 'BARU' ? C.danger : t.startsWith('-') ? C.success : undefined;
+        }
+        return undefined;
       },
     });
   }
 
   // ============================================================
-  //  6 — TREND ANTAR PERIODE  (EXPORT-TRIM: was 12)
+  //  6 — ITEM ANOMALI VS RIWAYAT SENDIRI  (REFINE-3 — NEW)
+  //  --------------------------------------------------------
+  //  User: "Section Item Anomali vs Riwayat Sendiri". Items whose current
+  //  QTY deviasi departs most from their OWN same-week historical average
+  //  ("Rata-rata per Bulan" — the identical window/benchmark as the
+  //  3.3-3.6 tables, so the sections corroborate each other). Eligibility
+  //  (querySelfHistoryAnomaly): departure ≥ 50% of the own baseline; ranked
+  //  by the biggest absolute departure. histCount is surfaced in the
+  //  subhead so the average's basis is stated (factual, no narrative).
+  // ============================================================
+  if (hasSection('anomali')) {
+    rpt.sectionHeader(6, 'Item Anomali vs Riwayat Sendiri');
+    const an = data.selfHistoryAnomaly;
+    if (an.length === 0) {
+      rpt.noteBox(ctx.historicalPeriods.length === 0
+        ? 'Belum ada periode riwayat (bulan sebelumnya dengan minggu yang sama) untuk dibandingkan.'
+        : 'Tidak ada item dengan penyimpangan \u2265 50% dari rata-rata riwayatnya sendiri pada scope ini.');
+    } else {
+      const nBulan = an.reduce((mx, it) => Math.max(mx, it.histCount), 0);
+      rpt.subhead(`6.1 Kuantitas vs Rata-rata Riwayat Sendiri (same-week, maks ${nBulan} bulan)`, { size: 8.5 });
+      rpt.table({
+        cols: [
+          { header: '#', align: 'center' },
+          { header: 'Item' },
+          { header: 'Resto' },
+          { header: 'Area' },
+          { header: 'Satuan' },
+          { header: `QTY ${currCol}`, align: 'right' },
+          { header: 'Rata-rata per Bulan', align: 'right' },
+          { header: 'Selisih', align: 'right' },
+          { header: 'vs Riwayat', align: 'right' },
+          { header: 'Nominal Deviasi', align: 'right' },
+        ],
+        rows: an.map((it, i) => [
+          String(i + 1),
+          it.itemName,
+          it.outletCode,
+          it.area,
+          it.satuan ?? '\u2014',
+          fmtNum(it.qty),
+          fmtNum(it.histAvgQty),
+          markOf(it.deltaQty) + fmtNum(it.deltaQty),
+          fmtVsHist(it.qty, it.histAvgQty),
+          fmtIDR(it.nominal),
+        ]),
+        // ▲/▼ semantic color on the Selisih + vs Riwayat columns, judged by
+        // MAGNITUDE (qtyDeviasi is signed — a sign flip from -10 to +10 is a
+        // GROWN deviation, not a smaller one): |cur| > |hist| = red (the
+        // departure widened the deviation), |cur| < |hist| = green.
+        cellColor: (_row, ri, ci) => {
+          if (ci !== 7 && ci !== 8) return undefined;
+          const it = an[ri];
+          if (it == null) return undefined;
+          return Math.abs(it.qty) > Math.abs(it.histAvgQty)
+            ? C.danger
+            : Math.abs(it.qty) < Math.abs(it.histAvgQty) ? C.success : undefined;
+        },
+      });
+    }
+  }
+
+  // ============================================================
+  //  7 — TREND ANTAR PERIODE  (EXPORT-TRIM: was 12; REFINE-3: was 6)
   //  REFINE-1: Loss / Surplus table columns REMOVED (user: "Trend antar
   //  periode hapuss kolom loss dan surplus") — the loss-vs-surplus line
   //  chart below still carries that composition per period.
+  //  REFINE-3: + the current month's weekly composition chart (user:
+  //  "Grafik komposisi Waste/Susut/Trial/Loss-Surplus") + the weekly
+  //  accumulation chart (user: "Tren akumulasi mingguan (Week 1+2+)").
   // ============================================================
   if (hasSection('trend') && data.trend.length > 0) {
-    rpt.sectionHeader(6, 'Trend Antar Periode');
+    rpt.sectionHeader(7, 'Trend Antar Periode');
     rpt.table({
       cols: [
         { header: 'Periode' },
@@ -801,32 +939,76 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       });
       rpt.y += 140 + 16;
     }
+
+    // REFINE-3 (user: "Grafik komposisi Waste/Susut/Trial/Loss-Surplus"):
+    // per-week composition of the CURRENT month's deviation magnitude —
+    // ABS nominal per category (their stack = the week's total deviation
+    // magnitude). Weeks after the exported week are already excluded
+    // upstream (data-fetcher — same rule as the itemTrend matrix's future
+    // months). Palette: 3 neutral grays + danger red on the Loss/Surplus
+    // residual (the unexplained remainder is the flag-worthy category).
+    const wc = data.weeklyComposition;
+    if (wc.length > 0) {
+      rpt.ensure(150);
+      rpt.subhead(`Komposisi Deviasi per Minggu — ${titleCase(data.period.monthLabel)} (Rp)`, { size: 8.5, gapAfter: 2 });
+      stackedBarChartV(doc, {
+        x: PAGE.M, y: rpt.y, w: CONTENT_W, h: 140,
+        labels: wc.map((r) => `W${r.weekNo}`),
+        series: [
+          { name: 'Waste', values: wc.map((r) => r.nominalWaste), color: C.inkSoft },
+          { name: 'Susut', values: wc.map((r) => r.nominalSusut), color: C.muted },
+          { name: 'Trial', values: wc.map((r) => r.nominalTrial), color: C.faint },
+          { name: 'Loss/Surplus', values: wc.map((r) => r.nominalLossSurplus), color: C.danger },
+        ],
+        fmt: tickIDR,
+      });
+      rpt.y += 140 + 16;
+
+      // REFINE-3 (user: "Tren akumulasi mingguan (Week 1+2+…)"): running
+      // total of the month's deviation magnitude — bar j is the cumulative
+      // absTotal of weeks 1..j ("W1+2+…"), so the last bar is the
+      // month-to-date total as of the exported week (highlighted by
+      // barChartV's default last-bar emphasis).
+      let acc = 0;
+      const cum = wc.map((r) => { acc += r.absTotal; return acc; });
+      const cumLabels = wc.map((_r, j) => 'W' + wc.slice(0, j + 1).map((r) => r.weekNo).join('+'));
+      rpt.ensure(150);
+      rpt.subhead('Akumulasi Mingguan — Total Deviasi (Rp)', { size: 8.5, gapAfter: 2 });
+      barChartV(doc, {
+        x: PAGE.M, y: rpt.y, w: CONTENT_W, h: 140,
+        labels: cumLabels,
+        values: cum,
+        fmt: tickIDR,
+      });
+      rpt.y += 140 + 16;
+    }
   }
 
   // ============================================================
-  //  7 — RESTO DENGAN PENJUALAN KURANG LEBIH SAMA  (REFINE-1 — NEW)
+  //  8 — RESTO DENGAN PENJUALAN KURANG LEBIH SAMA  (REFINE-1 — NEW;
+  //       REFINE-3: was 7)
   //  --------------------------------------------------------
   //  User: "Tambahkan section Peer to Peer tapi ganti istilah nya menjadi
   //  'Dengan Total Penjualan yang kurang lebih sama Resto lain menghasilkan
   //  nominal deviasi ini dan ada break down per item nya berapa secara
   //  kuantiti, % to bom'".
-  //  7.1 = the similar-sales restos and the nominal deviations they produce
-  //        (peer band = sales within ±10% of the target — same-period mode).
-  //  7.2 = the per-item breakdown for the target's top items: kuantitas +
+  //  8.1 = the similar-sales restos and the nominal deviations they produce
+  //  (peer band = sales within ±10% of the target — same-period mode).
+  //  8.2 = the per-item breakdown for the target's top items: kuantitas +
   //        % to BOM, vs the peer average.
   //  SALES SECRECY: no sales nominal is ever printed here.
   // ============================================================
   if (hasSection('peer')) {
-    rpt.sectionHeader(7, 'Resto dengan Penjualan Kurang Lebih Sama');
+    rpt.sectionHeader(8, 'Resto dengan Penjualan Kurang Lebih Sama');
     const pc = data.peerComparison;
     if (!pc || pc.peers.length === 0) {
       rpt.noteBox('Data pembanding tidak tersedia untuk filter ini \u2014 pilih satu resto pada Filter Resto (tab Resto Analysis) lalu export ulang.');
     } else {
       const targetLabel = `${pc.targetOutlet.name} (${pc.targetOutlet.code})`;
-      // 7.1 — peers' nominal deviations, biggest first; the target row is
+      // 8.1 — peers' nominal deviations, biggest first; the target row is
       // bold (named in the subhead — factual, no legend needed).
       const sortedPeers = [...pc.peers].sort((a, b) => Math.abs(b.nominalDeviasi) - Math.abs(a.nominalDeviasi));
-      rpt.subhead(`7.1 Nominal Deviasi per Resto (penjualan kurang lebih sama dengan ${targetLabel}${pc.autoTarget ? ' \u2014 target otomatis: resto deviasi terbesar' : ''})`, { size: 8.5 });
+      rpt.subhead(`8.1 Nominal Deviasi per Resto (penjualan kurang lebih sama dengan ${targetLabel}${pc.autoTarget ? ' \u2014 target otomatis: resto deviasi terbesar' : ''})`, { size: 8.5 });
       rpt.table({
         cols: [
           { header: '#', align: 'center' },
@@ -848,10 +1030,10 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
         rowText: (row) => (row[3].startsWith('-') ? C.danger : undefined),
       });
 
-      // 7.2 — per-item breakdown: kuantitas + % to BOM, target vs the
+      // 8.2 — per-item breakdown: kuantitas + % to BOM, target vs the
       // average of the similar-sales peers.
       if (pc.items.length > 0) {
-        rpt.subhead(`7.2 Breakdown per Item (kuantitas, % to BOM) \u2014 ${targetLabel} vs rata-rata resto setara`, { size: 8.5 });
+        rpt.subhead(`8.2 Breakdown per Item (kuantitas, % to BOM) \u2014 ${targetLabel} vs rata-rata resto setara`, { size: 8.5 });
         rpt.table({
           cols: [
             { header: 'Item' },
@@ -877,7 +1059,8 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   }
 
   // ============================================================
-  //  8 — ITEM YANG KEMUNGKINAN PLUS MINUS ANTAR PERIODE  (REFINE-1 — NEW)
+  //  9 — ITEM YANG KEMUNGKINAN PLUS MINUS ANTAR PERIODE  (REFINE-1 — NEW;
+  //       REFINE-3: was 8)
   //  --------------------------------------------------------
   //  User: "Tambahkan juga item yang flip flop namun ganti istilah nya
   //  menjadi Item yang kemungkinan Plus Minus antar Periode".
@@ -887,7 +1070,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   //  zero = the reversal is nearly symmetrical.
   // ============================================================
   if (hasSection('flip')) {
-    rpt.sectionHeader(8, 'Item yang Kemungkinan Plus Minus antar Periode');
+    rpt.sectionHeader(9, 'Item yang Kemungkinan Plus Minus antar Periode');
     const fr = data.flipRanking;
     const flipRows = (fr?.items ?? []).filter((it) => it.topFlips.length > 0).slice(0, 10);
     if (flipRows.length === 0) {

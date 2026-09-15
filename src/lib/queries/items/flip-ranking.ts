@@ -87,7 +87,7 @@ export interface FlipPair {
 export interface FlipRankItem {
   itemName: string;
   /** MAX(ir."satuan") across the item's periods — per-item unit of measure
-   *  (REFINE-2: "Satuan" column in export section 8). */
+   *  (REFINE-2: "Satuan" column in the export — section 9 after REFINE-3). */
   satuan: string | null;
   /** Total same-week consecutive pairs analyzed for this item. */
   totalPairs: number;

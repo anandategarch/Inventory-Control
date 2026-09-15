@@ -93,6 +93,13 @@ import {
 // REFINE-1: section 8 flip items (renamed "Item yang Kemungkinan Plus Minus
 // antar Periode") — not in the queries barrel; direct module import.
 import { queryFlipRanking } from '@/lib/queries/items/flip-ranking';
+// REFINE-3: section 6 "Item Anomali vs Riwayat Sendiri" + the trend
+// section's weekly composition/accumulation charts — direct module imports
+// (flip-ranking precedent; not in the queries barrel).
+import { querySelfHistoryAnomaly } from '@/lib/queries/items/self-history-anomaly';
+import { queryWeeklyComposition } from '@/lib/queries/weekly-composition';
+import type { SelfHistoryAnomalyRow } from '@/lib/queries/items/self-history-anomaly';
+import type { WeeklyCompositionRow } from '@/lib/queries/weekly-composition';
 import { queryVarianceAnalysis } from '@/lib/queries/health-ranking';
 import { cachedSharedQuery, cachedSharedQueryMap, histPeriodsKeyParts } from '@/lib/queries/query-cache';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
@@ -191,7 +198,9 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   // REFINE-1 (user request): + 'peer' (section 7 — Resto dengan Penjualan
   // Kurang Lebih Sama) + 'flip' (section 8 — Item yang Kemungkinan Plus
   // Minus antar Periode).
-  const ALL_EXPORT_SECTIONS = ['exec', 'growth', 'topItems', 'variance', 'itemTrend', 'trend', 'peer', 'flip'] as const;
+  // REFINE-3 (user request): + 'anomali' (section 6 — Item Anomali vs
+  // Riwayat Sendiri; trend renumbered 6→7, peer 7→8, flip 8→9).
+  const ALL_EXPORT_SECTIONS = ['exec', 'growth', 'topItems', 'variance', 'itemTrend', 'anomali', 'trend', 'peer', 'flip'] as const;
   const need = new Set<string>(sections ?? ALL_EXPORT_SECTIONS);
   // Section → data dependencies (verified against pdf-builder.ts, not
   // assumed; EXPORT-TRIM: only the 6 kept sections): exec renders
@@ -214,6 +223,8 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   // 'coverage' removed — their need* gates + fetches went with them (see
   // the section map above). 'flip' + 'peer' are BACK (REFINE-1).
   const needItemTrend = need.has('itemTrend');
+  // REFINE-3 — section 6 "Item Anomali vs Riwayat Sendiri".
+  const needAnomali = need.has('anomali');
   // The kpis row feeds executiveSummary (exec + growth sections + the cover
   // KPI cards). Cheap: shared cached q-* row.
   const needKpis = needExec || needGrowth;
@@ -400,7 +411,15 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     // even with 743 cached rows. Unwrap .rows here; `[]` stays the
     // off-section placeholder.
     itemTrendMatrixRes,
-    // REFINE-1 — section 8 "Item yang Kemungkinan Plus Minus antar Periode":
+    // REFINE-3 — section 6 "Item Anomali vs Riwayat Sendiri": top items
+    // departing from their own same-week historical average (empty result
+    // when off / no historical periods).
+    selfAnomalyRes,
+    // REFINE-3 — per-week category composition of the exported month (for
+    // the trend section's composition + accumulation charts; empty when
+    // the trend section is off).
+    weeklyCompRes,
+    // REFINE-1 — "Item yang Kemungkinan Plus Minus antar Periode" (section 9 after REFINE-3):
     // flip ranking scoped to the exported week + month (null when off).
     flipRankingRes,
     // REFINE-1 — per-(item, area) category averages for the "Rata-rata
@@ -527,6 +546,26 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
       { month: 'ALL', week, filters: { ...filterOpts, itemName: null }, extra: { weekLabel: week, sv: 2 } },
       () => queryItemTrendMatrix(week, { ...filterOpts, itemName: null }),
     ) : Promise.resolve(null),
+    // REFINE-3 — section 'anomali': own-history departure ranking. Unlike
+    // q-hist-catavg (whose result depends ONLY on the hist-period list, so
+    // the fingerprint REPLACES month/week), this query also reads the
+    // CURRENT period — month/week stay the primary period key and the hist
+    // fingerprint rides in `extra`; sv forks a fresh namespace for the new
+    // row shape.
+    needAnomali && historicalPeriodsList.length > 0 ? cachedSharedQuery(
+      'q-self-anom',
+      { month, week, filters: filterOpts, extra: { ...histPeriodsKeyParts(historicalPeriodsList), limit: topNItems, sv: 1 } },
+      () => querySelfHistoryAnomaly({ week, month, historicalPeriods: historicalPeriodsList, filters: filterOpts, limit: topNItems }),
+    ) : Promise.resolve({ rows: [] as SelfHistoryAnomalyRow[] }),
+    // REFINE-3 — weekly category composition of the exported month. The
+    // query itself is week-agnostic (it returns the month's FULL week set)
+    // so the cache key uses the literal 'ALL' week (same convention as
+    // q-item-trend-matrix); the caller slices to the exported week below.
+    needTrend ? cachedSharedQuery(
+      'q-week-comp',
+      { month, week: 'ALL', filters: filterOpts, extra: {} },
+      () => queryWeeklyComposition({ month, filters: filterOpts }),
+    ) : Promise.resolve({ rows: [] as WeeklyCompositionRow[] }),
     // REFINE-1 — section 'flip': top-N items whose QTY deviasi sign flips
     // between consecutive same-week periods ("plus minus antar periode").
     // Scoped to the exported week + month (flips involving the selected
@@ -534,7 +573,7 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     // itemName is ignored by the query itself (it scans all items).
     needFlip ? cachedSharedQuery(
       'q-flip-rank',
-      // REFINE-2: sv — row shape gained `satuan` (section 8's "Satuan"
+      // REFINE-2: sv — row shape gained `satuan` (the flip section's "Satuan"
       // column); see the q-variance note above.
       { month, week, filters: filterOpts, extra: { limit: 10, weekLabel: week, sv: 2 } },
       () => queryFlipRanking(filterOpts, week, month, 10),
@@ -618,6 +657,16 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     // no Loss/Surplus columns).
     return { weekLabel: `${r.weekLabel} ${r.monthLabel?.split(' ')[0].slice(0, 3)}`, sortKey: `${mk}|${String(parseInt(r.weekLabel?.replace(/\D/g, '')) || 0).padStart(2, '0')}`, devBom: r.devBom, sales: r.sales, nominal: r.nominal, lossNominal: r.lossNominal, surplusNominal: r.surplusNominal };
   }).sort((a, b) => a.sortKey.localeCompare(b.sortKey)).map(({ sortKey, ...rest }) => rest);
+
+  // REFINE-3 — weekly composition: keep only the weeks up to (and
+  // including) the exported week — weeks after it belong to the upcoming
+  // period (the same exclusion rule the itemTrend matrix applies to
+  // months). Unparsable/absent week labels (exportedWeekNo = 0) keep the
+  // month's full week set.
+  const exportedWeekNo = parseInt(week.replace(/\D/g, ''), 10) || 0;
+  const weeklyComposition = exportedWeekNo > 0
+    ? (weeklyCompRes?.rows ?? []).filter(r => r.weekNo <= exportedWeekNo)
+    : (weeklyCompRes?.rows ?? []);
 
 
   // ============================================================
@@ -736,6 +785,11 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     // rendered — the builder gates on the SAME sections list that gated
     // the fetch).
     itemTrendMatrix: itemTrendMatrixRes?.rows ?? [],
+    // REFINE-3 — section 'anomali' ([] when off / no historical periods).
+    selfHistoryAnomaly: selfAnomalyRes?.rows ?? [],
+    // REFINE-3 — weekly composition rows for the trend section's
+    // composition + accumulation charts ([] when the trend section is off).
+    weeklyComposition,
     // REFINE-1 — section 'peer' (null when off / target unresolvable).
     peerComparison,
     // REFINE-1 — section 'flip' (null when off).

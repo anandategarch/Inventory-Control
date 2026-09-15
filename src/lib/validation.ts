@@ -203,7 +203,9 @@ export const changeAnalysisItemsQuerySchema = changeAnalysisQuerySchema.extend({
 // REFINE-1 (user request): + 'peer' (section 7 — Resto dengan Penjualan
 // Kurang Lebih Sama) + 'flip' (section 8 — Item yang Kemungkinan Plus Minus
 // antar Periode).
-const EXPORT_SECTION_KEYS = ['exec', 'growth', 'topItems', 'variance', 'itemTrend', 'trend', 'peer', 'flip'] as const;
+// REFINE-3: + 'anomali' (section 6 — Item Anomali vs Riwayat Sendiri);
+// trend renumbered 6→7, peer 7→8, flip 8→9 (keys unchanged).
+const EXPORT_SECTION_KEYS = ['exec', 'growth', 'topItems', 'variance', 'itemTrend', 'anomali', 'trend', 'peer', 'flip'] as const;
 export const exportReportQuerySchema = z.object({
   month: monthLabelSchema,
   week: weekLabelSchema,

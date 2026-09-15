@@ -154,6 +154,10 @@ export async function invalidateAnalysisCache(): Promise<void> {
     // \x1f sentinel right after 'q-peer-cmp' doesn't match the '-' in
     // 'q-peer-cmp-items', so it needs its own entry.)
     'q-flip-rank', 'q-peer-cmp', 'q-peer-cmp-items', 'q-area-catavg',
+    // REFINE-3: the export's own-history anomaly ranking + weekly category
+    // composition — same rule: mutations must kill these rows or the export
+    // serves pre-mutation data for up to 30 min.
+    'q-self-anom', 'q-week-comp',
   ];
   await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }
