@@ -80,14 +80,29 @@ export interface PeerTopItemsResponse {
     peerTopCount: number;
     /** Those peers' outlet codes (map → names via perPeer below). */
     peerTopCodes: string[];
-    /** ABSOLUTE-basis average across those peers ("Rata-Rata Absolute"). */
-    peerAvgAbsNominal: number;
+    /** Rata-rata |kuantiti deviasi| across those peers — PEERTOP-R1:
+     *  "Rata-Rata Absolute" kini berbasis |qty deviasi| (user request),
+     *  bukan |nominal|. */
+    peerAvgAbsQty: number;
     peerAvgDevBom: number;
     /** Worst (largest absNominal) among those peers. */
     peerMaxAbsNominal: number;
-    /** Target's own row. rank > topN = "di luar top-N"; null = item has
-     *  NO deviation records at the target ("blind spot"). */
-    target: { rank: number; absNominal: number; devBom: number; direction: string } | null;
+    /** Target's own row. PEERTOP-R1:
+     *  - qtyDeviasi = kuantiti deviasi NILAI ASLI (signed — minus =
+     *    kekurangan → merah; null = tidak ada catatan qty);
+     *  - itemRank/itemOutletCount = "Ranking Resto di antara Resto yang
+     *    Selevel per Item" (#peringkat/total resto selevel yang mencatat
+     *    deviasi item ini, urut |nominal deviasi| terbesar);
+     *  - rank = peringkat di top list resto sendiri (styling);
+     *  null = item has NO deviation records at the target ("blind spot"). */
+    target: {
+      rank: number;
+      absNominal: number;
+      devBom: number;
+      qtyDeviasi: number | null;
+      itemRank: number;
+      itemOutletCount: number;
+    } | null;
   }>;
   /** Per-outlet top-N (target included). NOTE: ordered by outletCode —
    *  peers with ZERO deviation records have NO entry here (callers show

@@ -205,13 +205,17 @@ export interface PeerItemRow {
 }
 
 // ============================================================
-//  PEERTOP-2-b — section 8.3/8.4 payloads ("top item tiap resto
-//  setara" + "bersama vs khusus"). Both live on PeerComparisonData
-//  as OPTIONAL fields so the whole feature degrades gracefully:
-//  absent (undefined) = fetch failed/skipped → the PDF section code
-//  skips the table; [] = fetched but no deviation records in the
-//  band → also skipped. Sales values are intentionally NOT part of
-//  the mapped payload (SALES SECRECY — same rule as `peers`).
+//  PEERTOP-2-b — section 8.3 payload ("top item tiap resto setara",
+//  "bersama vs khusus"). Lives on PeerComparisonData as an OPTIONAL
+//  field so the feature degrades gracefully: absent (undefined) =
+//  fetch failed/skipped → the PDF section code skips the table;
+//  [] = fetched but no deviation records in the band → also skipped.
+//  Sales values are intentionally NOT part of the mapped payload
+//  (SALES SECRECY — same rule as `peers`).
+//  PEERTOP-R1 (user feedback): 8.4 per-outlet table REMOVED; 8.3
+//  columns revised — "Top di" shows resto names, ranking = per-item
+//  cross-outlet, +QTY Deviasi (nilai asli, minus → merah), rata-rata
+//  absolute berbasis |kuantiti deviasi|, kolom Arah dihapus.
 // ============================================================
 
 /** 8.3 row — cross-peer union of every resto setara's top items
@@ -225,21 +229,27 @@ export interface PeerTopItemRow {
   satuan: string | null;
   /** Non-target resto setara carrying this item in THEIR top-N. */
   peerTopCount: number;
-  /** ABSOLUTE-basis average across those restos ("Rata-rata Absolute"). */
-  peerAvgAbsNominal: number;
-  /** Worst (largest absNominal) among those restos. */
-  peerMaxAbsNominal: number;
-  /** The target's own row for the item; rank > topN = "di luar top-N". */
-  target: { rank: number; absNominal: number; devBom: number; direction: string } | null;
-}
-
-/** 8.4 entry — one resto setara's own top-N items (target included),
- *  ordered by sales proximity to match the 8.1 Peer Table rows. */
-export interface PeerTopItemOutletRow {
-  outletCode: string;
-  outletName: string;
-  isTarget: boolean;
-  items: Array<{ itemName: string; absNominal: number; devBom: number; direction: string }>;
+  /** PEERTOP-R1: NAMES of those restos ("Top di" column — user:
+   *  "TOP DI ganti jadi Nama Resto nya & TOP Di"). */
+  peerTopNames: string[];
+  /** PEERTOP-R1: rata-rata |kuantiti deviasi| across those restos
+   *  ("Rata-rata Absolute" — user: "pakai kuantiti deviasi aja
+   *  diabsolute"). */
+  peerAvgAbsQty: number;
+  /** The target's own row for the item.
+   *  qtyDeviasi = kuantiti deviasi NILAI ASLI (signed; minus =
+   *  kekurangan → C.danger; null = no qty records);
+   *  itemRank/itemOutletCount = "Ranking Resto di antara Resto yang
+   *  Selevel per Item" ("#3/9"); rank = peringkat di top list resto
+   *  sendiri (tidak dirender — kept for parity with the API contract). */
+  target: {
+    rank: number;
+    absNominal: number;
+    devBom: number;
+    qtyDeviasi: number | null;
+    itemRank: number;
+    itemOutletCount: number;
+  } | null;
 }
 
 /** Section 7 payload. `peers` includes the target row (isTarget=true).
@@ -252,11 +262,9 @@ export interface PeerComparisonData {
   peers: PeerComparisonRow[];
   items: PeerItemRow[];
   /** PEERTOP-2-b — 8.3 cross-peer union of top items (undefined = fetch
-   *  failed/skipped; [] = no deviation records → section skips). */
+   *  failed/skipped; [] = no deviation records → section skips).
+   *  PEERTOP-R1: 8.4 per-outlet table removed by user request. */
   topItems?: PeerTopItemRow[];
-  /** PEERTOP-2-b — 8.4 per-outlet top items in Peer Table order
-   *  (undefined = fetch failed/skipped; [] = no entries → section skips). */
-  peerTopItems?: PeerTopItemOutletRow[];
 }
 
 // trend row — derived at route.ts:600-603 from trendAggRows (queryTrendAgg).

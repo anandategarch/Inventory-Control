@@ -21,12 +21,18 @@
 //    items[]  — union of every outlet's top-N items, aggregated:
 //               peerTopCount (how many non-target peers carry the
 //               item in THEIR top-N), peer averages on the
-//               ABSOLUTE basis (label: "Rata-Rata Absolute"),
-//               and the target's own row (rank may exceed topN —
-//               "di luar top-N"; null = no deviation records for
-//               the item at the target at all).
+//               ABSOLUTE basis (PEERTOP-R1 user: "rata-rata absolute
+//               pakai kuantiti deviasi aja diabsolute" → |qtyDeviasi|),
+//               and the target's own row (qtyDeviasi = SIGNED raw
+//               quantity deviation — "nilai asli", minus = kekurangan;
+//               itemRank = the target's rank among ALL band outlets
+//               that recorded a deviation for this item — user:
+//               "Rangking Resto di antara Resto yang Selevel per
+//               Item"; null row = no deviation records for the item
+//               at the target at all = blind spot).
 //    perPeer[] — each outlet's top-N items (target included) for
-//               the Peer Table expand-row UI + PDF 8.4.
+//               the Peer Table expand-row UI (PDF 8.4 was REMOVED
+//               by user request in PEERTOP-R1).
 //    Peers with ZERO deviation records never appear in the SQL
 //    result → no perPeer entry (callers show "tidak ada item
 //    deviasi" for those codes).
@@ -64,14 +70,36 @@ export interface PeerTopItemUnionRow {
   peerTopCount: number;
   /** Those peers' outlet codes (FE maps codes → names via perPeer). */
   peerTopCodes: string[];
-  /** ABSOLUTE-basis average across those peers ("Rata-Rata Absolute"). */
-  peerAvgAbsNominal: number;
+  /** Rata-rata |kuantiti deviasi| across those peers — PEERTOP-R1 user:
+   *  "RATA-RATA ABSOLUTE RESTO SETARA ... pakai kuantiti deviasi aja
+   *  diabsolute" (was avg |nominal|). ABSOLUTE basis kept (label
+   *  "Rata-Rata Absolute" downstream). */
+  peerAvgAbsQty: number;
   peerAvgDevBom: number;
-  /** Worst (largest absNominal) among those peers. */
+  /** Worst (largest absNominal) among those peers — sort key only. */
   peerMaxAbsNominal: number;
-  /** Target's own row for the item. rank > topN = "di luar top-N";
-   *  null = no deviation records for this item at the target. */
-  target: { rank: number; absNominal: number; devBom: number; direction: string } | null;
+  /** Target's own row for the item.
+   *  rank            — rank in the TARGET's own top list (FE bold/muted
+   *                    styling; may exceed topN = "di luar top-N");
+   *  qtyDeviasi      — SUM(qtyDeviasi) SIGNED, "kuantiti deviasi nilai
+   *                    asli" (null = no qty records; minus = kekurangan
+   *                    → rendered red — PEERTOP-R1 replaced the Arah
+   *                    column with signed values);
+   *  itemRank        — PEERTOP-R1 user: "Rangking Resto di antara Resto
+   *                    yang Selevel per Item" — RANK() of the target's
+   *                    absNominal among ALL band outlets recording this
+   *                    item (ties share a rank);
+   *  itemOutletCount — those outlets' count (incl. the target) = the
+   *                    ranking denominator ("#3/9").
+   *  null row = no deviation records for this item at the target. */
+  target: {
+    rank: number;
+    absNominal: number;
+    devBom: number;
+    qtyDeviasi: number | null;
+    itemRank: number;
+    itemOutletCount: number;
+  } | null;
 }
 
 export interface PeerTopItemsResult {
@@ -145,9 +173,20 @@ export async function queryPeerTopItems(
     itemName: string;
     satuan: string | null;
     absNominal: number | bigint;
+    /** SUM(qtyDeviasi) — SIGNED raw ("nilai asli"); NULL when the item
+     *  has no qty records at this outlet (SUM of all-NULL is NULL). */
+    qtyDev: number | bigint | null;
+    /** COALESCE(SUM(ABS(qtyDeviasi)), 0) — peer avg absolute basis. */
+    absQty: number | bigint;
     devBom: number | bigint;
     direction: string;
     rn: number | bigint;
+    /** RANK() of this outlet's absNominal among ALL band outlets
+     *  recording this item (PARTITION BY itemId) — only the target
+     *  row's value is consumed downstream. */
+    itemRank: number | bigint;
+    /** Band outlets (incl. the target) recording this item. */
+    itemOutletCount: number | bigint;
   }
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<PeerTopItemsRawRow[]>`
     WITH sales_mode AS (
@@ -200,11 +239,24 @@ export async function queryPeerTopItems(
         i.name as "itemName",
         MAX(ir."satuan") as "satuan",
         SUM(ir."absNominalDeviasi") as "absNominal",
+        -- PEERTOP-R1: kuantiti deviasi NILAI ASLI (signed — minus =
+        -- kekurangan, rendered red downstream; replaces the Arah column).
+        SUM(ir."qtyDeviasi") as "qtyDev",
+        -- PEERTOP-R1: |qty deviation| aggregate — the "Rata-Rata Absolute"
+        -- basis (user: "pakai kuantiti deviasi aja diabsolute").
+        COALESCE(SUM(ABS(ir."qtyDeviasi")), 0) as "absQty",
         CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
           ELSE 0 END as "devBom",
         ${DIRECTION_FROM_SUM_SQL} as "direction",
-        ROW_NUMBER() OVER (PARTITION BY ir."outletId" ORDER BY SUM(ir."absNominalDeviasi") DESC) as rn
+        ROW_NUMBER() OVER (PARTITION BY ir."outletId" ORDER BY SUM(ir."absNominalDeviasi") DESC) as rn,
+        -- PEERTOP-R1 (user: "Rangking Resto di antara Resto yang Selevel
+        -- per Item"): this outlet's rank among ALL band outlets that
+        -- recorded a deviation for the item, by SUM(absNominal) DESC
+        -- (RANK → ties share a rank). Window functions run AFTER the
+        -- GROUP BY, so partitioning by the grouped key is valid.
+        RANK() OVER (PARTITION BY ir."itemId" ORDER BY SUM(ir."absNominalDeviasi") DESC) as "itemRank",
+        COUNT(*) OVER (PARTITION BY ir."itemId") as "itemOutletCount"
       FROM "InventoryRecord" ir
       JOIN "Item" i ON ir."itemId" = i.id
       WHERE ir."monthLabel" = ${month}
@@ -221,9 +273,13 @@ export async function queryPeerTopItems(
       oia."itemName",
       oia."satuan",
       oia."absNominal",
+      oia."qtyDev",
+      oia."absQty",
       oia."devBom",
       oia."direction",
-      oia."rn"
+      oia."rn",
+      oia."itemRank",
+      oia."itemOutletCount"
     FROM peer_outlets po
     JOIN outlet_item_aggs oia ON oia."outletId" = po."outletId"
     -- Target contributes its FULL item list (any rank) so the union table
@@ -237,33 +293,39 @@ export async function queryPeerTopItems(
   // perPeer: outletCode → top-N items (rn asc — rows arrive pre-sorted).
   const perPeerMap = new Map<string, PeerTopItemsPerOutlet>();
   // Target's full item index (any rank) — for union target info.
-  const targetRows = new Map<number, { rank: number; absNominal: number; devBom: number; direction: string }>();
+  const targetRows = new Map<number, NonNullable<PeerTopItemUnionRow['target']>>();
   // Union accumulator over rn <= topN rows.
   const unionMap = new Map<number, {
     itemId: number;
     itemName: string;
     satuan: string | null;
-    peerAbsSum: number;
+    peerAbsQtySum: number;
     peerDevBomSum: number;
     peerMaxAbsNominal: number;
     peerTopCodes: string[];
-    targetTop: { rank: number; absNominal: number; devBom: number; direction: string } | null;
+    targetTop: NonNullable<PeerTopItemUnionRow['target']> | null;
   }>();
 
   for (const r of rows) {
     const itemId = Number(r.itemId);
     const absNominal = Number(r.absNominal) || 0;
+    // PEERTOP-R1: signed raw qty deviation (null = no qty records) and
+    // the per-item cross-outlet ranking carried on every row.
+    const qtyDeviasi = r.qtyDev == null ? null : Number(r.qtyDev) || 0;
+    const absQty = Number(r.absQty) || 0;
+    const itemRank = Number(r.itemRank) || 0;
+    const itemOutletCount = Number(r.itemOutletCount) || 0;
     const devBom = Number(r.devBom) || 0;
     const rank = Number(r.rn) || 0;
     const isTarget = Boolean(r.isTarget);
 
     if (isTarget && !targetRows.has(itemId)) {
-      targetRows.set(itemId, { rank, absNominal, devBom, direction: r.direction });
+      targetRows.set(itemId, { rank, absNominal, devBom, qtyDeviasi, itemRank, itemOutletCount });
     }
 
     if (rank <= topN) {
       // perPeer entry (target included — its own top-N drives the
-      // expand row + PDF 8.4 target block).
+      // expand row UI).
       let pp = perPeerMap.get(r.outletCode);
       if (!pp) {
         pp = { outletCode: r.outletCode, outletName: r.outletName, isTarget, items: [] };
@@ -278,7 +340,7 @@ export async function queryPeerTopItems(
           itemId,
           itemName: r.itemName,
           satuan: r.satuan ?? null,
-          peerAbsSum: 0,
+          peerAbsQtySum: 0,
           peerDevBomSum: 0,
           peerMaxAbsNominal: 0,
           peerTopCodes: [],
@@ -287,9 +349,10 @@ export async function queryPeerTopItems(
         unionMap.set(itemId, u);
       }
       if (isTarget) {
-        u.targetTop = { rank, absNominal, devBom, direction: r.direction };
+        u.targetTop = { rank, absNominal, devBom, qtyDeviasi, itemRank, itemOutletCount };
       } else {
-        u.peerAbsSum += absNominal;
+        // PEERTOP-R1: peer average is on the |qtyDeviasi| basis.
+        u.peerAbsQtySum += absQty;
         u.peerDevBomSum += devBom;
         u.peerMaxAbsNominal = Math.max(u.peerMaxAbsNominal, absNominal);
         u.peerTopCodes.push(r.outletCode);
@@ -299,14 +362,15 @@ export async function queryPeerTopItems(
 
   const items: PeerTopItemUnionRow[] = Array.from(unionMap.values()).map((u) => {
     const n = u.peerTopCodes.length;
-    // ABSOLUTE-basis averages ("Rata-Rata Absolute" label downstream).
+    // ABSOLUTE-basis averages ("Rata-Rata Absolute" label downstream) —
+    // PEERTOP-R1: |kuantiti deviasi| basis (user request).
     return {
       itemId: u.itemId,
       itemName: u.itemName,
       satuan: u.satuan,
       peerTopCount: n,
       peerTopCodes: u.peerTopCodes,
-      peerAvgAbsNominal: n > 0 ? u.peerAbsSum / n : 0,
+      peerAvgAbsQty: n > 0 ? u.peerAbsQtySum / n : 0,
       peerAvgDevBom: n > 0 ? u.peerDevBomSum / n : 0,
       peerMaxAbsNominal: u.peerMaxAbsNominal,
       // Prefer the target's top-N row (same object as targetRows anyway);

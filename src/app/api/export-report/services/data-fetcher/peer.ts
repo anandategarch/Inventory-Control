@@ -13,13 +13,13 @@ import {
   // Kurang Lebih Sama") — outlet-level peers + per-item breakdown.
   queryPeerComparison,
   queryPeerComparisonItems,
-  // PEERTOP-2-b: 8.3/8.4 — per-peer top items + cross-peer union.
+  // PEERTOP-2-b: 8.3 — per-peer top items + cross-peer union.
   queryPeerTopItems,
 } from '@/lib/queries';
 import { cachedSharedQuery } from '@/lib/queries/query-cache';
 import { withStatementTimeout, buildSqlFilters } from '@/lib/queries/shared';
 import { logger } from '@/lib/logger';
-import type { PeerItemRow, PeerTopItemOutletRow, PeerTopItemRow, PeerComparisonData } from '../types';
+import type { PeerItemRow, PeerTopItemRow, PeerComparisonData } from '../types';
 import type { FetcherContext } from './context';
 
 // ============================================================
@@ -114,45 +114,45 @@ export async function fetchPeerComparison(ctx: FetcherContext): Promise<PeerComp
         // PEERTOP-2-b — third dependent call, same cachedSharedQuery
         // pattern as the two above. limit 10 MUST match the
         // queryPeerComparison call (limit 10) so the peer band is
-        // EXACTLY the restos rendered in 8.1; topN 5 matches the 8.4
-        // subhead ("masing-masing sampai 5 item"). Stays inside the
-        // same try → a failure leaves peerComparison null (the whole
-        // fetch is already non-fatal — nothing new to catch).
+        // EXACTLY the restos rendered in 8.1; topN 5 mirrors the FE
+        // card. Stays inside the same try → a failure leaves
+        // peerComparison null (the whole fetch is already non-fatal —
+        // nothing new to catch).
+        // PEERTOP-R1: sv 1 → 2 — row shape changed (target gains
+        // qtyDeviasi/itemRank/itemOutletCount, loses direction;
+        // peerAvgAbsNominal → peerAvgAbsQty; +peerTopNames) so a stale
+        // cached entry can never be served under the new contract.
         const topRes = await cachedSharedQuery(
           'q-peer-topitems',
-          { month, week, filters: filterOpts, extra: { target: targetCode, topN: 5, limit: 10, sv: 1 } },
+          { month, week, filters: filterOpts, extra: { target: targetCode, topN: 5, limit: 10, sv: 2 } },
           () => queryPeerTopItems(targetCode as string, month, week, 'week', 5, 10, kelompokParam),
         );
+        // PEERTOP-R1: resolve outlet CODES → NAMES for the "Top di"
+        // column (user: "TOP DI ganti jadi Nama Resto nya & TOP Di").
+        // A peer carrying an item in its top-N by definition has a
+        // perPeer entry, so the lookup always hits (code = fallback).
+        const nameByCode = new Map(topRes.perPeer.map((p) => [p.outletCode, p.outletName]));
         // 8.3 — cross-peer union, capped at 10 rows; rendered in the
         // server's sort order (rowBold not needed — the target is a
         // COLUMN here, not a row). Mapped WITHOUT sales values (SALES
         // SECRECY — the query rows carry none anyway).
+        // PEERTOP-R1: 8.4 per-outlet table REMOVED by user request —
+        // perPeer is now used ONLY for the code→name map above.
         const topItems: PeerTopItemRow[] = topRes.items.slice(0, 10).map((u) => ({
           itemName: u.itemName,
           satuan: u.satuan ?? null,
           peerTopCount: u.peerTopCount,
-          peerAvgAbsNominal: u.peerAvgAbsNominal,
-          peerMaxAbsNominal: u.peerMaxAbsNominal,
+          peerTopNames: u.peerTopCodes.map((c) => nameByCode.get(c) ?? c),
+          peerAvgAbsQty: u.peerAvgAbsQty,
           target: u.target,
         }));
-        // 8.4 — per-outlet top items REORDERED to match the 8.1 Peer
-        // Table order (sales proximity): perPeer arrives ordered by
-        // outletCode (SQL), so walk peerRes.peers and look each code up.
-        // Peers with zero deviation records have no entry — skipped.
-        const perByCode = new Map(topRes.perPeer.map((p) => [p.outletCode, p]));
-        const peerTopItems: PeerTopItemOutletRow[] = [];
-        for (const p of peerRes.peers) {
-          const entry = perByCode.get(p.outletCode);
-          if (entry) peerTopItems.push(entry);
-        }
         return {
           targetOutlet: { code: targetRow.outletCode, name: targetRow.outletName, area: targetRow.area },
           autoTarget,
           peers: peerRes.peers,
           items,
-          // Empty arrays are fine — the PDF section code guards on length.
+          // Empty array is fine — the PDF section code guards on length.
           topItems,
-          peerTopItems,
         };
       }
     }

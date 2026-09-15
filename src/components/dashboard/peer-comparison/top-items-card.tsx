@@ -2,28 +2,32 @@
 
 // ============================================================
 //  PEERTOP-2 — "Top Items Across Peers" card
-//  --------------------------------------------------------
-//  Answers the inverse question of Item-Level Comparison
-//  (items-table.tsx): instead of "MY top items vs peer
-//  averages", it shows the cross-peer UNION of every peer's
-//  own top-N items — which items are a SHARED problem (top
-//  in many peers → possibly systemic, check BOM/resep) vs a
-//  LOCAL one (top only at the target), plus blind spots
-//  (top at peers but absent at the target).
+//  PEERTOP-R1 (user feedback) — column set revised:
+//    - "Top di" now shows the NAMES of the resto setara where the
+//      item is top (was "m/n" count; user: "TOP DI ganti jadi Nama
+//      Resto nya & TOP Di").
+//    - "Rank di Target" replaced by "Ranking Resto di antara Resto
+//      yang Selevel per Item" (#peringkat/total — the target's rank
+//      among ALL band outlets recording this item, by |nominal
+//      deviasi| desc; user wording kept verbatim).
+//    - NEW "QTY Deviasi" column — kuantiti deviasi NILAI ASLI
+//      (signed); minus = kekurangan → red.
+//    - "Rata-Rata Absolute" now on the |qty deviasi| basis (user:
+//      "pakai kuantiti deviasi aja diabsolute").
+//    - "Dir" column REMOVED (user: "ARAH gak perlu ... jika nilai
+//      minus merah") — direction rides on the signed QTY value.
 //
 //  Data source: GET /api/peer-comparison/top-items (PEERTOP-1
 //  backend — queryPeerTopItems). `items` arrives SERVER-SORTED
 //  (peerTopCount desc → target absNominal desc →
 //  peerMaxAbsNominal desc → name asc) — no client-side sorting.
-//  Peer averages are on the ABSOLUTE basis (master-context
-//  terminology: "Rata-Rata Absolute").
 // ============================================================
 
 import { memo, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Loader2, Layers } from 'lucide-react';
-import { fmtIDR } from '@/lib/format';
+import { fmtIDR, fmtNum } from '@/lib/format';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import type { PeerTopItemsResponse } from './types';
 
@@ -31,11 +35,11 @@ export interface TopItemsAcrossPeersProps {
   data: PeerTopItemsResponse | undefined;
   isLoading: boolean;
   error: Error | null;
-  /** Non-target peer count (from the main query's peers[]) — the
-   *  denominator of the "Top di" column. */
+  /** Non-target peer count (from the main query's peers[]) — shown in
+   *  the card subtitle ("N resto setara"). */
   totalPeers: number;
   /** Per-outlet top-N used by the backend (5 — mirrors the query's
-   *  `topN` param). */
+   *  `topN` param; drives the bold/muted nominal styling). */
   topN: number;
 }
 
@@ -46,7 +50,7 @@ export const TopItemsAcrossPeers = memo(function TopItemsAcrossPeers({
   totalPeers,
   topN,
 }: TopItemsAcrossPeersProps) {
-  // code → outletName map for the "Top di" cell tooltip. Peers with ZERO
+  // code → outletName map for the "Top di" cell. Peers with ZERO
   // deviation records have no perPeer entry → fall back to the raw code.
   const nameByCode = useMemo(() => {
     const m = new Map<string, string>();
@@ -62,10 +66,10 @@ export const TopItemsAcrossPeers = memo(function TopItemsAcrossPeers({
             <Layers className="h-3.5 w-3.5" />
           </span>
           Top Items Across Peers
-          <InfoTooltip content="Top item = SUM |nominal deviasi| per item (agregat) di tiap resto dengan sales ±10%. 'Top di' = berapa resto setara yang juga punya item ini di top-nya. Rata-rata peer dihitung ABSOLUTE." />
+          <InfoTooltip content="Top item = SUM |nominal deviasi| per item (agregat) di tiap resto setara (sales ±10%). 'Top di' = nama resto setara yang juga punya item ini di top-nya. 'Ranking' = peringkat resto kamu di antara resto selevel yang mencatat deviasi item ini (urut |nominal deviasi| terbesar). Rata-rata peer dihitung ABSOLUTE dari |kuantiti deviasi|. Angka minus = kekurangan (merah)." />
         </CardTitle>
         <p className="text-[11px] text-muted-foreground ml-9">
-          Top {topN} item di tiap resto setara — masalah bersama vs khusus resto kamu.
+          Top {topN} item di tiap resto setara{totalPeers > 0 ? ` (${totalPeers} resto)` : ''} — masalah bersama vs khusus resto kamu.
         </p>
       </CardHeader>
       <CardContent>
@@ -91,13 +95,18 @@ export const TopItemsAcrossPeers = memo(function TopItemsAcrossPeers({
           <div className="max-h-[500px] overflow-y-auto pr-1">
             <Table>
               <TableHeader>
+                {/* No fixed header height — the long "Ranking Resto di
+                    antara Resto yang Selevel per Item" header wraps to
+                    multiple lines (PEERTOP-R1 user label, verbatim). */}
                 <TableRow className="border-b hover:bg-transparent">
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-7">Item</TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-center">Top di</TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-center">Rank di Target</TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-right">Nominal (Target)</TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-right">Rata-Rata Absolute</TableHead>
-                  <TableHead className="text-xs font-semibold uppercase tracking-wider h-7 text-center">Dir</TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider">Item</TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider min-w-[120px]">Top di</TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider min-w-[130px] leading-snug">
+                    Ranking Resto di antara Resto yang Selevel per Item
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider text-right">Nominal (Target)</TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider text-right">QTY Deviasi</TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider text-right">Rata-Rata Absolute (QTY)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -108,44 +117,45 @@ export const TopItemsAcrossPeers = memo(function TopItemsAcrossPeers({
                   const peerNames = item.peerTopCodes
                     .map((c) => nameByCode.get(c) ?? c)
                     .join(', ');
+                  const qtyDev = item.target?.qtyDeviasi ?? null;
                   return (
                     <TableRow key={item.itemId} className="hover:bg-muted/30 transition-colors">
                       <TableCell className="text-xs py-1.5 font-medium max-w-[220px] truncate" title={item.itemName}>
                         {item.itemName}
                       </TableCell>
+                      {/* PEERTOP-R1: resto NAMES where the item is top
+                          (was "m/n" count). Full list in the tooltip. */}
                       <TableCell
-                        className="text-xs py-1.5 text-center font-mono tabular-nums"
-                        title={peerNames || undefined}
+                        className="text-xs py-1.5 max-w-[200px] truncate"
+                        title={item.peerTopCount === 0 ? 'Item ini hanya top di resto kamu' : peerNames || undefined}
                       >
-                        {item.peerTopCount}/{totalPeers}
+                        {item.peerTopCount === 0 ? '—' : peerNames}
                       </TableCell>
+                      {/* PEERTOP-R1: "#3/9" — peringkat di antara resto
+                          selevel yang mencatat deviasi item ini. */}
                       <TableCell className="text-xs py-1.5 text-center font-mono tabular-nums">
                         {item.target == null ? (
-                          <span title="Tidak ada di resto kamu">—</span>
-                        ) : item.target.rank <= topN ? (
-                          <span title={`#${item.target.rank} di resto kamu`}>#{item.target.rank}</span>
+                          <span title="Tidak ada di resto kamu (blind spot)">—</span>
                         ) : (
-                          <span className="text-muted-foreground" title="Di luar top-N resto kamu">
-                            &gt; {topN}
+                          <span title={`Peringkat resto kamu di antara ${item.target.itemOutletCount} resto selevel yang mencatat deviasi item ini (urut |nominal deviasi| terbesar)`}>
+                            #{item.target.itemRank}/{item.target.itemOutletCount}
                           </span>
                         )}
                       </TableCell>
                       <TableCell className={`text-xs py-1.5 text-right font-mono tabular-nums ${inTargetTop ? 'font-semibold' : 'text-muted-foreground'}`}>
                         {item.target == null ? '—' : fmtIDR(item.target.absNominal)}
                       </TableCell>
-                      <TableCell className="text-xs py-1.5 text-right font-mono tabular-nums">
-                        {item.peerTopCount === 0 ? '—' : fmtIDR(item.peerAvgAbsNominal)}
-                      </TableCell>
+                      {/* PEERTOP-R1: kuantiti deviasi NILAI ASLI (signed) —
+                          replaces the Arah column; minus = kekurangan → red. */}
                       <TableCell
-                        className={`text-xs py-1.5 text-center font-bold ${
-                          item.target?.direction === 'LOSS'
-                            ? 'text-red-600 dark:text-red-400'
-                            : item.target?.direction === 'SURPLUS'
-                              ? 'text-emerald-600 dark:text-emerald-400'
-                              : 'text-muted-foreground'
+                        className={`text-xs py-1.5 text-right font-mono tabular-nums ${
+                          qtyDev != null && qtyDev < 0 ? 'text-red-600 dark:text-red-400' : ''
                         }`}
                       >
-                        {item.target?.direction?.[0] || '—'}
+                        {qtyDev == null ? '—' : fmtNum(qtyDev)}
+                      </TableCell>
+                      <TableCell className="text-xs py-1.5 text-right font-mono tabular-nums">
+                        {item.peerTopCount === 0 ? '—' : fmtNum(item.peerAvgAbsQty)}
                       </TableCell>
                     </TableRow>
                   );
@@ -155,7 +165,7 @@ export const TopItemsAcrossPeers = memo(function TopItemsAcrossPeers({
           </div>
         )}
         <p className="text-[11px] text-muted-foreground mt-3 pt-3 border-t">
-          💡 Baris atas = item yang jadi top deviasi di banyak resto setara (kemungkinan masalah sistemik — cek BOM/resep). &apos;—&apos; = item tidak ada di resto kamu (blind spot).
+          💡 Baris atas = item yang jadi top deviasi di banyak resto setara (kemungkinan masalah sistemik — cek BOM/resep). &apos;—&apos; = item tidak ada di resto kamu (blind spot). Angka <span className="text-red-600 dark:text-red-400 font-medium">minus</span> pada QTY Deviasi = sisi kekurangan.
         </p>
       </CardContent>
     </Card>
