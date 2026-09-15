@@ -40667,3 +40667,25 @@ Stage Summary:
 - Semua header yang merefer target kini memakai NAMA outlet (PDF 8.1/8.2/8.3 + FE card + items-table); "Top di" = top-3 resto by |nominal| dgn nama target ikut bila masuk; judul 8.3 = kata user verbatim.
 - Bug pre-existing SUBHEAD-FIT (subhead meluber halaman) diperbaiki di akar + dipersingkat teks 8.1.
 - Cache versioning lengkap semua lapis (sv route+fetcher, rv CDN, deploy-SHA DB) — tidak ada kemungkinan PDF stale.
+
+---
+Task ID: PEERTOP-R3
+Agent: Main (Z.ai Code)
+Task: Bug fix ranking — user: "ada bug di rangking. misal resto target 11/11 tapi juga muncul di top di" (target ranked #11/11 still appeared in the "Top di" column of Peer tab card + PDF 8.3)
+
+Work Log:
+- Root cause (src/lib/queries/outlets/peer-top-items.ts): "Top di" candidates were the item's top-N PEER carriers + the TARGET added UNCONDITIONALLY, while the "Rangking" cell ranks the target among ALL band outlets recording the item (RANK() by SUM(absNominal) DESC). With few carriers the tiny candidate pool let a #11/11 target leak into the top-3; conversely, outlets that were top-3 FOR THE ITEM but outside their own top-N were missed entirely. Two different bases → the columns could contradict each other.
+- Fix — one basis everywhere: SQL WHERE now `po."isTarget" OR oia."rn" <= topN OR oia."itemRank" <= 3` (peers that are top-3 for the item across the band are returned even when the item sits outside their own top-N); JS grouping collects per-item candidates from rows with itemRank <= 3 into top3Map, sorts (itemRank asc, name asc), takes max 3; target's name appears EXACTLY when its itemRank <= 3. Tie edge: 4+ outlets tied into the top 3 → tie-break trims target → swap-in keeps it (user rule: "jika resto target termasuk masukan juga"). The existing `rank <= topN` guards keep the extra rows OUT of perPeer/peerTopCount/averages (no pollution).
+- Removed dead code: peerCarriers accumulator + targetOutletName capture (only the old topDiNames used them).
+- Cache version bumps (STALE-PDF incident class): q-peer-topitems sv 3→4 (data-fetcher/peer.ts), top-items route sv 2→3, export-report rv 9→10 BOTH sides (route.ts + useDashboardActions.ts) + PEERTOP-R3 entry in pdf-builder.ts changelog.
+- Doc comments updated: peer-top-items.ts header/interface, export types.ts, FE types.ts, sections/peer.ts column notes, top-items-card.tsx header. FE rendering unchanged (topDiNames is server pre-computed).
+- Gates: bunx tsc --noEmit 0 errors; bun run lint 0 errors / 377 warnings (baseline); bunx vitest run 512/512.
+- Runtime verification (mock harness, .tmp-render/, deleted-after-use pattern; production DB credentials not stored this session — same as PEERTOP-R2 session):
+  * .tmp-render/r3-query.test.ts (bun test, mock @/lib/db → canned rows replicating the exact bug conditions): 8/8 PASS — #11/11 target NOT in Top di (was: appeared); PTWO/PTHREE (top-3 for item, non-carriers) now shown; peerTopCount/peerAvgAbsQty/perPeer unpolluted; #2/9 target IS shown (order PONE, KWGGAL, PNINE); target-only item Top di = [KWGGAL] (#1/1, consistent); 4-way rank-1 tie → swap-in keeps target, max 3 names; GLOBAL INVARIANT topDiNames ∋ target ⟺ itemRank ≤ 3 holds on every union row.
+  * .tmp-render/r3-pdf.mts (drawPeerSection + pdftotext -layout): 19/19 PASS — subhead "8.3 Item di Resto lain (yang setara penjualan KWGGAL)…", headers RANGKING/NOMINAL/QTY DEVIASI (KWGGAL); SOSIS AYAM block (#11/11) contains PONE, PTWO, PTHREE and NO "KWGGAL"; BAKING FOIL (#2/9) contains KWGGAL; KOPI BUBUK (#1/1) Top di = KWGGAL; TEH MELATI (#1/4) = ALPHA, BBETA, KWGGAL (CCHARL trimmed).
+- Committed + pushed to main via PAT.
+
+Stage Summary:
+- "Top di" and "Rangking" now share ONE ranking basis (itemRank ≤ 3 among ALL band outlets recording the item) — they can never contradict: target name in "Top di" ⟺ its itemRank ≤ 3. Bonus fix: genuine top-3 outlets outside their own top-N are no longer missed.
+- Changed files: peer-top-items.ts (core), top-items/route.ts (sv), data-fetcher/peer.ts (sv), export-report/route.ts (rv), useDashboardActions.ts (rv), pdf-builder.ts (changelog), sections/peer.ts + types.ts ×2 + top-items-card.tsx (docs only).
+- FE card + PDF section rendering code unchanged — both consume the server-pre-computed topDiNames.

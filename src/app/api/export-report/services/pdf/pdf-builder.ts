@@ -214,6 +214,19 @@
 //  the route's cache key so EVERY deploy forks a fresh cache namespace —
 //  a forgotten rv bump can never again serve a pre-deploy PDF.
 //
+//  PEERTOP-R3 (user: "ada bug di rangking. misal resto target 11/11
+//  tapi juga muncul di top di"): 8.3's "Top di" cell values change —
+//  the candidate basis moved from "the item's top-N peer carriers +
+//  the target unconditionally" (a pool so small the target landed in
+//  the top-3 even at rank #11/11) to the SAME RANK() basis as the
+//  "Rangking <nama>" column: the outlets with itemRank <= 3 by
+//  SUM(absNominal) DESC among ALL band outlets recording the item.
+//  The target's name now appears exactly when its itemRank <= 3, so
+//  "Top di" and "Rangking" can never contradict each other. Query:
+//  peer-top-items.ts (SQL WHERE + JS grouping); rendering unchanged
+//  (topDiNames arrives pre-computed). rv 9 → 10 both sides + sv bumps
+//  (q-peer-topitems 3→4, top-items route 2→3).
+//
 //  Section map (FIXED numbers — stable across ?sections= selections;
 //  keep in sync with EXPORT_SECTION_KEYS in validation.ts + the
 //  SECTIONS list in ExportDialog.tsx):

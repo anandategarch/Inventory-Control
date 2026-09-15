@@ -79,13 +79,18 @@ export async function GET(req: NextRequest) {
     // change — sv:2 flushes any stale pre-R2/pre-R1 row the unbounded SWR
     // store would otherwise keep serving under the unchanged key (same
     // stale-PDF incident class as export-report's rv).
+    // PEERTOP-R3 (user: "ada bug di rangking. misal resto target 11/11
+    // tapi juga muncul di top di"): topDiNames basis CHANGED — kini
+    // RANK() yang sama dengan kolom Rangking (outlet itemRank ≤ 3 di
+    // antara SEMUA outlet yang mencatat item; target muncul persis
+    // ketika itemRank ≤ 3). sv 2 → 3 flushes the stale pre-R3 rows.
     const cacheKey = buildCacheKey({
       route: 'peer-comparison-top-items',
       month,
       week,
       outletCode,
       kelompok: kelompokParam,
-      extra: { mode, topN, limit, sv: 2 },
+      extra: { mode, topN, limit, sv: 3 },
     });
 
     type PeerTopItemsData = Awaited<ReturnType<typeof queryPeerTopItems>>;

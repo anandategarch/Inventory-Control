@@ -126,9 +126,15 @@ export async function fetchPeerComparison(ctx: FetcherContext): Promise<PeerComp
         // → topDiNames: "Top di" kini TOP-3 nama resto by |nominal|,
         // target ikut bila masuk — user: "TOP DI ini isi top 3 aja
         // resto aja dan jika resto target termasuk masukan juga").
+        // PEERTOP-R3 (user: "ada bug di rangking. misal resto target
+        // 11/11 tapi juga muncul di top di"): topDiNames basis CHANGED
+        // — kini RANK() yang sama dengan kolom Rangking (itemRank ≤ 3
+        // di antara SEMUA outlet yang mencatat item; target muncul
+        // persis ketika itemRank ≤ 3). sv 3 → 4 flushes stale pre-R3
+        // rows under the unchanged key.
         const topRes = await cachedSharedQuery(
           'q-peer-topitems',
-          { month, week, filters: filterOpts, extra: { target: targetCode, topN: 5, limit: 10, sv: 3 } },
+          { month, week, filters: filterOpts, extra: { target: targetCode, topN: 5, limit: 10, sv: 4 } },
           () => queryPeerTopItems(targetCode as string, month, week, 'week', 5, 10, kelompokParam),
         );
         // 8.3 — cross-peer union, capped at 10 rows; rendered in the

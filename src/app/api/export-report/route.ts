@@ -174,7 +174,14 @@ export async function GET(req: NextRequest) {
         // (KWGGAL)" — user: "Ganti istilah target jadi nama resto target itu
         // sendiri"); "Top di" shows the TOP-3 resto names by |nominal|
         // (target included when it ranks among them). rv 8 → 9, both sides.
-        rv: '9',
+        // PEERTOP-R3 (user: "ada bug di rangking. misal resto target 11/11
+        // tapi juga muncul di top di"): "Top di" kini basis RANK() yang
+        // SAMA dengan kolom "Rangking" (outlet dengan itemRank ≤ 3 di
+        // antara SEMUA outlet yang mencatat item) — nama target muncul
+        // persis ketika itemRank ≤ 3, jadi kedua kolom tak mungkin
+        // kontradiksi. rv 9 → 10, both sides (+ sv pada q-peer-topitems /
+        // top-items route).
+        rv: '10',
         // FIX (STALE-PDF, systematic hardening — same incident as the missing
         // PEERTOP rv bump): the SWR store serves EXPIRED rows unbounded (see
         // swr.ts 3b), so a forgotten `rv` bump means a pre-deploy PDF can be

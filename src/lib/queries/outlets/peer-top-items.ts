@@ -22,10 +22,15 @@
 //               peerTopCount (how many non-target peers carry the
 //               item in THEIR top-N), topDiNames (PEERTOP-R2 user:
 //               "TOP DI ini isi top 3 aja resto aja dan jika resto
-//               target termasuk masukan juga" — the TOP-3 outlet
-//               NAMES by SUM(absNominal) DESC among the item's
-//               top-N carriers + the target's own row when it
-//               records the item), peer averages on the ABSOLUTE
+//               target termasuk masukan juga" — PEERTOP-R3 (user:
+//               "ada bug di rangking. misal resto target 11/11 tapi
+//               juga muncul di top di"): the TOP-3 outlet names on
+//               the SAME RANK() basis as the "Rangking" cell — the
+//               outlets whose itemRank <= 3 by SUM(absNominal) DESC
+//               among ALL band outlets recording the item; the
+//               target's name appears exactly when its itemRank
+//               <= 3, so the two columns can never contradict each
+//               other), peer averages on the ABSOLUTE
 //               basis (PEERTOP-R1 user: "rata-rata absolute pakai
 //               kuantiti deviasi aja diabsolute" → |qtyDeviasi|),
 //               and the target's own row (qtyDeviasi = SIGNED raw
@@ -76,11 +81,18 @@ export interface PeerTopItemUnionRow {
   /** Those peers' outlet codes (FE maps codes → names via perPeer). */
   peerTopCodes: string[];
   /** PEERTOP-R2 (user: "TOP DI ini isi top 3 aja resto aja dan jika resto
-   *  target termasuk masukan juga"): the "Top di" display — the TOP-3
-   *  outlet NAMES by SUM(absNominal) DESC among the item's top-N peer
-   *  carriers PLUS the target's own row (any rank) when it records the
-   *  item, so the target's name appears exactly when it ranks among the
-   *  top 3. Ties broken by name asc for determinism. */
+   *  target termasuk masukan juga"): the "Top di" display. PEERTOP-R3
+   *  (user: "ada bug di rangking. misal resto target 11/11 tapi juga
+   *  muncul di top di"): the TOP-3 outlet NAMES on the SAME basis as
+   *  the "Rangking" cell — the outlets whose itemRank <= 3 by
+   *  SUM(absNominal) DESC among ALL band outlets recording the item
+   *  (NOT the old top-N-carriers pool, which added the target
+   *  unconditionally and missed top-3 outlets outside their own
+   *  top-N). The target's name appears exactly when its itemRank
+   *  <= 3. Ties (RANK shares) broken by name asc; if 4+ outlets tie
+   *  into the top 3 and the tie-break trims the target, the target
+   *  still takes a slot (user: "jika resto target termasuk masukan
+   *  juga"). */
   topDiNames: string[];
   /** Rata-rata |kuantiti deviasi| across those peers — PEERTOP-R1 user:
    *  "RATA-RATA ABSOLUTE RESTO SETARA ... pakai kuantiti deviasi aja
@@ -296,8 +308,14 @@ export async function queryPeerTopItems(
     JOIN outlet_item_aggs oia ON oia."outletId" = po."outletId"
     -- Target contributes its FULL item list (any rank) so the union table
     -- can show "di luar top-N" / detect blind spots; peers contribute
-    -- only their top-N rows.
-    WHERE po."isTarget" OR oia."rn" <= ${topN}
+    -- only their top-N rows. PEERTOP-R3: peers that are TOP-3 FOR THE
+    -- ITEM across the band (itemRank <= 3) are ALSO returned even when
+    -- the item sits outside their own top-N — "Top di" must rank outlets
+    -- on the same RANK() basis as the "Rangking" column (the old pool
+    -- (top-N carriers only) let a #11/11 target leak into "Top di" and
+    -- missed genuine top-3 outlets). The JS grouping's rank <= topN
+    -- guards keep these extra rows OUT of perPeer/peerTopCount/averages.
+    WHERE po."isTarget" OR oia."rn" <= ${topN} OR oia."itemRank" <= 3
     ORDER BY po."outletCode", oia."rn"
   `);
 
@@ -306,9 +324,14 @@ export async function queryPeerTopItems(
   const perPeerMap = new Map<string, PeerTopItemsPerOutlet>();
   // Target's full item index (any rank) — for union target info.
   const targetRows = new Map<number, NonNullable<PeerTopItemUnionRow['target']>>();
-  // PEERTOP-R2: the target outlet's NAME (from any target row — the
-  // band CTE always names the target; captured for topDiNames).
-  let targetOutletName: string | null = null;
+  // PEERTOP-R3: per-item "Top di" candidates — every band outlet whose
+  // itemRank <= 3, collected from ALL rows (target + top-N carriers +
+  // the new itemRank <= 3 rows). Same RANK() basis as the "Rangking"
+  // cell → the two columns can never contradict each other (bug: a
+  // #11/11 target used to appear in "Top di" because the old candidate
+  // pool added the target unconditionally over a top-N-carriers-only
+  // base).
+  const top3Map = new Map<number, Array<{ name: string; itemRank: number; isTarget: boolean }>>();
   // Union accumulator over rn <= topN rows.
   const unionMap = new Map<number, {
     itemId: number;
@@ -318,9 +341,6 @@ export async function queryPeerTopItems(
     peerDevBomSum: number;
     peerMaxAbsNominal: number;
     peerTopCodes: string[];
-    // PEERTOP-R2: per-item peer top-N carriers with the fields the
-    // topDiNames computation needs (name + magnitude).
-    peerCarriers: Array<{ name: string; absNominal: number }>;
     targetTop: NonNullable<PeerTopItemUnionRow['target']> | null;
   }>();
 
@@ -341,7 +361,19 @@ export async function queryPeerTopItems(
       if (!targetRows.has(itemId)) {
         targetRows.set(itemId, { rank, absNominal, devBom, qtyDeviasi, itemRank, itemOutletCount });
       }
-      if (targetOutletName == null) targetOutletName = r.outletName;
+    }
+
+    // PEERTOP-R3: "Top di" candidate collection — EVERY row (target or
+    // peer, top-N carrier or itemRank-driven) whose itemRank <= 3. Runs
+    // BEFORE the `rank <= topN` guards below so the itemRank <= 3 rows
+    // the SQL now returns are captured too.
+    if (itemRank >= 1 && itemRank <= 3) {
+      let cands = top3Map.get(itemId);
+      if (!cands) {
+        cands = [];
+        top3Map.set(itemId, cands);
+      }
+      cands.push({ name: r.outletName, itemRank, isTarget });
     }
 
     if (rank <= topN) {
@@ -365,7 +397,6 @@ export async function queryPeerTopItems(
           peerDevBomSum: 0,
           peerMaxAbsNominal: 0,
           peerTopCodes: [],
-          peerCarriers: [],
           targetTop: null,
         };
         unionMap.set(itemId, u);
@@ -378,8 +409,6 @@ export async function queryPeerTopItems(
         u.peerDevBomSum += devBom;
         u.peerMaxAbsNominal = Math.max(u.peerMaxAbsNominal, absNominal);
         u.peerTopCodes.push(r.outletCode);
-        // PEERTOP-R2: carrier kept with name + magnitude for topDiNames.
-        u.peerCarriers.push({ name: r.outletName, absNominal });
       }
     }
   }
@@ -388,26 +417,34 @@ export async function queryPeerTopItems(
     const n = u.peerTopCodes.length;
     // ABSOLUTE-basis averages ("Rata-Rata Absolute" label downstream) —
     // PEERTOP-R1: |kuantiti deviasi| basis (user request).
-    // PEERTOP-R2: "Top di" display — top-3 outlet NAMES by |nominal|
-    // DESC. Candidates = the item's top-N peer carriers + the target's
-    // own row for the item (ANY rank — targetRows holds the full index,
-    // so the target still competes even when the item sits outside its
-    // own top-N). The target's name appears exactly when it ranks among
-    // the top 3 (user: "jika resto target termasuk masukan juga"); ties
-    // broken by name asc so the output is deterministic.
-    const targetInfo = u.targetTop ?? targetRows.get(u.itemId) ?? null;
-    const candidates = [...u.peerCarriers];
-    if (targetInfo && targetOutletName != null) {
-      candidates.push({ name: targetOutletName, absNominal: targetInfo.absNominal });
+    // PEERTOP-R3 (user: "ada bug di rangking. misal resto target 11/11
+    // tapi juga muncul di top di"): "Top di" = the top-3 outlet names
+    // on the SAME itemRank basis as the "Rangking" cell — the outlets
+    // with itemRank <= 3 by SUM(absNominal) DESC among ALL band outlets
+    // recording the item. The OLD pool (the item's top-N peer carriers
+    // + the target added unconditionally) was a DIFFERENT basis: with
+    // few carriers the target landed in "Top di" even at #11/11, and
+    // outlets that were top-3 FOR THE ITEM but outside their own top-N
+    // were missed entirely. Now the target's name appears exactly when
+    // its itemRank <= 3 (user: "jika resto target termasuk masukan
+    // juga"); ties (RANK shares) broken by name asc; if 4+ outlets tie
+    // into the top 3 and the tie-break trims the TARGET, the target
+    // still takes the last slot.
+    const cands = (top3Map.get(u.itemId) ?? []).slice()
+      .sort((a, b) => a.itemRank - b.itemRank || a.name.localeCompare(b.name));
+    let topDiNames = cands.slice(0, 3).map((c) => c.name);
+    const tIdx = cands.findIndex((c) => c.isTarget);
+    if (tIdx > 2) {
+      topDiNames = [...topDiNames.slice(0, 2), cands[tIdx].name];
     }
-    candidates.sort((a, b) => (b.absNominal - a.absNominal) || a.name.localeCompare(b.name));
+    const targetInfo = u.targetTop ?? targetRows.get(u.itemId) ?? null;
     return {
       itemId: u.itemId,
       itemName: u.itemName,
       satuan: u.satuan,
       peerTopCount: n,
       peerTopCodes: u.peerTopCodes,
-      topDiNames: candidates.slice(0, 3).map((c) => c.name),
+      topDiNames,
       peerAvgAbsQty: n > 0 ? u.peerAbsQtySum / n : 0,
       peerAvgDevBom: n > 0 ? u.peerDevBomSum / n : 0,
       peerMaxAbsNominal: u.peerMaxAbsNominal,

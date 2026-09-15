@@ -29,6 +29,13 @@
 //      termasuk masukan juga" → the cell shows the TOP-3 resto names
 //      by |nominal deviasi| of the item, target included exactly when
 //      it ranks among the top 3 (topDiNames — server pre-computed).
+//  PEERTOP-R3 (user: "ada bug di rangking. misal resto target 11/11
+//  tapi juga muncul di top di"): topDiNames is now computed on the
+//  SAME RANK() basis as the "Rangking" cell (itemRank <= 3 among ALL
+//  band outlets recording the item) — the target's name shows exactly
+//  when its itemRank <= 3, so "Top di" and "Rangking" can never
+//  contradict each other. Server-side fix only (peer-top-items.ts);
+//  this card's rendering is unchanged.
 //
 //  Data source: GET /api/peer-comparison/top-items (PEERTOP-1
 //  backend — queryPeerTopItems). `items` arrives SERVER-SORTED

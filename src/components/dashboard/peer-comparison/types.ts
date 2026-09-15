@@ -82,9 +82,14 @@ export interface PeerTopItemsResponse {
     peerTopCodes: string[];
     /** PEERTOP-R2 (user: "TOP DI ini isi top 3 aja resto aja dan jika
      *  resto target termasuk masukan juga"): "Top di" display — the
-     *  TOP-3 resto NAMES by |nominal deviasi| DESC for this item (peer
-     *  top-N carriers + the target's own row when it records the item;
-     *  the target's name appears exactly when it ranks among the top 3). */
+     *  TOP-3 resto NAMES for this item. PEERTOP-R3 (user: "ada bug di
+     *  rangking. misal resto target 11/11 tapi juga muncul di top di"):
+     *  the basis is now the SAME RANK() as the "Rangking" cell — the
+     *  outlets whose itemRank <= 3 by SUM(|nominal deviasi|) DESC among
+     *  ALL band outlets recording the item (was: peer top-N carriers +
+     *  the target unconditionally — let a #11/11 target leak into the
+     *  top-3); the target's name appears exactly when its itemRank
+     *  <= 3. */
     topDiNames: string[];
     /** Rata-rata |kuantiti deviasi| across those peers — PEERTOP-R1:
      *  "Rata-Rata Absolute" kini berbasis |qty deviasi| (user request),

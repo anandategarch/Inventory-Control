@@ -241,10 +241,15 @@ export interface PeerTopItemRow {
   peerTopCount: number;
   /** PEERTOP-R2 (user: "TOP DI ini isi top 3 aja resto aja dan jika
    *  resto target termasuk masukan juga"): "Top di" display — the
-   *  TOP-3 resto NAMES by SUM(|nominal deviasi|) DESC for this item
-   *  (the item's top-N peer carriers + the target's own row when it
-   *  records the item — the target's name appears exactly when it
-   *  ranks among the top 3). Replaces peerTopNames (all carriers). */
+   *  TOP-3 resto NAMES for this item. PEERTOP-R3 (user: "ada bug di
+   *  rangking. misal resto target 11/11 tapi juga muncul di top di"):
+   *  the basis is now the SAME RANK() as the "Rangking" column — the
+   *  outlets whose itemRank <= 3 by SUM(|nominal deviasi|) DESC among
+   *  ALL band outlets recording the item (was: the item's top-N peer
+   *  carriers + the target unconditionally — a pool so small the
+   *  target leaked into the top-3 even at rank #11/11); the target's
+   *  name appears exactly when its itemRank <= 3. Replaces
+   *  peerTopNames (all carriers). */
   topDiNames: string[];
   /** PEERTOP-R1: rata-rata |kuantiti deviasi| across those restos
    *  ("Rata-rata Absolute" — user: "pakai kuantiti deviasi aja

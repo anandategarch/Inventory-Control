@@ -132,6 +132,12 @@ export function drawPeerSection(env: SectionEnv): void {
   //     juga"); the cell text WRAPS (left-aligned col → pdf-primitives
   //     isWrap); '—' = top nowhere in the band (defensive — cannot happen
   //     with union rows).
+  //     PEERTOP-R3 (user: "ada bug di rangking. misal resto target 11/11
+  //     tapi juga muncul di top di"): topDiNames now arrives on the SAME
+  //     RANK() basis as the "Rangking" column (itemRank <= 3 among ALL
+  //     band outlets recording the item) — the target's name shows
+  //     exactly when its itemRank <= 3, so "Top di" can never contradict
+  //     "Rangking" (values are server pre-computed; rendering unchanged).
   //   - "Rangking <nama>": #peringkat/total — the user's replacement for
   //     the old long header (user: "RANKING RESTO DI ANTARA RESTO YANG
   //     SELEVEL PER ITEM ganti jadi Rangking (Nama Resto Langsung)").
@@ -158,6 +164,10 @@ export function drawPeerSection(env: SectionEnv): void {
         // PEERTOP-R2: top-3 resto names by |nominal| of THIS item — the
         // target's own name appears when it ranks among the top 3 (the
         // query pre-computes the list; ties broken deterministically).
+        // PEERTOP-R3: the list is computed on the SAME itemRank basis as
+        // the "Rangking" cell (itemRank <= 3 among ALL band outlets
+        // recording the item) — the two columns can never contradict
+        // (bug fix: a #11/11 target used to appear here).
         it.topDiNames.length > 0 ? it.topDiNames.join(', ') : '\u2014',
         it.target == null ? '\u2014' : `#${it.target.itemRank}/${it.target.itemOutletCount}`,
         fmtIDR(it.target?.absNominal),

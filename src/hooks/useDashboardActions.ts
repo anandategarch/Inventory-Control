@@ -154,7 +154,11 @@ export function useDashboardActions({
       // penjualan <nama resto>) jika dilihat dari TOP Item nya"; headers
       // pakai NAMA resto (Rangking/Nominal/QTY Deviasi (KWGGAL), 8.2 juga);
       // "Top di" = top-3 resto by |nominal|, target ikut bila termasuk.
-      params.set('rv', '9');
+      // PEERTOP-R3: rv 10 — bug fix "Top di" (user: "misal resto target
+      // 11/11 tapi juga muncul di top di"): basis kini RANK() yang sama
+      // dengan kolom Rangking — target muncul di Top di persis ketika
+      // itemRank ≤ 3.
+      params.set('rv', '10');
 
       // FIX (BUG-3-b A3): AbortController + 120s timeout — a hung export no
       // longer spins forever; the fetch is aborted and the user gets a
