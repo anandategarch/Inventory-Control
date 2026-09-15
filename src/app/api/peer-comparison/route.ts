@@ -41,7 +41,12 @@ export async function GET(req: NextRequest) {
     let outletCode = url.searchParams.get('outletCode');
     let month = url.searchParams.get('month');
     const week = url.searchParams.get('week');
-    const mode = (url.searchParams.get('mode') || 'week') as 'week' | 'month';
+    // FIX (BUG-H cross-domain): normalize mode instead of a lying cast —
+    // `as 'week' | 'month'` let any other value (e.g. mode=foo) flow into
+    // the query + cache key `extra: { mode }`, creating a bogus 5-min cache
+    // entry that behaves as week mode. Unknown values now fall back to
+    // 'week' (same default as the missing-param case).
+    const mode: 'week' | 'month' = url.searchParams.get('mode') === 'month' ? 'month' : 'week';
     // FIX API2-1: cap limit to prevent abuse + NaN guard
     const limit = Math.min(Math.max(1, parseInt(url.searchParams.get('limit') || '10', 10) || 10), 100);
     // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok scopes the PEER set only —

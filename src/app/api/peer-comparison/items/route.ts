@@ -53,8 +53,16 @@ export async function GET(req: NextRequest) {
     let outletCode = url.searchParams.get('outletCode');
     let month = url.searchParams.get('month');
     const week = url.searchParams.get('week');
-    const mode = (url.searchParams.get('mode') || 'week') as 'week' | 'month';
-    const topItems = Math.min(parseInt(url.searchParams.get('topItems') || '5', 10) || 5, 20);
+    // FIX (BUG-H cross-domain): normalize mode instead of a lying cast — see
+    // /api/peer-comparison route.ts (bogus values must not reach the cache key).
+    const mode: 'week' | 'month' = url.searchParams.get('mode') === 'month' ? 'month' : 'week';
+    // FIX (BUG-H): add the missing Math.max(1, ...) lower bound (the sibling
+    // /api/peer-comparison route clamps its `limit` the same way). `|| 5` only
+    // guards NaN/0 — a negative value (?topItems=-5) slipped through
+    // Math.min(-5, 20) = -5 into queryPeerComparisonItems' `LIMIT ${topItems}`,
+    // where PostgreSQL rejects "LIMIT must not be negative" → 500 instead of
+    // clamping to a sane value.
+    const topItems = Math.min(Math.max(1, parseInt(url.searchParams.get('topItems') || '5', 10) || 5), 20);
     // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok scopes the PEER set only —
     // the focus outlet's top-items CTE is queried by outletCode regardless.
     const kelompok = url.searchParams.get('kelompok');

@@ -290,6 +290,24 @@ export async function validateAndResolve(req: NextRequest): Promise<ValidateAndR
     }
     if (inflightResult && typeof inflightResult === 'object' && 'success' in inflightResult) {
       const r = inflightResult as Record<string, unknown>;
+      // FIX (BUG-H): the ONLY object (non-RawCacheHit) resolution of the
+      // in-flight Promise is route.ts's empty-data short-circuit — the 404
+      // "No records found" payload. Concurrent awaiters used to serve it as
+      // HTTP 200 + cached:true, which (a) diverges from the direct 404 the
+      // first requester gets and (b) makes fetchAnalysis treat the body as a
+      // VALID AnalysisData (200 + JSON passes its guards) → the dashboard
+      // renders a malformed payload and ExecutiveStatus dereferences
+      // data.executiveSummary → TypeError. Serve the SAME 404 (status + body)
+      // the direct path returns. Fresh copy — do NOT mutate the payload the
+      // first requester is still serializing into its own 404 response.
+      if (r.success === false) {
+        return {
+          kind: 'response',
+          // No CACHE_ANALYSIS headers — matches the direct 404 in route.ts
+          // (a CDN must not pin a "no data" answer for 5 min after an upload).
+          response: NextResponse.json({ ...r }, { status: 404 }),
+        };
+      }
       r.cached = true;
       r.durationMs = Date.now() - startedAt;
       return { kind: 'response', response: NextResponse.json(r, { headers: CACHE_ANALYSIS }) };
