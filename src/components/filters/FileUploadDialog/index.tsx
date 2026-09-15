@@ -17,6 +17,7 @@
 //  /api/ingest-process request/response contract unchanged.
 // ============================================================
 
+import type { Dispatch } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Upload, AlertCircle, Loader2, ArrowRight, XCircle } from 'lucide-react';
@@ -29,7 +30,9 @@ import { ImportResultSummary } from './ImportResultSummary';
 
 interface FileUploadDialogProps {
   open: boolean;
-  onOpenChange: (open: boolean) => void;
+  // (Dispatch<boolean> = (value: boolean) => void, spelled without a param
+  //  name — the repo's base no-unused-vars rule flags type-position params.)
+  onOpenChange: Dispatch<boolean>;
 }
 
 export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) {

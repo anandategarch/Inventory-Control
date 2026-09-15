@@ -84,6 +84,12 @@ export function useLensData({ lens, data, outletCode, monthLabel, currentWeek, k
       const res = await fetch(`/api/benchmark-opportunity?${p.toString()}`);
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) throw new Error('Server error');
+      // FIX (BUG-H cross-domain): JSON error bodies (429/5xx) must throw,
+      // not become query data — see use-peer-queries main query.
+      if (!res.ok) {
+        const e = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(e?.error || `HTTP ${res.status}`);
+      }
       return res.json() as Promise<BenchmarkOpportunityResponse>;
     },
     enabled: isPeluang && Boolean(monthLabel && currentWeek),
@@ -112,6 +118,12 @@ export function useLensData({ lens, data, outletCode, monthLabel, currentWeek, k
       const res = await fetch(`/api/change-analysis?${p.toString()}`);
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) throw new Error('Server error');
+      // FIX (BUG-H cross-domain): JSON error bodies (429/5xx) must throw,
+      // not become query data — see use-peer-queries main query.
+      if (!res.ok) {
+        const e = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(e?.error || `HTTP ${res.status}`);
+      }
       return res.json() as Promise<ChangeAnalysisResponse>;
     },
     enabled: isPerubahan && Boolean(monthLabel && currentWeek),

@@ -129,6 +129,18 @@ export function useRecommendations(
       const res = await fetch(`/api/recommendations?${p.toString()}`);
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) throw new Error('Server error');
+      // FIX (BUG-H): check res.ok — a 429/5xx from this route is a JSON body
+      // ({success:false, error}) with content-type application/json, so the
+      // content-type guard above passes and the error body used to be returned
+      // as query DATA (error swallowed): consumers fell back to empty/zero
+      // lists instead of their error states (OutletPriorityPanel reads
+      // `error`, which was never set). Every sibling hook (useAnalysis /
+      // useStatus / useDrilldown / useItemTrend / usePriceEffect) checks
+      // res.ok — this was the only one that didn't.
+      if (!res.ok) {
+        const e = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(e?.error || `HTTP ${res.status}`);
+      }
       return res.json();
     },
     enabled: (options?.enabled ?? true) && Boolean(scope.monthLabel && scope.currentWeek),

@@ -70,6 +70,15 @@ export function usePeerQueries({ activeOutlet, monthLabel, currentWeek, kelompok
       const res = await fetch(`/api/peer-comparison?${p.toString()}`);
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) throw new Error('Server error');
+      // FIX (BUG-H cross-domain): these routes return JSON {success:false,
+      // error} bodies on 429/4xx/5xx, so the content-type guard above passes
+      // and the error payload used to be returned as query DATA (error
+      // swallowed — error state never set). Same fix as useRecommendations /
+      // useItemTrend: throw on !res.ok so TanStack surfaces the error state.
+      if (!res.ok) {
+        const e = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(e?.error || `HTTP ${res.status}`);
+      }
       return res.json();
     },
     enabled: Boolean(activeOutlet && monthLabel && currentWeek),
@@ -110,6 +119,12 @@ export function usePeerQueries({ activeOutlet, monthLabel, currentWeek, kelompok
       const res = await fetch(`/api/peer-comparison/items?${p.toString()}`);
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) throw new Error('Server error');
+      // FIX (BUG-H cross-domain): see main query — JSON error body must not
+      // become query data.
+      if (!res.ok) {
+        const e = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(e?.error || `HTTP ${res.status}`);
+      }
       return res.json() as Promise<ItemComparisonResponse>;
     },
     enabled: Boolean(activeOutlet && monthLabel && currentWeek),
@@ -136,6 +151,12 @@ export function usePeerQueries({ activeOutlet, monthLabel, currentWeek, kelompok
       const res = await fetch(`/api/peer-comparison/trend?${p.toString()}`);
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) throw new Error('Server error');
+      // FIX (BUG-H cross-domain): see main query — JSON error body must not
+      // become query data.
+      if (!res.ok) {
+        const e = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(e?.error || `HTTP ${res.status}`);
+      }
       return res.json() as Promise<TrendResponse>;
     },
     enabled: Boolean(activeOutlet && monthLabel && peerCodes.length > 0),
@@ -165,6 +186,12 @@ export function usePeerQueries({ activeOutlet, monthLabel, currentWeek, kelompok
       const res = await fetch(`/api/benchmark-opportunity?${p.toString()}`);
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('application/json')) throw new Error('Server error');
+      // FIX (BUG-H cross-domain): see main query — JSON error body must not
+      // become query data.
+      if (!res.ok) {
+        const e = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(e?.error || `HTTP ${res.status}`);
+      }
       return res.json() as Promise<BenchmarkOpportunityResponse>;
     },
     enabled: Boolean(monthLabel && currentWeek),
