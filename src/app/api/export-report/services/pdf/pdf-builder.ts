@@ -141,6 +141,37 @@
 //    - fmtVsHist: "+ x%" → "+x%" (spacing inconsistent with the +x% style
 //      of every other change column in the report).
 //
+//  REFINE-4 (user pass — absolute benchmarks, flip detection, plain terms):
+//    - RATA-RATA ABSOLUTE: querySelfHistoryAnomaly's historical average is
+//      now AVG of per-period |SUM| (engine) — 3.3-3.6's q-hist-catavg was
+//      already ABS. Report headers renamed "Rata-rata per Bulan" →
+//      "Rata-rata Absolute" (3.3-3.6 + 6.1) per "di laporan di beri
+//      keterangan Rata-Rata Absolute". "vs Rata-rata" / "vs Rata-rata Area"
+//      now compare MAGNITUDE-to-magnitude ((|cur|−|base|)/|base|) — the old
+//      signed formula painted 3.6's Loss/Surplus rows green when the
+//      deviation had actually DOUBLED (−10 vs abs baseline 5 → "−300%").
+//    - SECTION 6.2 (NEW — "deteksi yang biasanya loss tapi sekarang
+//      surplus"): items whose direction REVERSED vs their own same-week
+//      history (engine: sign reversal + history predominantly one
+//      direction + material current side; separate flipRows list so flips
+//      cannot be crowded out by magnitude rows). Shows the SIGNED
+//      "Rata-rata Riwayat" + the "Pola" label (Biasanya Loss, Kini
+//      Surplus / sebaliknya).
+//    - SECTION 5 (user: "data yang ditampilkan nilai asli namun untuk ukuran
+//      pemberian warna heat map pakai absolute"): month cells display the
+//      SIGNED nominal (nilai asli) while the ranking / heat scale / Trend %
+//      stay on the ABSOLUTE magnitude ("agar akurat").
+//    - SECTION 9 (user: "gak perlu pakai P1 atau P2"): rows grouped by
+//      their flip pair; each group's QTY headers carry the actual periods
+//      ("QTY JUL W4" / "QTY AGU W4" — same `QTY <periode>` convention as
+//      sections 3.3-3.6/6.1). Global # across groups keeps the risk order.
+//    - 8.2 (user: "jangan pakai istilah peer"): "Rata-rata QTY Peer" /
+//      "Rata-rata % Dev/BOM Peer" → "… Resto Setara" + the subhead spells
+//      it out ("resto dengan omzet tidak jauh berbeda").
+//    - fmtPp (user: "itu kok ada PP maksudnya apa?"): the Selisih of two
+//      percentage metrics renders a PLAIN percent ("+23.99%") instead of
+//      the analyst term "pp".
+//
 //  Section map (FIXED numbers — stable across ?sections= selections;
 //  keep in sync with EXPORT_SECTION_KEYS in validation.ts + the
 //  SECTIONS list in ExportDialog.tsx):
@@ -150,7 +181,8 @@
 //     4 variance    — Perubahan Item: Memburuk / Membaik (tables + bars)
 //     5 itemTrend   — Trend Item Multi-Periode (heat matrix)
 //     6 anomali     — Item Anomali vs Riwayat Sendiri (REFINE-3 — NEW;
-//                     trend renumbered 6→7, peer 7→8, flip 8→9)
+//                     trend renumbered 6→7, peer 7→8, flip 8→9; REFINE-4:
+//                     6.1 magnitude vs Rata-rata Absolute + 6.2 flip table)
 //     7 trend       — Trend Antar Periode (table + bar + line charts +
 //                     weekly composition + weekly accumulation)
 //     8 peer        — Resto dengan Penjualan Kurang Lebih Sama (REFINE-1)
@@ -176,20 +208,32 @@ import {
 //  Local formatters (moved from the deleted docx-builder.ts — identical
 //  formatting logic, byte-for-byte parity for the shared ones)
 // ------------------------------------------------------------
+/** REFINE-4 (user: "itu kok ada PP maksudnya apa? ganti yang lebih
+ *  mudah"): the Selisih of two percentage metrics now renders as a
+ *  PLAIN percent — "+23.99%" — instead of the analyst term "pp"
+ *  (percentage points). 44.92% − 20.92% reading as Selisih "+23.99%" is
+ *  self-explanatory, and the neighboring "Growth %" column header keeps
+ *  the relative change unambiguous. */
 function fmtPp(v: number | null | undefined): string {
   if (v == null || isNaN(v) || !isFinite(v)) return '\u2014';
   const pp = v * 100;
   const sign = pp > 0 ? '+' : '';
-  return `${sign}${pp.toFixed(2)} pp`;
+  return `${sign}${pp.toFixed(2)}%`;
 }
 
 /** FIX-TERPOTONG: vs-historical delta now carries the ▲/▼ marker.
  *  BUG-HUNT: sign spacing normalized to "+x%"/"-x%" (was "+ x%" with a
  *  space — inconsistent with the "+x%" style of every other change column
- *  in the report: Perubahan, Growth %, Selisih). */
+ *  in the report: Perubahan, Growth %, Selisih).
+ *  REFINE-4: MAGNITUDE semantics — (|current| − |base|) / |base|. The
+ *  baselines (Rata-rata Absolute, Rata-rata Area) are ABSOLUTE averages,
+ *  so a signed current (e.g. Loss/Surplus rows: −10 vs abs baseline 5)
+ *  must be compared magnitude-to-magnitude: the old signed formula
+ *  showed "−300%" (green) for a deviation that had DOUBLED. For the
+ *  always-≥ 0 categories (Waste/Susut/Trial) this is byte-identical. */
 function fmtVsHist(current: number | null, histAvg: number | null): string {
   if (current == null || histAvg == null || histAvg === 0) return '\u2014';
-  const pctChange = (current - histAvg) / Math.abs(histAvg);
+  const pctChange = (Math.abs(current) - Math.abs(histAvg)) / Math.abs(histAvg);
   if (pctChange === 0) return '= 0%';
   const sign = pctChange > 0 ? '+' : '-';
   return markOf(pctChange) + sign + `${(Math.abs(pctChange) * 100).toFixed(1)}%`;
@@ -650,7 +694,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
           { header: 'Resto' },
           { header: `QTY ${currCol}`, align: 'right' },
           { header: `QTY ${prevCol}`, align: 'right' },
-          { header: 'Rata-rata per Bulan', align: 'right' },
+          { header: 'Rata-rata Absolute', align: 'right' },
           { header: 'vs Rata-rata', align: 'right' },
           { header: 'Rata-rata Area', align: 'right' },
           // REFINE-3 (user: "Kolom 'vs Rata-rata Area'"): the item's QTY as
@@ -673,13 +717,18 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
         // ▲/▼ semantic color on the two "vs …" delta columns (up = bad —
         // these are all deviation-magnitude rankings). REFINE-3: the vs
         // Rata-rata Area column (ci 9) follows the same rule.
+        // REFINE-4: MAGNITUDE comparison — the baselines are ABSOLUTE
+        // averages, and 3.6's qtyLossSurplus is SIGNED, so a −10 current
+        // vs a 5 abs baseline is a GROWN deviation (red), not a smaller
+        // one. (Waste/Susut/Trial are always ≥ 0 — unchanged behavior.)
         cellColor: (row, ri, ci) => {
           if (ci !== 7 && ci !== 9) return undefined;
           const it = ct2.items[ri];
           if (it == null) return undefined;
           const base = ci === 7 ? it.histAvgQty : it.areaAvgQty;
           if (base == null || base === 0) return undefined;
-          return it.qty > base ? C.danger : it.qty < base ? C.success : undefined;
+          const mag = Math.abs(it.qty);
+          return mag > base ? C.danger : mag < base ? C.success : undefined;
         },
       });
     }
@@ -764,14 +813,19 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
     if (data.itemTrendMatrix.length === 0) {
       rpt.noteBox('Tidak ada data trend item multi-periode pada scope ini.');
     } else {
-    // group rows: item → month → absNominal
+    // group rows: item → month → {abs (magnitude), signed (nilai asli)}
+    // REFINE-4 (user: "aku pengen data yang ditampilkan nilai asli namun
+    // untuk ukuran pemberian warna heat map pakai absolute agar akurat"):
+    // the CELLS now display the SIGNED nominal (nilai asli — negative =
+    // net loss side), while the ranking / heat scale / Trend % stay on
+    // the ABSOLUTE magnitude ("Terbesar" convention + "agar akurat").
     const byMonth = new Map<string, string>(); // monthLabel → monthKey (for sort)
-    const byItem = new Map<string, Map<string, number>>();
+    const byItem = new Map<string, Map<string, { abs: number; signed: number }>>();
     for (const r of data.itemTrendMatrix) {
       byMonth.set(r.monthLabel, r.monthKey ?? '9999-99');
       let m = byItem.get(r.itemName);
       if (!m) { m = new Map(); byItem.set(r.itemName, m); }
-      m.set(r.monthLabel, r.absNominal);
+      m.set(r.monthLabel, { abs: r.absNominal, signed: r.nominalDeviasi });
     }
     const months = [...byMonth.keys()].sort((a, b2) => {
       const ka = byMonth.get(a) ?? '9999-99';
@@ -800,13 +854,13 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
     const curMl = shownMonths.find((ml) => ml === data.period.monthLabel)
       ?? shownMonths[shownMonths.length - 1]
       ?? null;
-    const histMax = (m: Map<string, number>): number =>
-      [...m.entries()].filter(([ml]) => shownMonths.includes(ml)).reduce((acc, [, v]) => Math.max(acc, v), 0);
+    const histMax = (m: Map<string, { abs: number; signed: number }>): number =>
+      [...m.entries()].filter(([ml]) => shownMonths.includes(ml)).reduce((acc, [, v]) => Math.max(acc, v.abs), 0);
     const topItems = [...byItem.entries()]
       .filter(([_, m]) => shownMonths.some((ml) => m.has(ml)))
       .sort((a, b2) => {
-        const ca = curMl != null ? (a[1].get(curMl) ?? 0) : histMax(a[1]);
-        const cb = curMl != null ? (b2[1].get(curMl) ?? 0) : histMax(b2[1]);
+        const ca = curMl != null ? (a[1].get(curMl)?.abs ?? 0) : histMax(a[1]);
+        const cb = curMl != null ? (b2[1].get(curMl)?.abs ?? 0) : histMax(b2[1]);
         return cb - ca || histMax(b2[1]) - histMax(a[1]);
       })
       .slice(0, 15);
@@ -817,7 +871,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
     // into the palest two buckets, and mid-range differences get visible
     // steps (see heatColor: 6-step ramp, saturating above p90).
     const cellVals = topItems
-      .flatMap(([, m]) => shownMonths.map((ml) => m.get(ml) ?? 0))
+      .flatMap(([, m]) => shownMonths.map((ml) => m.get(ml)?.abs ?? 0))
       .filter((v) => v > 0)
       .sort((a, b) => a - b);
     const heatScale = cellVals.length > 0 ? cellVals[Math.floor((cellVals.length - 1) * 0.9)] : 0;
@@ -827,12 +881,16 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
     // the item's LAST APPEARING month, so an item missing from the current
     // period showed an old-period % that read as this period's trend. Such
     // items now show '—' (their current-month cell is '—' too).
-    const trendPct = (m: Map<string, number>): string => {
+    // REFINE-4: the Trend % stays on the ABSOLUTE magnitude ((|cur| − |prev|)
+    // / |prev|) so the ▲/▼ marker and red/green color remain accurate when a
+    // signed cell crosses zero (a +5.000 → −7.500 swing IS a magnitude GROWTH
+    // of +50%, red — a signed formula would print −250% and paint it green).
+    const trendPct = (m: Map<string, { abs: number; signed: number }>): string => {
       if (curMl == null || !m.has(curMl)) return '\u2014';
       const curIdx = shownMonths.reduce((acc, ml, i) => (ml === curMl ? i : acc), -1);
       if (curIdx < 1) return '\u2014';
-      const cur = m.get(curMl) ?? 0;
-      const prev = m.get(shownMonths[curIdx - 1]) ?? 0;
+      const cur = m.get(curMl)?.abs ?? 0;
+      const prev = m.get(shownMonths[curIdx - 1])?.abs ?? 0;
       if (prev === 0) return cur === 0 ? '= 0%' : MK_UP + 'BARU';
       const pct = ((cur - prev) / Math.abs(prev)) * 100;
       return markOf(pct) + `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
@@ -852,7 +910,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       // columns start at ci 2.
       if (ci <= 1 || ci > shownMonths.length + 1) return undefined;
       const ml = shownMonths[ci - 2];
-      const val = byItem.get(row[0])?.get(ml) ?? 0;
+      const val = byItem.get(row[0])?.get(ml)?.abs ?? 0;
       return heatColor(val, heatScale);
     };
     rpt.table({
@@ -865,7 +923,9 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       rows: topItems.map(([name, m]) => [
         name,
         satuanByItem.get(name) ?? '\u2014',
-        ...shownMonths.map((ml) => (m.has(ml) ? fmtIDR(m.get(ml)) : '\u2014')),
+        // REFINE-4: nilai ASLI (signed) in the cells; the heat fill on the
+        // same cell is driven by heatAt → .abs (see above).
+        ...shownMonths.map((ml) => (m.has(ml) ? fmtIDR(m.get(ml)?.signed) : '\u2014')),
         trendPct(m),
       ]),
       cellFill: (row, _ri, ci) => heatAt(row, ci),
@@ -909,10 +969,13 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       // sanitizePdfText maps it to '?' in the PDF. Plain wording instead.
       rpt.noteBox(ctx.historicalPeriods.length === 0
         ? 'Belum ada periode riwayat (bulan sebelumnya dengan minggu yang sama) untuk dibandingkan.'
-        : 'Tidak ada item dengan penyimpangan minimal 50% dari rata-rata riwayatnya sendiri pada scope ini.');
+        : 'Tidak ada item dengan penyimpangan minimal 50% dari rata-rata absolute riwayatnya sendiri pada scope ini.');
     } else {
       const nBulan = an.reduce((mx, it) => Math.max(mx, it.histCount), 0);
-      rpt.subhead(`6.1 Kuantitas vs Rata-rata Riwayat Sendiri (same-week, maks ${nBulan} bulan)`, { size: 8.5 });
+      // REFINE-4 (user: "di laporan di beri keterangan Rata-Rata Absolute"):
+      // the benchmark column is the ABSOLUTE average of the item's own
+      // same-week history — stated in both the subhead and the header.
+      rpt.subhead(`6.1 Kuantitas vs Rata-rata Riwayat Sendiri (same-week, maks ${nBulan} bulan; rata-rata absolute)`, { size: 8.5 });
       rpt.table({
         cols: [
           { header: '#', align: 'center' },
@@ -921,7 +984,7 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
           { header: 'Area' },
           { header: 'Satuan' },
           { header: `QTY ${currCol}`, align: 'right' },
-          { header: 'Rata-rata per Bulan', align: 'right' },
+          { header: 'Rata-rata Absolute', align: 'right' },
           { header: 'Selisih', align: 'right' },
           { header: 'vs Riwayat', align: 'right' },
           { header: 'Nominal Deviasi', align: 'right' },
@@ -939,18 +1002,68 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
           fmtIDR(it.nominal),
         ]),
         // ▲/▼ semantic color on the Selisih + vs Riwayat columns, judged by
-        // MAGNITUDE (qtyDeviasi is signed — a sign flip from -10 to +10 is a
-        // GROWN deviation, not a smaller one): |cur| > |hist| = red (the
-        // departure widened the deviation), |cur| < |hist| = green.
+        // MAGNITUDE (REFINE-4: histAvgQty is now the ABSOLUTE average and
+        // deltaQty is |qty| − histAvg, so the comparison is already
+        // magnitude-to-magnitude): |cur| > histAvg = red (the deviation
+        // widened), |cur| < histAvg = green.
         cellColor: (_row, ri, ci) => {
           if (ci !== 7 && ci !== 8) return undefined;
           const it = an[ri];
           if (it == null) return undefined;
-          return Math.abs(it.qty) > Math.abs(it.histAvgQty)
+          return Math.abs(it.qty) > it.histAvgQty
             ? C.danger
-            : Math.abs(it.qty) < Math.abs(it.histAvgQty) ? C.success : undefined;
+            : Math.abs(it.qty) < it.histAvgQty ? C.success : undefined;
         },
       });
+
+      // 6.2 — REFINE-4 (user: "apakah sudah bisa deteksi yang biasanya loss
+      // tapi sekarang surplus? kalau belum tambahkan"): items whose
+      // direction REVERSED vs their own same-week history. "Rata-rata
+      // Riwayat" here is the SIGNED average (it shows the usual direction,
+      // e.g. -12.3 = loss side) — a different lens from 6.1's absolute
+      // benchmark, hence its own column name. Eligibility (engine):
+      // history predominantly one direction + a material current side.
+      const flips = data.selfHistoryFlips;
+      rpt.subhead('6.2 Item Berganti Arah \u2014 biasanya loss, kini surplus (atau sebaliknya)', { size: 8.5 });
+      if (flips.length === 0) {
+        rpt.noteBox('Tidak ada item yang berganti arah (loss menjadi surplus atau sebaliknya) dibanding riwayatnya sendiri pada scope ini.');
+      } else {
+        rpt.table({
+          cols: [
+            { header: '#', align: 'center' },
+            { header: 'Item' },
+            { header: 'Resto' },
+            { header: 'Area' },
+            { header: 'Satuan' },
+            { header: 'Rata-rata Riwayat', align: 'right' },
+            { header: `QTY ${currCol}`, align: 'right' },
+            { header: 'Pola', align: 'center' },
+            { header: 'Nominal Deviasi', align: 'right' },
+          ],
+          rows: flips.map((it, i) => [
+            String(i + 1),
+            it.itemName,
+            it.outletCode,
+            it.area,
+            it.satuan ?? '\u2014',
+            fmtNum(it.histSignedAvgQty),
+            fmtNum(it.qty),
+            it.flip === 'lossToSurplus' ? 'Biasanya Loss, Kini Surplus' : 'Biasanya Surplus, Kini Loss',
+            fmtIDR(it.nominal),
+          ]),
+          // Direction coloring on the two QTY columns (green = surplus side,
+          // red = loss side — same convention as section 9); the Pola text
+          // stays neutral ink (a flip is a pattern to investigate, not a
+          // good/bad verdict — DESAIN-SIMPEL).
+          cellColor: (_row, ri, ci) => {
+            if (ci !== 5 && ci !== 6) return undefined;
+            const it = flips[ri];
+            if (it == null) return undefined;
+            const v = ci === 5 ? it.histSignedAvgQty : it.qty;
+            return v < 0 ? C.danger : v > 0 ? C.success : undefined;
+          },
+        });
+      }
     }
   }
 
@@ -1115,9 +1228,15 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
       });
 
       // 8.2 — per-item breakdown: kuantitas + % to BOM, target vs the
-      // average of the similar-sales peers.
+      // average of the similar-sales restos.
+      // REFINE-4 (user: "jangan pakai istilah peer tapi coba pakai yang
+      // lebih mudah. Misalnya resto dengan omzet yang tidak beda jauh"):
+      // "Rata-rata … Peer" headers → "Rata-rata … Resto Setara" (the
+      // section title "Resto dengan Penjualan Kurang Lebih Sama" defines
+      // what "setara" means; the subhead spells it out in the user's own
+      // words — omzet tidak jauh berbeda).
       if (pc.items.length > 0) {
-        rpt.subhead(`8.2 Breakdown per Item (kuantitas, % to BOM) \u2014 ${targetLabel} vs rata-rata resto setara`, { size: 8.5 });
+        rpt.subhead(`8.2 Breakdown per Item (kuantitas, % to BOM) \u2014 ${targetLabel} vs rata-rata resto dengan omzet tidak jauh berbeda`, { size: 8.5 });
         rpt.table({
           cols: [
             { header: 'Item' },
@@ -1126,8 +1245,8 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
             { header: 'Satuan' },
             { header: 'QTY Deviasi', align: 'right' },
             { header: '% Deviasi To BOM', align: 'right' },
-            { header: 'Rata-rata QTY Peer', align: 'right' },
-            { header: 'Rata-rata % Dev/BOM Peer', align: 'right' },
+            { header: 'Rata-rata QTY Resto Setara', align: 'right' },
+            { header: 'Rata-rata % Dev/BOM Resto Setara', align: 'right' },
           ],
           rows: pc.items.map((it) => [
             it.itemName,
@@ -1152,6 +1271,13 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   //  consecutive same-week periods (e.g. +100 in Jul W4 → -98 in Agu W4):
   //  QTY Deviasi positive = green (plus), negative = red (minus); Net near
   //  zero = the reversal is nearly symmetrical.
+  //  REFINE-4 (user: "SATUAN PERIODE 1 QTY DEVIASI P1 PERIODE 2 QTY
+  //  DEVIASI P2 gak perlu pakai P1 atau P2 langsung aja tampilkan periode
+  //  nya di header sama seperti section lainnya"): the rows are GROUPED
+  //  by their flip pair (each item's most balanced pair is item-specific),
+  //  and each group's table carries the actual periods in the QTY column
+  //  headers — "QTY JUL W4" / "QTY AGU W4" — the same `QTY <periode>`
+  //  convention as sections 3.3-3.6/6.1. No more P1/P2 ordinal jargon.
   // ============================================================
   if (hasSection('flip')) {
     rpt.sectionHeader(9, 'Item yang Kemungkinan Plus Minus antar Periode');
@@ -1160,33 +1286,55 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
     if (flipRows.length === 0) {
       rpt.noteBox('Tidak ada item dengan pola plus minus antar periode pada scope ini.');
     } else {
-      rpt.table({
-        cols: [
-          { header: '#', align: 'center' },
-          { header: 'Item' },
-          // REFINE-2 ("section yang belum punya satuan tambahain"): the QTY
-          // Deviasi / Net columns are satuan-denominated.
-          { header: 'Satuan' },
-          { header: 'Periode 1' },
-          { header: 'QTY Deviasi P1', align: 'right' },
-          { header: 'Periode 2' },
-          { header: 'QTY Deviasi P2', align: 'right' },
-          { header: 'Net', align: 'right' },
-        ],
-        rows: flipRows.map((it, i) => {
-          const fp = it.topFlips[0];
-          return [String(i + 1), it.itemName, it.satuan ?? '\u2014', fp.period1Label, fmtNum(fp.qtyP1), fp.period2Label, fmtNum(fp.qtyP2), fmtNum(fp.net)];
-        }),
-        // Plus/minus coloring on the two QTY columns — the visual point of
-        // the section: green = plus (surplus side), red = minus (loss side).
-        cellColor: (_row, ri, ci) => {
-          if (ci !== 4 && ci !== 6) return undefined;
-          const fp = flipRows[ri]?.topFlips[0];
-          if (fp == null) return undefined;
-          const v = ci === 4 ? fp.qtyP1 : fp.qtyP2;
-          return v < 0 ? C.danger : v > 0 ? C.success : undefined;
-        },
+      // Group the top-10 rows by their (period1, period2) pair, in order of
+      // first appearance (flipRows is risk-ranked — a group's position is
+      // its best item's rank). REFINE-4b: rows renumber 1..n PER GROUP —
+      // the global cross-group ranks (#1,#4 / #2,#3) read as gaps ("where
+      // are #2/#3?"); every other table in the report numbers rows from 1.
+      const groups = new Map<string, Array<{ rank: number; item: typeof flipRows[number] }>>();
+      flipRows.forEach((it, i) => {
+        const fp = it.topFlips[0];
+        const key = `${fp.period1Label}\u0000${fp.period2Label}`;
+        const g = groups.get(key) ?? [];
+        g.push({ rank: i + 1, item: it });
+        groups.set(key, g);
       });
+      let subNo = 0;
+      for (const [key, g] of groups) {
+        subNo += 1;
+        const [p1, p2] = key.split('\u0000');
+        // BUG-HUNT #7 class ('≥' → '?'): U+2192 (→) is NOT WinAnsi-encodable
+        // either — sanitizePdfText maps it to '?'. En dash U+2013 IS in the
+        // WINANSI_EXTRA set; "Jul W1 – Agu W1" reads the same.
+        rpt.subhead(`9.${subNo} ${p1} \u2013 ${p2}`, { size: 8.5 });
+        rpt.table({
+          cols: [
+            { header: '#', align: 'center' },
+            { header: 'Item' },
+            // REFINE-2 ("section yang belum punya satuan tambahain"): the QTY
+            // Deviasi / Net columns are satuan-denominated.
+            { header: 'Satuan' },
+            // REFINE-4: the period lives IN the header — same `QTY <periode>`
+            // convention as the other sections (uppercase to match).
+            { header: `QTY ${p1.toUpperCase()}`, align: 'right' },
+            { header: `QTY ${p2.toUpperCase()}`, align: 'right' },
+            { header: 'Net', align: 'right' },
+          ],
+          rows: g.map(({ item }, gi) => {
+            const fp = item.topFlips[0];
+            return [String(gi + 1), item.itemName, item.satuan ?? '\u2014', fmtNum(fp.qtyP1), fmtNum(fp.qtyP2), fmtNum(fp.net)];
+          }),
+          // Plus/minus coloring on the two QTY columns — the visual point of
+          // the section: green = plus (surplus side), red = minus (loss side).
+          cellColor: (_row, ri, ci) => {
+            if (ci !== 3 && ci !== 4) return undefined;
+            const fp = g[ri]?.item.topFlips[0];
+            if (fp == null) return undefined;
+            const v = ci === 3 ? fp.qtyP1 : fp.qtyP2;
+            return v < 0 ? C.danger : v > 0 ? C.success : undefined;
+          },
+        });
+      }
     }
   }
 }

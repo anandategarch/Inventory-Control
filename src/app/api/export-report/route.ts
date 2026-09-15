@@ -153,7 +153,11 @@ export async function GET(req: NextRequest) {
         // when REFINE-3 landed, so users kept downloading the pre-REFINE-3
         // PDF from the 5-min cache after a deploy. Bump together with the
         // `rv` param in useDashboardActions.ts handleExport.
-        rv: '5',
+        // REFINE-4: design/content change (Rata-rata Absolute columns +
+        // magnitude comparisons, section 6.2 flip detection, section 5
+        // signed cells + abs heat, section 9 per-pair grouping, 8.2 resto
+        // setara terms, plain-percent Selisih).
+        rv: '6',
       },
     });
     const EXPORT_CACHE_TTL = 5 * 60 * 1000; // 5 min

@@ -554,9 +554,11 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     // row shape.
     needAnomali && historicalPeriodsList.length > 0 ? cachedSharedQuery(
       'q-self-anom',
-      { month, week, filters: filterOpts, extra: { ...histPeriodsKeyParts(historicalPeriodsList), limit: topNItems, sv: 1 } },
+      // REFINE-4: sv 2 — ABS average + signed average + flip fields +
+      // the separate flipRows list (see the mapping below).
+      { month, week, filters: filterOpts, extra: { ...histPeriodsKeyParts(historicalPeriodsList), limit: topNItems, sv: 2 } },
       () => querySelfHistoryAnomaly({ week, month, historicalPeriods: historicalPeriodsList, filters: filterOpts, limit: topNItems }),
-    ) : Promise.resolve({ rows: [] as SelfHistoryAnomalyRow[] }),
+    ) : Promise.resolve({ rows: [] as SelfHistoryAnomalyRow[], flipRows: [] as SelfHistoryAnomalyRow[] }),
     // REFINE-3 — weekly category composition of the exported month. The
     // query itself is week-agnostic (it returns the month's FULL week set)
     // so the cache key uses the literal 'ALL' week (same convention as
@@ -786,7 +788,11 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
     // the fetch).
     itemTrendMatrix: itemTrendMatrixRes?.rows ?? [],
     // REFINE-3 — section 'anomali' ([] when off / no historical periods).
+    // REFINE-4: + flipRows (direction reversal vs own history) — sv bumped
+    // 1 → 2 for the changed row shape (histSignedAvgQty/flip fields +
+    // absolute histAvgQty + magnitude deltaQty semantics).
     selfHistoryAnomaly: selfAnomalyRes?.rows ?? [],
+    selfHistoryFlips: selfAnomalyRes?.flipRows ?? [],
     // REFINE-3 — weekly composition rows for the trend section's
     // composition + accumulation charts ([] when the trend section is off).
     weeklyComposition,

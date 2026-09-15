@@ -139,7 +139,10 @@ export function useDashboardActions({
       // cache key). Ignored server-side (Zod strips unknown params).
       // REFINE-3: rv 5 — heat text fix, section 6 anomali, vs Rata-rata
       // Area column, weekly composition + accumulation charts, renumbering.
-      params.set('rv', '5');
+      // REFINE-4: rv 6 — Rata-rata Absolute + magnitude comparisons, 6.2
+      // flip detection, section 5 signed cells + abs heat, section 9
+      // per-pair grouping, 8.2 resto setara terms, plain-percent Selisih.
+      params.set('rv', '6');
 
       // FIX (BUG-3-b A3): AbortController + 120s timeout — a hung export no
       // longer spins forever; the fetch is aborted and the user gets a

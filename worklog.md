@@ -40488,3 +40488,23 @@ Stage Summary:
     package.json                    (added db:refresh-stats script + pg dep)
     bun.lock                        (updated for pg)
 - NOT YET PUSHED to origin/main (previous GitHub token was revoked per security advice; needs new token to push commit cb41d42)
+
+---
+Task ID: REFINE-4
+Agent: Main (Z.ai Code)
+Task: 6 permintaan user untuk laporan deviasi PDF: (1) rata-rata per bulan absolute di engine + label "Rata-Rata Absolute", (2) deteksi biasanya-loss-kini-surplus di section Anomali, (3) Trend Multi-Periode tampil nilai asli + heat map pakai absolute, (4) hapus P1/P2 di section flip — periode di header, (5) istilah "peer" diganti lebih mudah, (6) "pp" diganti lebih mudah.
+
+Work Log:
+- Jawab pertanyaan user lewat kode: rata-rata historis 3.3-3.6 (queryHistoricalCategoryAvg) SUDAH absolute (AVG(ABS)); yang masih signed adalah querySelfHistoryAnomaly (section 6).
+- Engine self-history-anomaly.ts ditulis ulang: histAvgQty = AVG(per-period |SUM|) absolute; histSignedAvgQty (signed) dipisah sebagai sinyal arah; deltaQty = |qty| − histAvgQty (magnitude); eligibilitas magnitude ||cur|−|histAbs|| ≥ 50% histAbs; DETEKSI FLIP baru: sign(cur) ≠ sign(histSigned) AND |histSigned| ≥ 0.5×histAbs (riwayat konsisten satu arah) AND |cur| ≥ 0.25×histAbs (sisi kini material) → flip 'lossToSurplus'/'surplusToLoss'; hasil = { rows (magnitude, LIMIT limit), flipRows (flip, ORDER |nominal| DESC, LIMIT 10) } — flip tidak bisa tergeser baris magnitude. SQL portabel (tanpa SIGN() — eksplisit x>0/y<0).
+- types.ts: + selfHistoryFlips; data-fetcher: sv 1→2 (bentuk baris berubah) + map flipRows.
+- pdf-builder REFINE-4: fmtPp "+23.99 pp" → "+23.99%" (persen polos, kolom Selisih); fmtVsHist → magnitude ((|cur|−|base|)/|base|) — memperbaiki bug 3.6 Loss/Surplus signed-vs-abs (−10 vs baseline 5 tadah "−300%" hijau padahal deviasi DOBEL); header 3.3-3.6 + 6.1 "Rata-rata per Bulan" → "Rata-rata Absolute"; cellColor 3.3-3.6/6.1 pakai magnitude; section 5 sel bulan menampilkan nominalDeviasi SIGNED (nilai asli) sementara ranking/skala heat/Trend % tetap ABS; section 6.2 BARU "Item Berganti Arah" (Rata-rata Riwayat signed + kolom Pola "Biasanya Loss, Kini Surplus"/sebaliknya, warna arah merah loss/hijau surplus); 8.2 header "Rata-rata QTY Peer"/"Rata-rata % Dev/BOM Peer" → "… Resto Setara" + subhead "vs rata-rata resto dengan omzet tidak jauh berbeda"; section 9 dikelompokkan per pasangan flip — subhead "9.1 Agu W1 – Sep W1", header kolom "QTY AGU W1"/"QTY SEP W1" (konvensi QTY <periode> sama seperti section lain), penomoran 1..n PER GRUP (rank global #1,#4/#2,#3 terbaca seperti bolong).
+- rv cache version 5 → 6 kedua sisi (route.ts extra + useDashboardActions params) — pelajaran BUG-HUNT.
+- VERIFIKASI: (a) mock render 5 halaman via buildPdfReport — pdftotext: "+24.00%" tanpa "pp", "RATA-RATA ABSOLUTE" di 3.3-3.6 + 6.1, 6.2 dengan Pola, header "RATA-RATA QTY RESTO SETARA", "QTY JUL W1/AGU W1/SEP W1", tanpa P1/P2; (b) VLM QA per halaman: warna arah 6.1/6.2 benar (▲12,3 merah, +198.4% merah, −6 merah/18,5 hijau), heat map section 5 terbaca (verifikasi piksel: teks = ink #111827 persis pada fill terang + putih pada #DC2626 terdalam — klaim "teks merah" VLM hanya persepsi, kontras WCAG sesuai desain); (c) BUG ketemu saat render: U+2192 (→) bukan WinAnsi → "?" di subhead 9.x — diganti en dash U+2013; (d) SQL verify: Prisma.Sql kedua query ditangkap via shim (rekomposisi Prisma.sql tagged template), dijalankan ke SQLite in-memory dengan 4 skenario terkontrol — SEMUA assertion lolos (histAbs=7/signed=−7/delta=5/flip lossToSurplus; UDANG surplusToLoss; CABAI alternating DIKECUALIKAN karena riwayat tidak konsisten satu arah; GULA magnitude-only tanpa flip). NOTE: live Supabase tidak terjangkau (.env kredensial dihapus antar-sesi — masalah lingkungan lama).
+- tsc clean; lint 0 error (357 warning pre-existing = baseline); .tmp-render/ (artefak tes) dihapus.
+
+Stage Summary:
+- Semua 6 permintaan user terpenuhi: rata-rata kini absolute + berlabel, deteksi flip loss↔surplus hidup (engine + tabel 6.2), nilai asli + heat absolute di Trend Multi-Periode, periode di header section flip (tanpa P1/P2), "Resto Setara" menggantikan "Peer", "+23.99%" menggantikan "+23.99 pp".
+- Bonus bugfix: 3.6 signed-vs-abs (warna hijau keliru saat deviasi membesar), penomoran per-grup section 9, WinAnsi arrow.
+- File berubah (6): src/lib/queries/items/self-history-anomaly.ts, src/app/api/export-report/services/{types.ts,data-fetcher.ts,pdf/pdf-builder.ts}, src/app/api/export-report/route.ts, src/hooks/useDashboardActions.ts.
+- Cache: q-self-anom sv 2, rv 6.

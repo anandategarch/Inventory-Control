@@ -265,7 +265,12 @@ export interface ReportData {
   itemTrendMatrix: ItemTrendMatrixRow[];
   // REFINE-3 — section 'anomali': top items departing from their OWN
   // same-week historical average ([] when off / no historical periods).
+  // REFINE-4: the average is ABSOLUTE ("Rata-Rata Absolute").
   selfHistoryAnomaly: SelfHistoryAnomalyRow[];
+  // REFINE-4 — section 6.2: items whose direction FLIPPED vs their own
+  // history (biasanya loss → kini surplus, or the reverse). Separate
+  // ranked list so flips cannot be crowded out by magnitude rows.
+  selfHistoryFlips: SelfHistoryAnomalyRow[];
   // REFINE-3 — per-week category composition of the exported month
   // (already sliced to weeks ≤ the exported week; [] when the trend
   // section is off).
