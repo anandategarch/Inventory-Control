@@ -40508,3 +40508,25 @@ Stage Summary:
 - Bonus bugfix: 3.6 signed-vs-abs (warna hijau keliru saat deviasi membesar), penomoran per-grup section 9, WinAnsi arrow.
 - File berubah (6): src/lib/queries/items/self-history-anomaly.ts, src/app/api/export-report/services/{types.ts,data-fetcher.ts,pdf/pdf-builder.ts}, src/app/api/export-report/route.ts, src/hooks/useDashboardActions.ts.
 - Cache: q-self-anom sv 2, rv 6.
+
+---
+Task ID: HEAT-SIGN + SPLIT-GOD-FILE
+Agent: Main (Z.ai Code)
+Task: (1) User: "Warna minus di heat map aku pengen diberi warna beda, jangan sampai konflik" — bedakan warna sel minus vs plus di heat map section 5, lalu push. (2) Lanjut task 2: split god file pdf-builder.ts, lalu push.
+
+Work Log:
+- Investigasi sign convention: item-trend-matrix.nominalDeviasi = SIGNED (negatif = sisi LOSS); konvensi laporan: minus/loss = merah, plus/surplus = hijau (line chart section 7, 6.2, section 9) → minus tetap ramp MERAH, plus pindah ramp HIJAU.
+- HEAT-SIGN (commit 6f02849): heatColor(v, scale) jadi TWO-HUE — sign memilih family (negatif → ramp merah #FEF2F2..#DC2626, positif → ramp hijau #F0FDF4..#4ADE80 + top #15803D), |v|/scale tetap memilih step (6 step, saturasi > p90). heatAt kini meneruskan nilai SIGNED (bukan .abs) ke heatColor; heatScale TETAP p90 dari sel absolute (permintaan REFINE-4 "ukuran pemberian warna pakai absolute"). heatText luminance rule melayani kedua ramp otomatis (hanya #15803D dan #DC2626 yang cukup gelap utk teks putih — 5.0:1 dan 4.8:1).
+- rv cache 6 → 7 kedua sisi (route.ts extra + useDashboardActions params) — pelajaran BUG-HUNT.
+- VERIFIKASI HEAT-SIGN: harness mock (.tmp-render, dihapus setelah dipakai): render section-5-only PDF (8 item × 5 bulan, nilai signed dirancang mengenai step ramp di kedua family; p90 = 7.4 Jt); pdftotext: sel signed dgn tanda minus; PPM pixel-scan exact-hex: merah 33.855 px + hijau 35.900 px, 8 hex ramp hadir (#DC2626 5.931 px, #15803D 5.884 px, #F87171, #4ADE80, #86EFAC, #FEE2E2, #F0FDF4, #FEF2F2), baris Rp 0 tanpa fill; bug harness PPM header (off-by-one newline) ditemukan & diperbaiki; VLM visual: minus=merah bervariasi, plus=hijau bervariasi, teks putih terbaca di sel terdalam, tidak ada overlap — LOLOS semua.
+- Gates: tsc 0 err, eslint 0 err, vitest 512/512. PUSH 2a9444c..6f02849 via PAT inline helper (token tidak pernah ditulis ke file; secret-scan staged diff CLEAN).
+- SPLIT-GOD-FILE (commit b4b37d2): pdf-builder.ts 1.341 → 324 baris (orkestrator). Pure code motion: pdf-style.ts (helper murni: fmtPp, fmtVsHist, shortMonth, titleCase, prettyWeek, periodCol, periodFull, heatColor, heatText, tickIDR, chgColor, mkGrowth); section-context.ts (SectionEnv: rpt/doc/data/ctx/hasSection/currLabel/currCol/prevCol/cmpFull/restoName + createSectionEnv); sections/ 10 file (cover, exec, growth, top-items, variance, trend-matrix, anomaly, trend, peer, flip — 51-160 baris per file); pdf-builder.ts menyimpan buildPdfReport + drawReport routing + changelog + peta modul. Guard `if (hasSection)` jadi early-return; blok `else` kosong-data jadi noteBox+return — perilaku identik.
+- VERIFIKASI SPLIT: harness mock FULL 9-section (semua array terisi — variance, trend 4 minggu, weeklyComposition, peer 3 resto, flipRanking 3 item dgn topFlips) dirender SEBELUM split (baseline 5 halaman) dan SESUDAH split → compare.ts (normalisasi /CreationDate + /ID trailer acak pdfkit — dua elemen non-deterministik) → **BYTE-IDENTICAL**; jalur parsial ?sections=itemTrend dirender ulang + pixel-scan heat LOLOS (no regression); determinisme render dikonfirmasi dulu dgn 2x render kode sama.
+- Gates split: tsc 0 err, eslint 0 err (13 warning pre-existing), vitest 512/512. PUSH 6f02849..b4b37d2. Secret-scan range 2a9444c..b4b37d2 CLEAN.
+- Catatan lingkungan: bun runtime kini SEHAT (masalah cache @noble/hashes sesi lalu sudah tidak muncul); DATABASE_URL produksi tetap tidak tersimpan di sesi ini → verifikasi via mock (pola yang sama dgn REFINE-2/REFINE-4). Platform dev server my-project:3000 tetap jalan normal (proyek terpisah).
+- .tmp-render/ ditambahkan ke .gitignore (artefak harness).
+
+Stage Summary:
+- HEAT-SIGN: sel minus (loss) = ramp merah, sel plus (surplus) = ramp hijau — intensitas tetap magnitude/p90; konflik minus-vs-plus di heat map section 5 tuntas; rv 7.
+- SPLIT-GOD-FILE: 13 file, +1.279/−1.101; god file 1.341 baris jadi 14 modul (terbesar pdf-primitives 663 — tidak disentuh; pdf-builder 324; section terbesar 160); output PDF terbukti byte-identik.
+- Kedua commit ter-push ke origin/main: 6f02849 (HEAT-SIGN), b4b37d2 (SPLIT-GOD-FILE); lokal = remote; worklog entry ini ikut ter-commit.
