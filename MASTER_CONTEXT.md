@@ -12,6 +12,8 @@
 > WAJIB dibaca sebelum tugas UI/appearance apa pun.
 >
 > **Last updated:** Session AUDIT-INTENSIF (Full code audit → AUDIT-REPORT.md + 6 paket perbaikan: PAKET UPLOAD/DELETE (upload 3× lebih cepat + chunk paralel + delete TRUNCATE atomik), PAKET A (interaksi FE: tab keep-alive `forceMount` + refetch storm dibunuh + debounce autocomplete + dashboard tidak terkunci saat refresh), PAKET B (backend scan-merge: 4 KPI 1-scan, kategori 1 query, import 3-pass bulk ±446→±4-8 round-trip), PAKET C (deploy: Fluid Compute + vercel.json bersih + bun.lock satu-satunya lockfile), PAKET E (tab **Kepatuhan** — 11 lensa kontrol dari 2 scan: 9 lensa period + 2 lensa month-grain; route `/api/compliance` + `/api/chronic-outlets`), PAKET F (P3 hygiene: cache hit analysis zero-parse via raw-JSON passthrough, 3 route peer-comparison kini di-cache, docx cache base64, index `[direction]` dead dihapus, TrendChart mati dihapus, 3 render pipeline di-memo); BUG-3/4/5 ingest integrity + purge git-history password; LOC 52,661 → 57,861; cached routes 14 → 20; routes 27 → 35; tests 435 → 438)
+>
+> **UPDATE (session VERIFY-MASTER):** audit seluruh perhitungan vs master context — 5 domain paralel (19 rule anomali, metrik inti, flip, analytics, kepatuhan): rumus inti 100% MATCH dengan 2 bug perhitungan nyata diperbaiki (Ø per-resto heatmap cell-detail salah denominator; flip-sort nulls-bottom jatuh di DESC) + paritas isOverExplained item-history ke helper kanonik; tab Kepatuhan PAKET E terkonfirmasi SUDAH DIHAPUS user (b37cc40) — doc ini disegarkan (seksi Kepatuhan → catatan penghapusan; export .docx → .pdf; zScore kini SQL push-down; tests 512; laporan audit di agent-ctx/VERIFY-*.md)
 > **Previously:** Session TREMOR (Dashboard Component Patterns: 6 new tremor components — Callout/DeltaType/DeltaBar/Tracker/BarList/SparkLine + 3 evidence-dev patterns documented — Format Presets System (33 presets in lib/format.ts), TargetComparison component, Diverging Color Scale (lib/colorScale.ts); KPICard + Callout applied); Session FLIP-DETECT (Flip Pattern Detection A+B+C: Flip column + Flip Summary + Chart annotations + FlipMatrix + Flip Ranking API + Drill-down; SATUAN-BUG fix; BUG2-FLIP-01..06 fixes; Audit Log feature REMOVED — 2 files deleted, 11 files modified, ~565 LOC removed; File Consolidation Batch 1+2)
 > **Maintainer:** Z.ai Code
 
@@ -93,15 +95,13 @@ Deviation is decomposed into 4 categories for root cause identification:
 
 ---
 
-## 4. API Routes (36 routes)
+## 4. API Routes (35 routes)
 
 | Route | Cache | Zod | Rate Limit | Auth |
 |-------|-------|------|------------|------|
 | `/api/analysis` | ✅ DB 30min TTL + SWR + **raw-JSON passthrough** (P3-HYG-1) | ✅ | ✅ | Public GET |
 | `/api/area-item-heatmap` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
 | `/api/area-item-heatmap/cell-detail` | ❌ | ✅ | ✅ | Public GET (sub-route) |
-| `/api/chronic-outlets` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (NEW PAKET E — month-grain lensa Kepatuhan #8+10) |
-| `/api/compliance` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (NEW PAKET E — 9 lensa kontrol dari 1 scan) |
 | `/api/data` | ❌ | ✅ | ✅ | Protected mutations |
 | `/api/drilldown` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET |
 | `/api/export-report` | ✅ DB 5min (SWR) — payload cache base64 (P3-HYG-4) | ✅ | ✅ | Public GET |
@@ -130,7 +130,7 @@ Deviation is decomposed into 4 categories for root cause identification:
 | `/api/setup` | ❌ | ✅ | ✅ | Protected |
 | `/api/status` | ❌ (in-memory) | ✅ | ❌ | Public GET |
 
-**Totals:** 34/36 main routes use Zod validation (incl. `/api/item-search`; only `/api/status` skips Zod) · **20 route prefixes use DB cache** (analysis, pareto, recommendations, export-report, outlet-items, item-history, drilldown, area-item-heatmap, item-trend, item-peer-comparison, item-trend-rank, flip-ranking, flip-ranking-drilldown, item-anomali-outlets, peer-comparison, peer-comparison/items, peer-comparison/trend, price-effect, item-search, heatmap-cell-detail) — all invalidated by `invalidateAnalysisCache()` on ANY mutation · All protected routes use `ADMIN_TOKEN` middleware · 31 routes export `maxDuration` (10–300s, single source of truth since PAKET C dropped the no-op vercel.json functions block).
+**Totals:** 34/35 main routes use Zod validation (incl. `/api/item-search`; only `/api/status` skips Zod) · **20 route prefixes use DB cache** (analysis, pareto, recommendations, export-report, outlet-items, item-history, drilldown, area-item-heatmap, item-trend, item-peer-comparison, item-trend-rank, flip-ranking, flip-ranking-drilldown, item-anomali-outlets, peer-comparison, peer-comparison/items, peer-comparison/trend, price-effect, item-search, heatmap-cell-detail) — all invalidated by `invalidateAnalysisCache()` on ANY mutation · All protected routes use `ADMIN_TOKEN` middleware · 31 routes export `maxDuration` (10–300s, single source of truth since PAKET C dropped the no-op vercel.json functions block).
 
 **REMOVED (H-10 dead-code cleanup):** `/api/resto-bahan-matrix` route (330 LOC — zero frontend consumers since H-8) + root `/api/route.ts` health stub ("Hello, world!") — both deleted; `invalidateAnalysisCache()` route list updated. (Earlier removals: `/api/audit-log` + `AuditLog` model, DEL-AUDIT; `/api/compliance` + `/api/chronic-outlets`, H-2b Kepatuhan-tab deletion.)
 
@@ -138,8 +138,6 @@ Deviation is decomposed into 4 categories for root cause identification:
 
 **New route specs:**
 - `GET /api/price-effect?month=&week=[wajib]&compareMonth=&compareWeek=[opsional]&area=&kelompok=&outlet=&pic=` — **Task W**: dekomposisi Bennet (EKSAK, tanpa residual interaksi) atas ΔΣ|nominalDeviasi| vs periode pembanding menjadi **Efek Harga + Efek Kuantitas** per item + agregat. Implements Master Context bisnis §22 AVG PRICE / §55 (Nominal effect = Quantity effect + Price effect). Harga implisit per item = Σ|nominalDeviasi|/Σ|qtyDeviasi| (harga nasional teramati via baris deviation); efek kuantitas = (Qc−Qp)×avg(Pc,Pp); efek harga = (Pc−Pp)×avg(Qc,Qp). Klasifikasi dominansi per item: PRICE (≥70% share efek harga) / QTY (≤30%) / MIXED / FLAT. Item baru/hilang di luar dekomposisi (dilaporkan terpisah agar agregat terekonsiliasi). AVG Price Δ nasional = weighted mean (bobot |nominal prev|) + median growth harga per item. SQL: 2 CTE agregat (curr+prev, GROUP BY item) + 1 FULL OUTER JOIN (~154 baris/sisi). Cache 5 mnt (prefix `price-effect` terdaftar di invalidateAnalysisCache), rate-limit 30/mnt, maxDuration 60. Tanpa param compare → `hasCompare:false` + items kosong (FE menampilkan hint pilih pembanding).
-- `GET /api/compliance?month=&week=[wajib]&area=&kelompok=&outlet=&pic=` — **PAKET E**: 9 lensa kontrol dari SATU scan periode (CTE `base` dimaterialisasi sekali → 6 agregat + `UNION ALL (lens, to_jsonb(row))` 1 round-trip): kepatuhan toleransi per item (paritas penuh rule engine — threshold dari `getRuntimeThresholds()` yang sama), prioritas penetapan toleransi, residual per outlet (WARN/HIGH paritas rule), |deviasi|/penjualan per outlet, kategori BAHAN/PACKAGING, transfer antar outlet (item×area loss↔surplus serentak), ketidakcocokan antar-area (pairing di lapisan shaping dari `transfer_agg` yang sama — nol scan tambahan), kualitas input angka bulat (3 kolom FILTER di scan yang sama). Threshold paritas: `f_tol_breach`/`f_tol_breach_high`/`f_tol_not_set`/`f_resid_warn`/`f_resid_high` share `stdDevBomPct`/`residualWarnPct`/`residualHighPct` dengan rule engine. Cache 5 mnt, rate-limit 30/mnt, maxDuration 60.
-- `GET /api/chronic-outlets?month=[wajib, TANPA week]&area=&kelompok=&outlet=&pic=` — **PAKET E**: lensa level BULAN (month-grain BY DESIGN — strict zod menolak param liar): klasifikasi KRONIS (deviasi ≥3 minggu AND ≥75% minggu berdata) / SPIKE (minggu terburuk ≥60% |dev| bulanan) / VARIABEL + arah dominan + minggu terburuk (argmax via ROW_NUMBER) + **momentum** (tren |deviasi| paruh kedua vs pertama per outlet — baris per outlet×minggu sebagai lensa 'week' UNION ALL di query yang sama). 1 scan bulan, cache 5 mnt (reusable antar minggu — FE keyed month-only), rate-limit 30/mnt, maxDuration 60.
 - `GET /api/peer-comparison?outlet=&month=&week=&mode=&limit=&kelompok=` — **kini di-cache** (P3-HYG-3, 5 mnt + in-flight dedup). Cache key: outlet/month/week/kelompok + extra {mode, limit}. Dulu menjalankan CROSS JOIN multi-CTE di setiap request.
 - `GET /api/peer-comparison/items?outlet=&month=&week=&mode=&topItems=&kelompok=` — **kini di-cache** (P3-HYG-3). Compute di-ekstrak ke fungsi murni `computePeerComparisonItems`; extra {mode, topItems}.
 - `GET /api/peer-comparison/trend?outlet=&month=&peers=&kelompok=` — **kini di-cache** (P3-HYG-3). Kedua jalur (peer eksplisit + auto-compute ±10% band) dalam satu computeFn; extra {peers}.
@@ -152,7 +150,7 @@ Deviation is decomposed into 4 categories for root cause identification:
 1. `/api/analysis` (SWR 30 mnt TTL via `getCachedRawWithMeta` + background-recompute + **raw-JSON passthrough** — cache hit menyajikan string JSON tersimpan langsung, flag `cached`/`stale` di-inject via string surgery, NOL JSON.parse/stringify)
 2. `/api/pareto`
 3. `/api/recommendations`
-4. `/api/export-report` (binary docx — payload cache **base64** sejak P3-HYG-4, 1.33× ukuran biner vs 4× number[] lama)
+4. `/api/export-report` (binary PDF — payload cache **base64** sejak P3-HYG-4, 1.33× ukuran biner vs 4× number[] lama; output .docx → .pdf sejak EXPORT-PDF)
 5. `/api/outlet-items`
 6. `/api/item-history`
 7. `/api/drilldown`
@@ -175,7 +173,7 @@ Deviation is decomposed into 4 categories for root cause identification:
 
 ## 5. Components (35+)
 
-### Dashboard (`src/components/dashboard/` — 24 components + `tabs/` folder + `shared/` barrel)
+### Dashboard (`src/components/dashboard/` — 23 components + `tabs/` folder + `shared/` barrel)
 - `ExecutiveSummary` — KPI cards (sales, deviation, abnormal count)
 - `TopItems` — Top items by deviation
 - `TopOutlets` — REMOVED (H-11 #4a): duplikat Pareto tab byOutlet quadrant card (metrik sama ABS(SUM nominalDeviasi), 2 scan backend). Outlet 80/20 → tab Pareto; prioritas outlet Dashboard → Resto Prioritas Analisa + Ranking Kondisi Resto.
@@ -186,7 +184,6 @@ Deviation is decomposed into 4 categories for root cause identification:
 - `HistoricalZScoreCard` — Z-Score with 2-metric selector: Dev/BOM (ratio) + QTY Deviasi (absolute, signed display). Z-Score is SIGNED: positive=above historical mean (worse, red), negative=below (better, green). Only positive zScore triggers anomaly rules. Waste/Susut/Trial removed from selector per user request.
 - `BomCorrelationCard` — Per-record BOM correlation findings table (Outlet × Item × Rule × Growth × Ratio) + per-rule count badges + aggregate alignment table + narrative — *reads `bomCorrelationFindings` from `/api/analysis` response (added in FIX-BOM-UI rewrite)*
 - `ItemDeepDive` — Item-level deep dive
-- `Compliance` — **NEW PAKET E**: tab Kepatuhan (ke-6) — strip 6 KPI ringkasan + 9 section tabel lensa kontrol + 1 tabel kronis/momentum (query kedua keyed month-only); row item-grain klik → ItemDeepDive (`clickableRowProps` a11y); LevelBadge WARN/HIGH paritas rule; empty-state per section; `overflow-x-auto` mobile
 - `ParetoDashboard` — Pareto 80/20 analysis
 - `PeerComparison` — Outlet vs ±10% sales peers
 - `RestoAnalysis` — Restaurant analysis panel
@@ -195,17 +192,16 @@ Deviation is decomposed into 4 categories for root cause identification:
 - `DashboardHeader` — Sticky 2-tier header (logo + actions + FilterBar); extracted from `page.tsx` split
 - `DashboardFooter` — Sticky bottom footer (brand + stats + last-analysis perf); extracted from `page.tsx` split
 
-#### `tabs/` folder (6 tab modules + wrapper — extracted from `page.tsx` split)
+#### `tabs/` folder (5 tab modules + wrapper — extracted from `page.tsx` split; ComplianceTab dihapus b37cc40)
 - `DashboardTab.tsx` — Main overview tab (11 sections: Exec Summary, Resto Rec, Insights, Health+Growth, Multi-Period, Top Items+Outlets, Area+Ranking, Item Consistency [Massal/Regional/Lokal], Z-Score+BOM Correlation, Loss/Surplus, Heatmap). Owns 7 `next/dynamic` lazy imports for heavy chart components. **PAKET A**: semua `TabsContent` memakai `forceMount` + `data-[state=inactive]:hidden` (keep-alive — pindah tab tidak remount subtree; state lokal + scroll position bertahan).
 - `RestoTab.tsx` — Wraps lazy `RestoAnalysis` in `FetchAware` + `ErrorBoundary`
 - `PeerTab.tsx` — Wraps lazy `PeerComparison` in `FetchAware` + `ErrorBoundary`
 - `ParetoTab.tsx` — Wraps static `ParetoDashboard` in `FetchAware` + `ErrorBoundary`
-- `ComplianceTab.tsx` — **NEW PAKET E**: wrapper memo + dynamic + ErrorBoundary (pola PeerTab) untuk lazy `Compliance`
 - `ItemTrendTab.tsx` — Trend Item tab (5th tab) — item search autocomplete + metric selector (QTY Deviasi/Waste/Susut/Trial) + sortable table + Z-Score coloring (signed: positive=red/worse, negative=green/better) + Rank Badge header + Period drill-down + Rank Trend chart + Peer Comparison panel. See `tabs/ItemTrendTab/` folder above for the 8-module breakdown.
 - `ItemTrendLineChart.tsx` — Recharts LineChart (lazy-loaded) — dual Y-axis (QTY left, Z-Score right), historical mean baseline (dashed), color-coded Z-Score dots, ReferenceLines at z=±2,±3
 
-#### `tabs/ItemTrendTab/` folder (NEW Phase 1+2+3 + Phase A+B+C — 11 modules + barrel index, split from monolithic `ItemTrendTab.tsx`)
-- `index.tsx` — Trend Item tab orchestrator (663 LOC): `RankBadgeRow` (national rank from `topDeviasiRank`) + search bar + table + LineChart + RankChart + PeerComparison; owns `drillPeriod` state synced with dashboard month/week via "adjust state during render" pattern.
+#### `tabs/ItemTrendTab/` folder (NEW Phase 1+2+3 + Phase A+B+C — kini ~25 modul pasca SPLIT-B barrel/folder pattern, split dari monolithic `ItemTrendTab.tsx`)
+- `index.tsx` — Trend Item tab orchestrator (komposisi tipis pasca SPLIT-B — logika di hooks/ + components/): `RankBadgeRow` (national rank from `topDeviasiRank`) + search bar + table + LineChart + RankChart + PeerComparison; owns `drillPeriod` state synced with dashboard month/week via "adjust state during render" pattern.
 - `ItemTrendSearchBar.tsx` — Debounced autocomplete (≥2 chars) backed by `/api/item-search?mode=autocomplete`.
 - `ItemTrendTable.tsx` — Sortable period table (277 LOC) with Z-Score coloring (signed) + **Pattern column** (`patternBadge`: Massal ≥10 / Regional 5-9 / Lokal 2-4 / Tunggal =1) + **Flip column** (Phase A: per-period flip badge 🟢/🟡/🔴/⚪/📍).
 - `ItemTrendLineChart.tsx` — Recharts LineChart (lazy-loaded) — dual Y-axis (QTY left, Z-Score right), historical mean baseline (dashed), color-coded Z-Score dots, ReferenceLines at z=±2,±3, **amber dashed ring on flip dots** (Phase A — filtered to isFlip===true after BUG2-FLIP-01 fix).
@@ -281,7 +277,7 @@ Deviation is decomposed into 4 categories for root cause identification:
 ### Anomaly Engine
 - **19-rule engine** (15 original + 4 BOM correlation; spec deklaratif di `rules.yaml`, eksekusi SQL push-down)
 - Rules defined in `src/config/rules.yaml` (sole source of truth — `src/config/rules.ts` was deleted as dead code in FIX-DOCS)
-- Evaluator: SQL push-down in `src/lib/queries/rule-evaluation.ts` (16 rules) + JS post-process for zScore-based rules (3 rules: HISTORICAL_ABNORMAL, HISTORICAL_ABNORMAL_SURPLUS, HISTORICAL_WARNING). The former `BENCHMARK_ABOVE_AREA` + `BENCHMARK_ABOVE_NETWORK` rules were deleted in FIX-RULE-CONFIG (CONFIG-05) as duplicates of HISTORICAL_WARNING / HISTORICAL_ABNORMAL.
+- Evaluator: SQL push-down in `src/lib/queries/rule-evaluation.ts` — 16 rule period + 3 rule zScore (HISTORICAL_ABNORMAL, HISTORICAL_ABNORMAL_SURPLUS, HISTORICAL_WARNING) via `evaluateHistoricalRulesSql` (zScore SQL push-down sejak commit cb7f9cd "perf(H-9)"; dulu JS post-process). The former `BENCHMARK_ABOVE_AREA` + `BENCHMARK_ABOVE_NETWORK` rules were deleted in FIX-RULE-CONFIG (CONFIG-05) as duplicates of HISTORICAL_WARNING / HISTORICAL_ABNORMAL.
 - Analysis module: `patternEngine` (cross-outlet pattern detection). `rootCauseEngine` + `ruleService` dihapus sebagai dead code (Task W) — seluruh evaluasi rule berjalan via SQL di `rule-evaluation.ts`; teks rekomendasi yang hidup ada di InsightsPanel + resto-recommendations.
 
 ### 19 Anomaly Rules
@@ -295,7 +291,7 @@ Deviation is decomposed into 4 categories for root cause identification:
 | 5 | `WASTE_BOM_MISMATCH` | BOM | WARNING | 55 | Waste growth diverges from BOM growth (opposite sign) — *new* |
 | 6 | `SUSUT_BOM_MISMATCH` | BOM | WARNING | 54 | Susut growth diverges from BOM growth — *new* |
 | 7 | `TRIAL_BOM_MISMATCH` | BOM | WARNING | 53 | Trial growth diverges from BOM growth — *new* |
-| 8 | `BOM_DEVIATION_DISPROPORTIONATE` | BOM | WARNING | 56 | Deviation growth > 1.5× BOM growth (but ≤ 2×) — *new* |
+| 8 | `BOM_DEVIATION_DISPROPORTIONATE` | BOM | WARNING | 56 | Deviation growth > `BOM_DISPROPORTIONATE_FACTOR` (default 1.5) × BOM growth — upper bound ≤2× DIHAPUS sengaja (CONFIG-04: overlap >2× dimenangkan prioritas-88 oleh BOM_DEVIATION_MISMATCH via topFlagByKey dedup) — *new* |
 | 9 | `TOLERANCE_BREACH_HIGH` | TOLERANCE | ABNORMAL | 80 | `|Dev/BOM|` > 2× `|tolerancePct|` |
 | 10 | `TOLERANCE_BREACH` | TOLERANCE | WARNING | 70 | `|Dev/BOM|` > `|tolerancePct|` |
 | 11 | `TOLERANCE_NOT_SET_HIGH_DEV` | TOLERANCE | WARNING | 65 | High `|Dev/BOM|` but tolerance is NULL |
@@ -329,10 +325,10 @@ Deviation is decomposed into 4 categories for root cause identification:
 
 ### Trend Item Tab Expansion (NEW Phase 1+2+3)
 6 new modules in the Trend Item Tab (`/components/dashboard/tabs/ItemTrendTab/`):
-1. **Rank Badge** (Phase 1): `RankBadgeRow` in `index.tsx` — looks up national rank from `analysisData.topDeviasiRank` (filtered by `itemName`, `Math.min` across all matching outlet rows for best rank). Renders 3 badges: Deviasi rank (red ≤5 / amber 6-20 / muted >20), BOM rank (nullable for `qtyBom=0` items — BUG-1-01 fix), and outlet count. Fallback: "Rank > 50 Nasional" muted badge when item not in top-50.
-2. **Pattern column** (Phase 1): `patternBadge()` in `ItemTrendTable.tsx` — classifies period by `outletCount`: Massal ≥10 (🔴) / Regional 5-9 (🟡) / Lokal 2-4 (⚪) / Tunggal =1 (⚪, with BUG-1-02/03 cosmetic fix documented).
+1. **Rank Badge** (Phase 1): `RankBadgeRow.tsx` (file saudara di folder tab) — looks up national rank from `analysisData.topDeviasiRank` (filtered by `itemName`, `Math.min` across all matching outlet rows for best rank). Renders 3 badges: Deviasi rank (red ≤5 / amber 6-20 / muted >20), BOM rank (nullable for `qtyBom=0` items — BUG-1-01 fix), and outlet count. Fallback: "Rank > 50 Nasional" muted badge when item not in top-50.
+2. **Pattern column** (Phase 1): `patternBadge()` in `ItemTrendTable/patternBadge.ts` — classifies period by `outletCount`: Massal ≥10 (🔴) / Regional 5-9 (🟡) / Lokal 2-4 (⚪) / Tunggal =1 (📍, per BUG-1-03 — emoji 📍 dibedakan dari Lokal).
 3. **Rank Trend chart** (Phase 3): `ItemTrendRankChart.tsx` (264 LOC, 100px height) — Recharts LineChart with Y-axis INVERTED via `reversed` prop (rank #1 at top, worst rank at bottom). Per-dot coloring: red ≤5 / amber 6-20 / muted >20. ReferenceLines at y=5 (red dashed) + y=20 (amber dashed) — only rendered when `maxRank ≥ threshold`. Click handler syncs with `drillPeriod` (same pattern as `ItemTrendLineChart`). Backed by `/api/item-trend-rank`.
-4. **Item Peer Comparison** (Phase 2): `ItemPeerComparison.tsx` (797 LOC) — full panel with 4 analysis cards (now imported from `shared/peer-comparison-cards/` post-Batch-2 consolidation):
+4. **Item Peer Comparison** (Phase 2): folder `ItemPeerComparison/` (pasca SPLIT-B: index + card-compute + PeerTableRow + ItemPeerStates) — full panel with 4 analysis cards (now imported from `shared/peer-comparison-cards/` post-Batch-2 consolidation):
    - **EfficiencyScoreCard**: `100 - (devBomPenalty + nominalPenalty)`, each penalty bounded `[0,50]`, ABS magnitude comparison (BUG-2-03 fix).
    - **GapAnalysisCard**: Target vs peerAvg vs peerBest, with `Dev/BOM` row.
    - **ScatterPlotCard**: Peer outlets plotted on (BOM, Deviasi) — target highlighted with amber ring + larger radius (BUG-2-01/02 fix: target prepended to peers array).
@@ -344,7 +340,7 @@ Deviation is decomposed into 4 categories for root cause identification:
 ### Flip Pattern Detection (NEW Phase A+B+C)
 Detects **suspicious reversal patterns** — an item whose deviation flips sign between consecutive periods (P1=LOSS ↔ P2=SURPLUS) with magnitudes that nearly cancel each other out (disparity close to 0%). A perfectly balanced reversal is statistically improbable in normal operations and may indicate fraud, input error, or period-shifting to mask losses.
 
-**Formula** (`flipHelpers.ts`):
+**Formula** (`src/lib/flip-metrics.ts` — SATU modul bersama, di-import FE + BE; lihat catatan flipHelpers di bawah):
 - `isFlip(p1, p2)` = `sign(P1) !== sign(P2)` AND both non-zero (P1=0 or P2=0 → not a flip; same sign → not a flip)
 - `disparity(p1, p2)` = `|P1+P2| / MAX(|P1|,|P2|)` — **0% = perfectly balanced (suspicious)**; 100% = one period dominates
 - `categorizeFlip(disparity)`:
@@ -368,7 +364,7 @@ Detects **suspicious reversal patterns** — an item whose deviation flips sign 
 1. **Flip Ranking API** (`/api/flip-ranking?week=&month=&area=&kelompok=&outlet=&pic=&limit=`): scans ALL items per (period, item) SIGNED SUM(qtyDeviasi) aggregate via GROUP BY. Returns per-item: `flipCount` + `sempurnaCount` + `dominanCount` + `parsialCount` + `avgDisparity` + `riskScore` + `riskLevel` + `topFlips` (top 3 flip pairs with P1/P2/Δ/net/disparity/category). Sorted by `riskScore DESC, sempurnaCount DESC, flipCount DESC`. Items with 0 flip pairs filtered out (BUG2-FLIP-06 fix). 5-min DB cache + SWR. Month filter respects either full "Juli 2026" OR short "Jul" via ILIKE prefix.
 2. **Flip Ranking Widget** (`FlipRanking.tsx`): sortable 7-column table (Rank | Item | Flips | Sempurna | AvgDisparity | RiskScore | TopFlipPair) + tooltip showing P1/P2 signed QTY + net + disparity + category. Clickable row → `setTrendSelectedItem` → tab switches to Trend Item tab + search auto-populated. Drill-down expandable chevron **only on HIGH+MODERATE risk items** (LOW items have empty topFlips, so chevron hidden — UI2-08 a11y note).
 3. **Drill-down API** (`/api/flip-ranking/drilldown?item=&week=&month1=&month2=`): per-outlet breakdown for ONE flip pair. Returns outlet × P1 QTY + P2 QTY + Δ QTY + Net + flip% (disparityPct = `|net| / MAX(|P1|,|P2|) × 100`). Sorted by flip% ASC (most balanced at top). Filtered to flip-only outlets. Satuan-aware (dynamic unit, not hardcoded `kg` — SATUAN-BUG fix via `MAX(ir.satuan)` query + `ItemTrendPeriod.satuan` field).
-4. **Unified drill-down table** (Ide 3, no nominal): 1 row per outlet with Outlet | Area | PIC | P1 QTY | P2 QTY | Δ QTY | Net | 🔀 Flip%. Footer row shows TOTALS across ALL outlets (not just flip outlets). Backed by single `useFlipDrilldown` hook.
+4. **Unified drill-down table** (Ide 3, no nominal): 1 row per outlet with Outlet | Area | PIC | P1 QTY | P2 QTY | Δ QTY | Net | 🔀 Flip%. Footer row shows TOTALS across ALL outlets (not just flip outlets). Backed by the drill-down useQuery in `FlipDrillPanel.tsx`.
 
 **Bug fixes (BUG2-FLIP-01..06)** all addressed:
 - BUG2-FLIP-01: amber ring on non-flip pairs → filter `isFlip===true`
@@ -380,33 +376,12 @@ Detects **suspicious reversal patterns** — an item whose deviation flips sign 
 
 **Satuan-aware**: dynamic unit field via `MAX(ir.satuan)` query + `ItemTrendPeriod.satuan` in hook type. Extracted via `periods[0]?.satuan` in `index.tsx`, passed to `ItemTrendTable` + `FlipMatrix` + drill-down table. No more hardcoded `"kg"` (SATUAN-BUG fix).
 
-### Kontrol & Kepatuhan (NEW PAKET E — tab ke-6, 11 lensa dari 2 scan)
+### Kontrol & Kepatuhan — REMOVED (b37cc40)
 
-**Pertanyaan audit yang dijawab tab ini:** "apakah proses kontrol berjalan?" — bukan hanya "berapa besar deviasinya". Dua query backend:
-
-1. **`queryComplianceDashboard`** (`src/lib/queries/compliance.ts`) — 1 scan periode: CTE `base` (period+filter, per-record ABS/COALESCE expr) direferensikan 6 agregat (tol_item, outlet_agg, cat_agg, transfer_agg, transfer_top ROW_NUMBER, totals) → dimaterialisasi SEKALI → hasil 1 round-trip via `UNION ALL (lens, to_jsonb(row))` (to_jsonb menormalkan COUNT bigint → angka JSON).
-2. **`queryChronicOutlets`** (`src/lib/queries/chronic-outlets.ts`) — 1 scan bulan penuh: CTE `wk` (SUM per outlet×minggu) direferensikan 3 CTE + lensa 'week' (baris per outlet×minggu untuk momentum).
-
-**9 lensa period + 2 lensa month-grain:**
-
-| # | Lensa | Sumber data | Nilai audit |
-|---|-------|-------------|-------------|
-| 1 | Kepatuhan toleransi per item | flag `f_tol_*` paritas rule engine (`getRuntimeThresholds()` yang SAMA) | Item pelanggar terbanyak |
-| 2 | Prioritas penetapan toleransi | `tolerancePct` NULL + deviasi besar | Daftar aksi "tetapkan toleransi dulu" |
-| 3 | Deviasi tak terjelaskan per outlet | residual = dev − (waste+susut+trial), WARN/HIGH paritas rule | Indikator penyelidikan terkuat |
-| 4 | Efisiensi vs penjualan | \|deviasi\|/penjualan per outlet | Pembanding apple-to-appel outlet beda ukuran |
-| 5 | Kategori BAHAN vs PACKAGING | `Item.category` | Split sumber deviasi per kategori |
-| 6 | Indikasi transfer antar outlet | item×area loss↔surplus serentak + outlet terbesar per sisi | Stok berpindah tanpa dokumen |
-| 7 | Ketidakcocokan antar-area | pairing loss area A ↔ surplus area B dari baris `transfer_agg` SAMA (nol scan tambahan) | Mutasi antar area tanpa dokumen |
-| 8 | Kronis vs sekali-timu per outlet | month-grain (route terpisah) — KRONIS ≥75% minggu / SPIKE minggu terburuk ≥60% | Masalah sistemik vs peristiwa sekali |
-| 9 | Kualitas input: angka bulat | share \|qtyDeviasi\| berakhir 0/5 vs baseline periode (3 kolom FILTER di scan sama) | PIC menaksir vs menghitung |
-| 10 | Momentum outlet | rata \|dev\| paruh kedua vs pertama (lensa 'week' di query chronic sama) | Memburuk → intervensi dini |
-| 11 | Drilldown baris item | 4 tabel item-grain klik → modal `ItemDeepDive` reuse (a11y `clickableRowProps`) | Turun ke detail tanpa endpoint baru |
-
-**Paritas threshold PENUH dengan rule engine**: lensa 1/3 memakai `stdDevBomPct`/`residualWarnPct`/`residualHighPct` dari `getRuntimeThresholds()` — panel dan mesin rule mustahil beda versi. **Tabel outlet-grain (residual/penjualan/kronis/angka-bulat) sengaja tidak klik-able** — ItemDeepDive berbasis item×minggu, bukan outlet×bulan.
+> **FITUR DIHAPUS atas permintaan user** (commit `b37cc40`, −2.268 LOC): tab Kepatuhan (ke-6) + komponen `Compliance.tsx` (804 LOC) + `tabs/ComplianceTab.tsx` + `src/lib/queries/compliance.ts` (741 LOC) + `src/lib/queries/chronic-outlets.ts` + route pair `/api/compliance` + `/api/chronic-outlets` + invalidasi cache terkait. Nol konsumen/test tersisa. Perhitungan lensanya (11 lensa, 2 scan, paritas threshold rule engine) tercatat VERIFIED-MATCH terhadap spesifikasi lama di `agent-ctx/VERIFY-COMPLIANCE.md` (audit forensik dari git `b37cc40^`) sebelum fitur dihapus. Dashboard kembali 5 tab.
 
 ### Data Operations
-- Export laporan Word (`.docx`)
+- Export laporan **PDF** (`.pdf` — server-side custom PDF builder: `services/pdf/` 14 modul [primitives + charts + 10 section + style + context + orkestrator], tanpa dependensi eksternal; output .docx diganti .pdf sejak EXPORT-PDF; header minimal + kolom satuan + heat map dua-ramp [minus=merah loss / plus=hijau surplus, magnitude ABS] per HEAT-SIGN)
 - Import Excel + Google Drive
 - Settings (configurable thresholds incl. `BOM_DISPROPORTIONATE_FACTOR`, `BOM_DEVIATION_FACTOR`, residual/tolerance/zScore thresholds; UI editable)
 
@@ -415,7 +390,7 @@ Detects **suspicious reversal patterns** — an item whose deviation flips sign 
 ### Caching
 - **DB-level `AggregationCache`** (TTL: 5 mnt default; `/api/analysis` 30 mnt via `ANALYSIS_CACHE_TTL_MINUTES` — data immutabel antar mutasi, mutasi selalu invalidate; `awaitWrite` pattern)
   - API: `getCached()`, `setCached()` (MUST be `await`-ed with `awaitWrite=true`), `invalidateAll()`, `getCachedWithMeta()` (returns `{ data, stale }` without deleting expired row, for SWR pattern), `getCachedRawWithMeta()` (NEW P3-HYG-1 — returns `{ raw, stale }` RAW JSON string tanpa parse, untuk raw passthrough)
-  - **20 cached route prefixes**: `analysis`, `pareto`, `recommendations`, `export-report`, `outlet-items`, `item-history`, `drilldown`, `area-item-heatmap`, `item-trend`, `item-peer-comparison`, `item-trend-rank`, `flip-ranking`, `flip-ranking-drilldown`, `item-anomali-outlets`, `peer-comparison`, `peer-comparison-items`, `peer-comparison-trend` (P3-HYG-3), `price-effect` (Task W), `item-search` + `heatmap-cell-detail` (H-8 QW6, 60 dtk) — plus **14 `q-*` shared-query prefixes** (P2-9 ×6 + `q-outlet-agg` H-10 + H-11 #3 ×7: `q-exec-summary`, `q-top-nominal`, `q-top-devbom`, `q-area`, `q-hist-stats`, `q-hist-critical`, `q-hist-catavg` — SEMUA query berat yang dihitung pipeline analysis + export-report kini di-share; helper key `histPeriodsKeyParts` + `histCriticalKeysHash` + wrapper Map-safe `cachedSharedQueryMap` di `src/lib/queries/query-cache.ts`)
+  - **20 cached route prefixes**: `analysis`, `pareto`, `recommendations`, `export-report`, `outlet-items`, `item-history`, `drilldown`, `area-item-heatmap`, `item-trend`, `item-peer-comparison`, `item-trend-rank`, `flip-ranking`, `flip-ranking-drilldown`, `item-anomali-outlets`, `peer-comparison`, `peer-comparison-items`, `peer-comparison-trend` (P3-HYG-3), `price-effect` (Task W), `item-search` + `heatmap-cell-detail` (H-8 QW6, TTL 5 mnt sejak a70d1c8) — plus **14 `q-*` shared-query prefixes** (P2-9 ×6 + `q-outlet-agg` H-10 + H-11 #3 ×7: `q-exec-summary`, `q-top-nominal`, `q-top-devbom`, `q-area`, `q-hist-stats`, `q-hist-critical`, `q-hist-catavg` — SEMUA query berat yang dihitung pipeline analysis + export-report kini di-share; helper key `histPeriodsKeyParts` + `histCriticalKeysHash` + wrapper Map-safe `cachedSharedQueryMap` di `src/lib/queries/query-cache.ts`)
   - `invalidateAnalysisCache()` clears ALL of those prefixes on any mutation (ingest, settings, pic, data delete, migrate-direction, import-drive)
 - **Stale-While-Revalidate (SWR)** (PERF-CACHE-09 + CACHE-01 + AUDIT-PERF-5): `withCacheAndDedup()` implements SWR on top of `getCachedWithMeta`:
   - Fresh hit → return immediately
@@ -465,7 +440,7 @@ Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgft
 | `/api/pareto` | 4.77s | 0.22s | SWR — stale hit <50ms; nested-Pareto N+1 (10 tx) → 1 query ROW_NUMBER (f6a126b); H-12: item→outlet eksplisit = derive dari `nested` (nol query ke-2) |
 | `/api/peer-comparison` ×3 | CROSS JOIN multi-CTE | <100ms | **kini di-cache** (P3-HYG-3 — dulu full compute per request) |
 | `/api/recommendations` | 1.92s | 0.22s | Parallelized metadata fetch (PERF-API-05) + scan-merge (PAKET B) |
-| `/api/export-report` | 0.34s | 0.22s | Binary docx, SWR internal; payload cache base64 (P3-HYG-4) |
+| `/api/export-report` | 0.34s | 0.22s | Binary PDF, SWR internal; payload cache base64 (P3-HYG-4) |
 | `/api/outlet-items` | 2.17s | 0.006s | cached (PERF-API-01) — 157× warm speedup |
 | `/api/item-history` | 1.37s | 0.006s | cached (PERF-API-02) — 83× warm speedup |
 | `/api/drilldown` | 1.01s | 0.023s | cached (PERF-API-03) + slim `select` (PERF-API-06) |
@@ -511,14 +486,14 @@ Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgft
 
 | Metric | Value |
 |--------|-------|
-| Lines of code in `src/` | 57,666 (Task W: −1.709 baris dead code dihapus, +880 baris fitur price-effect: query + route + PriceEffectCard) |
-| Test files | 21 |
-| Test cases | 402 |
+| Lines of code in `src/` | 67,236 (Task W cleanup + price-effect + PDF export builder + batch modularity SPLIT-1/2: 11 god-file → ~95 modul) |
+| Test files | 31 |
+| Test cases | 512 |
 | Git commits | 514 |
 | npm dependencies | 31 |
-| API routes (main) | 36 (was 35 — Task W added price-effect) |
-| Cached routes | 21 (was 20 — Task W added price-effect) |
-| Dashboard components | 25 (+`Compliance`) + `tabs/ItemTrendTab/` folder (11 modules + barrel) + `tabs/ComplianceTab.tsx` + `AreaItemHeatmapSheet` + `DashboardHeader` + `DashboardFooter` + `shared/peer-comparison-cards/` (7 files) + `shared/` dashboard components (5 TREMOR) |
+| API routes (main) | 35 (36 − 2: `/api/compliance` + `/api/chronic-outlets` dihapus bersama tab Kepatuhan, b37cc40) |
+| Cached routes | 20 (21 − Kepatuhan pair; diverifikasi rg cache-marker per route) |
+| Dashboard components | 24 + `tabs/ItemTrendTab/` folder (~25 modul pasca SPLIT-B: hooks/ + components/ + 3 subfolder modul) + `AreaItemHeatmapSheet` + `DashboardHeader` + `DashboardFooter` + `shared/peer-comparison-cards/` (7 files) + `shared/` dashboard components (5 TREMOR) |
 | UI components | 30 (29 shadcn + Callout) |
 | Dashboard component patterns | 9 total (3 evidence-dev + 6 tremor) |
 | Format presets | 33 (in `lib/format.ts`) |
@@ -529,7 +504,7 @@ Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgft
 | Bug fixes (audit intensif) | BUG-3 NULL-akun dedup, BUG-4 silent row loss, BUG-5 cross-instance lock (ingest integrity) + BUG-KELOMPOK-CACHE + BUG-EDGE-4 key collision + Week dedup + 429 upload + delete 30s-kill + 12 P3-HYG hygiene |
 | Bug fixes (cumulative sebelumnya) | 64 total (Phase 1+2+3 + audit v2 + calc + UI) + 6 flip (BUG2-FLIP-01..06) |
 | File consolidation | 2 batches (Batch 1 helpers + Batch 2 peer-comparison cards) + 11 god-file splits barrel pattern |
-| Removed features | Audit Log (~565 LOC); `TrendChart` (dead export, P3-HYG-5); `package-lock.json` stale (PAKET C — bun.lock satu-satunya) |
+| Removed features | Audit Log (~565 LOC); `TrendChart` (dead export, P3-HYG-5); `package-lock.json` stale (PAKET C — bun.lock satu-satunya); **tab Kepatuhan + route pair `/api/compliance`+`/api/chronic-outlets` (~2.268 LOC, b37cc40 — atas permintaan user)** |
 | Git identity | `anandategarch <anandategarch@users.noreply.github.com>` (author + committer) |
 
 ---
@@ -539,15 +514,13 @@ Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgft
 ```
 src/
 ├── app/
-│   ├── page.tsx                    # Thin orchestrator (288 lines — 6 tabs: Dashboard/Resto/Peer/Pareto/Trend Item/Kepatuhan; semua TabsContent forceMount keep-alive PAKET A)
+│   ├── page.tsx                    # Thin orchestrator (288 lines — 5 tabs: Dashboard/Resto/Peer/Pareto/Trend Item (tab Kepatuhan dihapus b37cc40); semua TabsContent forceMount keep-alive PAKET A)
 │   ├── layout.tsx                  # Root layout (skip-to-content, Toaster, QueryProvider)
 │   └── api/                        # 35 API routes + sub-routes
 │       ├── area-item-heatmap/
 │       │   ├── route.ts            # Heatmap matrix (cached, SWR)
 │       │   └── cell-detail/route.ts # Per-outlet drill-down (NOT cached)
 │       ├── analysis/services/      # 8-stage pipeline (validate/fetch/run-queries/post-process/exec-summary/assemble/trend-builder/deviation-drivers) — validate-and-resolve memuat raw-JSON passthrough (P3-HYG-1) + background-recompute (SWR 30 mnt)
-│       ├── chronic-outlets/route.ts # NEW PAKET E: month-grain kronis vs spike + momentum (cached, SWR)
-│       ├── compliance/route.ts     # NEW PAKET E: 9 lensa kontrol dari 1 scan (cached, SWR)
 │       ├── flip-ranking/           # Phase C: cross-item flip risk ranking (cached, SWR)
 │       │   ├── route.ts            # Risk score + sempurna/dominan/parsial counts
 │       │   └── drilldown/route.ts  # Per-outlet unified table (cached, SWR)
@@ -559,15 +532,13 @@ src/
 │       ├── outlet-items/route.ts   # Cached (slim route + services/ siblings)
 │       ├── item-history/route.ts   # Cached
 │       ├── drilldown/route.ts      # Cached (slim select, respects dashboard filters)
-│       ├── pareto|recommendations|resto-bahan-matrix|export-report|analysis  # Original 5 cached routes (export-report: services/ data-fetcher + docx-builder — payload cache base64)
+│       ├── pareto|recommendations|export-report|analysis  # Cached routes (export-report: services/data-fetcher/ [9 modul pasca SPLIT-A] + services/pdf/ [14 modul] — payload cache base64; resto-bahan-matrix dihapus H-10)
 │       ├── peer-comparison/        # 3 routes, SEMUA cached (P3-HYG-3): route.ts + items/route.ts (computePeerComparisonItems) + trend/route.ts
 │       ├── status/route.ts         # NO_STORE HTTP headers (BUG-PIC-STALE fix)
 │       └── ...                     # 10 other routes (data, ingest-*, pic + pic/import, settings, setup, refresh, migrate-direction) — /api/audit-log REMOVED
 ├── components/
 │   ├── dashboard/
-│   │   ├── tabs/ItemTrendTab/      # 11 modules + barrel index — index.tsx + ItemTrendSearchBar + ItemTrendTable + ItemTrendLineChart + ItemTrendRankChart + ItemPeerComparison + FlipMatrix [P-B] + FlipRanking [P-C] + flipHelpers [P-A] + types + zScoreHelpers + periodHelpers
-│   │   ├── tabs/ComplianceTab.tsx  # NEW PAKET E: wrapper memo+dynamic+ErrorBoundary (pola PeerTab)
-│   │   ├── Compliance.tsx          # NEW PAKET E: 6 KPI + 10 section tabel lensa kontrol + kronis/momentum + drilldown ItemDeepDive
+│   │   ├── tabs/ItemTrendTab/      # ~25 modul pasca SPLIT-B — index.tsx (entry komposisi) + hooks/ (3) + components/ (4) + ItemTrendTable/ + ItemPeerComparison/ + FlipRanking/ (folder modul) + FlipMatrix + FlipSummaryCard + FlipDrillPanel + ItemTrendLineChart + ItemTrendRankChart + ItemTrendSearchBar + RankBadgeRow + flipHelpers [P-A] + flip-badges + types + zScoreHelpers + periodHelpers (formula inti flip: src/lib/flip-metrics.ts shared FE+BE)
 │   │   ├── AreaItemHeatmap.tsx     # Heatmap matrix component (549 lines)
 │   │   ├── AreaItemHeatmapSheet.tsx # drill-down Sheet (lazy-loaded via next/dynamic)
 │   │   ├── BomCorrelationCard.tsx  # Per-record BOM findings table
@@ -592,7 +563,7 @@ src/
 │   ├── useDashboardActions.ts      # NEW (SPLIT-PAGE): export/refresh handlers + keyboard shortcuts. H-12: handleRefresh kini meng-invalidate 18 key (10 lama + price-effect, item-anomali-outlets, flip-ranking, flip-drilldown, item-trend-rank, item-search, item-peer-comparison, heatmap-cell-detail)
 │   └── use-toast.ts                # shadcn toast hook (use-mobile.ts DELETED di H-10 — zero importers)
 ├── lib/
-│   ├── queries/                    # 16+ query modules (SQL push-down, incl. heatmap.ts + item-trend.ts + item-trend-rank.ts + item-peer-comparison.ts + flip-ranking.ts + flip-drilldown.ts + compliance.ts [NEW PAKET E] + chronic-outlets.ts [NEW PAKET E] + shared.ts buildSqlFilters + items/item-outlet-breakdown.ts [NEW H-12: core SQL per-item per-outlet GROUP BY dipakai bersama anomali-outlets + heatmap cell detail + flip drilldown ×2])
+│   ├── queries/                    # 16+ query modules (SQL push-down, incl. heatmap.ts + item-trend.ts + item-trend-rank.ts + item-peer-comparison.ts + flip-ranking.ts + flip-drilldown.ts + shared.ts buildSqlFilters + items/item-outlet-breakdown.ts [NEW H-12: core SQL per-item per-outlet GROUP BY dipakai bersama anomali-outlets + heatmap cell detail + flip drilldown ×2]; compliance.ts + chronic-outlets.ts DIHAPUS b37cc40)
 │   ├── metrics/                    # 8 metric functions (deviation, benchmark, historical, growth)
 │   ├── cache-headers.ts            # HTTP Cache-Control presets
 │   ├── early-http-response.ts      # NEW (H-12): EarlyHttpResponse — 1 definisi bersama (dulu 3×: export-report + outlet-items services + item-history) — abort signal untuk computeFn dalam withCacheAndDedup (404 tidak mengisi cache)
