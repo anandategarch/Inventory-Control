@@ -51,6 +51,10 @@ export function FlipRankingRow({
   pic,
 }: FlipRankingRowProps) {
   const topFlip = item.topFlips[0];
+  // VERIFY-FLIP: Δ (P2 − P1) shown in the tooltip — master context requires
+  // topFlips pairs to carry P1/P2/Δ/net/disparity/category. Fallback covers
+  // a cached pre-fix payload without the explicit `delta` field.
+  const topFlipDelta = topFlip ? (topFlip.delta ?? topFlip.qtyP2 - topFlip.qtyP1) : 0;
   const rb = riskBadge(item.riskLevel);
   const cb = topFlip ? categoryBadge(topFlip.category) : null;
   // Drill-down key — only meaningful when there's a topFlip.
@@ -148,6 +152,12 @@ export function FlipRankingRow({
                       <span className="text-muted-foreground">P2 (signed):</span>
                       <span className={`font-medium tabular-nums ${topFlip.qtyP2 < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
                         {fmtNum(topFlip.qtyP2, '', false)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-muted-foreground">Δ (P2−P1):</span>
+                      <span className={`font-medium tabular-nums ${topFlipDelta < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                        {topFlipDelta >= 0 ? '+' : ''}{fmtNum(topFlipDelta, '', false)}
                       </span>
                     </div>
                     <div className="flex justify-between gap-4">

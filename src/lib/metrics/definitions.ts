@@ -78,10 +78,13 @@ export const NOMINAL_LOSS_SURPLUS_NET = 'absNominalLossSurplus (NET financial im
 
 /**
  * Residual:
- *   ABS(Net Deviation) — clamp to 0 if over-explained
- *   residual = Math.max(0, ABS(qtyDeviasi) - ABS(waste + susut + trial))
+ *   Sisa (unexplained) deviation = GROSS deviation − komponen terjelaskan.
+ *   |residual| = Math.max(0, ABS(qtyDeviasi) - (ABS(waste) + ABS(susut) + ABS(trial)))
+ *   (abs-each-then-sum — BUG-2-9: benar untuk komponen campuran tanda;
+ *   transform.ts menyimpan nilai bertanda mengikuti tanda qtyDeviasi)
  *
- * Master context #11: Residual = sisa setelah W+S+T (unexplained deviation)
+ * Master context: QTY Loss/Surplus = residual = Deviation − Waste − Susut − Trial
+ * (dihitung sebagai SISA oleh konstruksi, bukan kolom input)
  */
 export const RESIDUAL = 'Math.max(0, absDev - explained)';
 

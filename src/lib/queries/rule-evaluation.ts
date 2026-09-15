@@ -88,16 +88,22 @@ export async function evaluateRulesSql(
         ${prevFilter}
         ${f}
     ),
-    -- Historical stats per outlet+item (for zScore)
+    -- Historical stats per outlet+item (for zScore): NOT computed in this
+    -- query — the 3 zScore rules (HISTORICAL_ABNORMAL / _SURPLUS / WARNING)
+    -- are evaluated by evaluateHistoricalRulesSql below (SQL push-down since
+    -- PERF TAHAP-2/P2-7, which replaced the old JS post-process loop over a
+    -- pre-fetched historicalByOutletItem stats Map). The placeholder CTE
+    -- below is a no-op (WHERE 1=0; never referenced by the flags CTE or the
+    -- outer SELECT). NOTE (VERIFY-RULES audit): it is kept because
+    -- tests/queries/rule-evaluation.test.ts ("uses prevFilter sentinel")
+    -- asserts the literal "1=0" text in the template strings — the real
+    -- prevFilter sentinel "AND 1=0" is a Prisma.sql VALUE that does not
+    -- surface in that template-string join, so this placeholder is what the
+    -- assertion actually matches. Removing it requires updating that test
+    -- to inspect the interpolated values instead.
     hist AS (
       SELECT hs."outletId", hs."itemId", hs.mean, hs."stdDev", hs.n
       FROM (
-        -- This is a placeholder — actual historical stats are passed in via
-        -- a Map from the caller (historicalByOutletItem). We can't inline
-        -- the full historical query here because it needs the same weekLabel
-        -- filter across ALL months. Instead, we'll compute zScore in JS
-        -- using the pre-fetched historicalByOutletItem map.
-        -- For now, return empty — zScore rules will be evaluated in JS post-processing.
         SELECT NULL::int as "outletId", NULL::int as "itemId",
                NULL::float as mean, NULL::float as "stdDev", 0 as n
         WHERE 1=0

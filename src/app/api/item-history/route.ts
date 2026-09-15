@@ -20,6 +20,7 @@ import {
   computeZScore,
   computeDeterioration,
   computePriority,
+  computeResidual,
   type HistoricalInput,
   type PriorityInput,
 } from '@/lib/metrics';
@@ -297,9 +298,15 @@ export async function GET(req: NextRequest) {
       residualRatio: currentPeriod.residualRatio,
       zScore: historicalResult.zScore,
       isOverExplained: (() => {
-        const explained = currentPeriod.qtyWaste + currentPeriod.qtySusut + currentPeriod.qtyTrial;
-        const absDev = Math.abs(currentPeriod.qtyDeviasi ?? 0);
-        return absDev > 0 && explained > absDev;
+        // FIX (VERIFY-CORE cross-domain): use the CANONICAL computeResidual
+        // helper (abs-each-then-sum, BUG-2-9 — same form as the rule engine's
+        // f_over_explained SQL) instead of a raw signed sum. The timeline
+        // mapper pre-ABSes the three components so the values coincided
+        // today, but the inline form silently diverged from the rule engine
+        // the moment the mapper changed. computeResidual also handles the
+        // qtyDeviasi null + zero-dev guards identically to the SQL rule.
+        const r = computeResidual(currentPeriod.qtyDeviasi ?? null, currentPeriod.qtyWaste ?? null, currentPeriod.qtySusut ?? null, currentPeriod.qtyTrial ?? null);
+        return r.isOverExplained;
       })(),
       thresholds: priorityThresholds,
     });

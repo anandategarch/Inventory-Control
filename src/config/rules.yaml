@@ -4,7 +4,8 @@
 #  SPEC ONLY (Task W / dead-code cleanup): file ini adalah SPESIFIKASI
 #  deklaratif 19 aturan anomaly — dokumentasi satu-satunya definisi rule.
 #  Eksekusi aktual ada di src/lib/queries/rule-evaluation.ts
-#  (16 rule via SQL push-down + 3 rule zScore via evaluateHistoricalRulesJs).
+#  (16 rule via SQL push-down + 3 rule zScore via evaluateHistoricalRulesSql —
+#  PERF TAHAP-2/P2-7 moved the zScore rules from JS post-process to SQL).
 #  Legacy JS evaluator (src/engine/rules/) dihapus — tidak ada pemanggil
 #  produksi sejak migrasi SQL. Saat menambah/mengubah aturan: update file
 #  ini (dokumentasi spec) DAN rule-evaluation.ts (implementasi) — keduanya
@@ -18,10 +19,16 @@
 #
 #  Field yang tersedia (dari PeriodComparison + InventoryRecord):
 #    salesGrowth, bomGrowth, qtyDeviasiGrowth, nominalDeviasiGrowth
+#    wasteGrowth, susutGrowth, trialGrowth (BOM correlation — ABS magnitude,
+#    dihitung di rule-evaluation CTE dengan div-by-zero guard)
 #    deviationToSalesRatio, deviationToBomRatio, benchmarkFlag, zScore
 #    qtyDeviasi, nominalDeviasi, qtyWaste, qtySusut, qtyTrial, qtyLossSurplus
 #    residualQty, residualRatio, tolerancePct, pctQtyDeviasiToBom
 #    direction (LOSS | SURPLUS | NEUTRAL)
+#    Derived helpers: absPctQtyDeviasiToBom, absTolerancePct,
+#    nominalLossSurplus, absNominalLossSurplus, deviationBomRatio
+#    (= qtyDeviasiGrowth / bomGrowth saat bomGrowth > 0),
+#    isOverExplained, isDirectionFlip
 #
 #  Field threshold runtime (dari Settings DB — bisa dipakai sebagai operand):
 #    stdDeviasiBomPct, stdSusutPct, stdWastePct, stdTrialPct
@@ -241,7 +248,8 @@ rules:
       Nominal LOSS {{absNominalLossSurplus}} tinggi.
 
   # ===== BENCHMARK rules removed in FIX-RULE-CONFIG (CONFIG-05) =====
-  # BENCHMARK_ABOVE_AREA + BENCHMARK_ABOVE_NETWORK were duplicates of
+  # The two legacy BENCHMARK comparison rules (area-tier WARNING +
+  # network-tier ABNORMAL) were duplicates of
   # HISTORICAL_WARNING/HISTORICAL_ABNORMAL (same zScore condition).
   # Already removed from SQL (rule-evaluation.ts) + JS post-process in Phase A-2.
   # YAML definitions deleted here to keep config consistent with runtime.
@@ -294,4 +302,4 @@ rules:
         - zScore: { gt: historicalZscoreWarn }
         - zScore: { lte: historicalZscoreHigh }
     narrative_template: >
-      Peringatan: Deviasi/BOM {{zScore}} std-dev di atas rata-rata historis (z > 1.0).
+      Peringatan: Deviasi/BOM {{zScore}} std-dev di atas rata-rata historis (z > 1.5 — ambang historicalZscoreWarn default).

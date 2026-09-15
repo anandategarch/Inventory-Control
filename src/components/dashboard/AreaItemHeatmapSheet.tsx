@@ -110,7 +110,13 @@ export default function AreaItemHeatmapSheet({
   const totalQtyWaste = useMemo(() => rows.reduce((s, r) => s + r.qtyWaste, 0), [rows]);
   const totalQtySusut = useMemo(() => rows.reduce((s, r) => s + r.qtySusut, 0), [rows]);
   const totalQtyTrial = useMemo(() => rows.reduce((s, r) => s + r.qtyTrial, 0), [rows]);
-  const outletCount = rows.length;
+  // FIX (VERIFY-DISPLAY): rows are per (outlet × akunPenyesuaian) — a multi-akun
+  // outlet (e.g. "ADJUSTMENT" + "INVENTORY") contributes MULTIPLE rows. "Total
+  // Resto" / "Ø PER RESTO" must use the DISTINCT outlet count (master context:
+  // "Ø PER RESTO row (avg per outlet)"), not the row count — dividing by
+  // rows.length understated the per-resto average for multi-akun outlets.
+  // Plain const (no useMemo) to match the original non-hook form; rows ≤ 1000.
+  const outletCount = new Set(rows.map((r) => r.outletCode)).size;
   const avgNominal = outletCount > 0 ? totalNominal / outletCount : 0;
   const avgQtyDeviasi = outletCount > 0 ? totalQtyDeviasi / outletCount : 0;
   const avgQtyBom = outletCount > 0 ? totalQtyBom / outletCount : 0;
@@ -153,7 +159,7 @@ export default function AreaItemHeatmapSheet({
             <div className="px-4 py-3 border-b bg-muted/20 grid grid-cols-4 gap-2 text-center">
               <div>
                 <div className="text-[10px] text-muted-foreground">Total Resto</div>
-                <div className="text-sm font-semibold">{rows.length}</div>
+                <div className="text-sm font-semibold">{outletCount}</div>
               </div>
               <div>
                 <div className="text-[10px] text-muted-foreground">Total Qty Deviasi</div>
@@ -223,7 +229,7 @@ export default function AreaItemHeatmapSheet({
                   </tbody>
                   <tfoot>
                     <tr className="border-t-2 bg-muted/20 font-semibold">
-                      <td className="py-2 px-1.5">TOTAL ({rows.length} resto)</td>
+                      <td className="py-2 px-1.5">TOTAL ({outletCount} resto)</td>
                       <td className="py-2 px-1.5 text-right tabular-nums">{fmtNum(totalQtyBom)}</td>
                       <td className="py-2 px-1.5 text-right tabular-nums">{fmtNum(totalQtyDeviasi)}</td>
                       <td className="py-2 px-1.5 text-right tabular-nums">

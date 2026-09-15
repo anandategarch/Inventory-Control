@@ -78,6 +78,9 @@ export interface FlipPair {
   qtyP2: number;
   /** P1 + P2 (closer to 0 = more balanced reversal). */
   net: number;
+  /** P2 − P1 (signed change between the two periods). VERIFY-FLIP: master
+   *  context requires topFlips pairs to carry P1/P2/Δ/net/disparity/category. */
+  delta: number;
   /** disparity × 100, rounded to 1 decimal (0.0 to 100.0). */
   disparityPct: number;
   /** 'sempurna' | 'dominan' | 'parsial' — only set for flip pairs. */
@@ -322,6 +325,7 @@ export async function queryFlipRanking(
           qtyP1: v1,
           qtyP2: v2,
           net,
+          delta: v2 - v1,
           disparityPct: Number((disparity * 100).toFixed(1)),
           category,
         });

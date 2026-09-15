@@ -124,15 +124,21 @@ export function useItemTrendDerived({
           // FIX (BUG2-FLIP-04): use null + custom comparator so non-flip
           // rows ALWAYS sort to bottom regardless of ASC/DESC direction.
           // (was -1 which put non-flips at TOP on ASC — confusing UX).
+          // FIX (VERIFY-FLIP cross-domain): the null sentinels below used
+          // to flow through the shared `sortDir === 'desc' ? -cmp : cmp`
+          // negation, which flipped them on DESC — putting NON-flip rows at
+          // the TOP on the default descending click (regression of
+          // BUG2-FLIP-04). Early-return keeps nulls pinned to the bottom
+          // in BOTH directions; only the real disparity comparison is
+          // direction-aware.
           const fa = flips ? getFlipForPeriod(flips, flipPeriodKey(a)) : null;
           const fb = flips ? getFlipForPeriod(flips, flipPeriodKey(b)) : null;
           const va = fa && fa.isFlip ? fa.disparityPct : null;
           const vb = fb && fb.isFlip ? fb.disparityPct : null;
-          if (va == null && vb == null) cmp = 0;
-          else if (va == null) cmp = 1;  // a (non-flip) goes below b
-          else if (vb == null) cmp = -1; // b (non-flip) goes below a
-          else cmp = va - vb;
-          break;
+          if (va == null && vb == null) return 0;
+          if (va == null) return 1;  // a (non-flip) below b — BOTH directions
+          if (vb == null) return -1; // b (non-flip) below a — BOTH directions
+          return sortDir === 'desc' ? vb - va : va - vb;
         }
       }
       return sortDir === 'desc' ? -cmp : cmp;

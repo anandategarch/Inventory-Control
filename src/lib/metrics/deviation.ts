@@ -8,18 +8,18 @@
 //
 //  FIX (audit issue #4, #18): No DB/Prisma imports — pure functions only.
 //  DB access stays in queries.ts/repository layer.
-//  FIX: toNum imported from @/lib/format (deduplicated).
 // ============================================================
 
-import { toNum } from '@/lib/format';
+import type { Direction } from './definitions';
 
 const safeDiv = (num: number, den: number): number => den > 0 ? num / den : 0;
 
 // ============================================================
 //  Direction — Single Implementation (audit issue #14)
-//  Master context #9: from NET Deviation (qtyLossSurplus), fallback to GROSS
+//  Master context: Direction Convention — LOSS = nominalLossSurplus < 0
+//  (dihitung dari NET deviation qtyLossSurplus — sign-equivalent dengan
+//  nominalLossSurplus karena nominal = qty × price, price >= 0)
 // ============================================================
-import type { Direction } from './definitions';
 
 /**
  * Compute direction from NET deviation (qtyLossSurplus).
@@ -58,8 +58,9 @@ export function computeDevBomPerRow(qtyDeviasi: number | null, qtyBom: number | 
 }
 
 /**
- * Residual: Math.max(0, ABS(qtyDeviasi) - ABS(waste + susut + trial))
- * Master context #11: Residual = sisa setelah W+S+T
+ * Residual: Math.max(0, ABS(qtyDeviasi) - (ABS(waste) + ABS(susut) + ABS(trial)))
+ * (abs-each-then-sum — BUG-2-9: benar untuk komponen campuran tanda)
+ * Master context: Residual = Deviation − Waste − Susut − Trial (sisa, bukan kolom input)
  */
 export function computeResidual(
   qtyDeviasi: number | null,

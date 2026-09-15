@@ -24,6 +24,11 @@ export interface FlipPair {
   qtyP1: number;
   qtyP2: number;
   net: number;
+  /** P2 − P1 (signed change between the two periods). VERIFY-FLIP: master
+   *  context requires topFlips pairs to carry P1/P2/Δ/net/disparity/category.
+   *  Optional + defensive: 5-min in-memory API cache can serve a pre-fix
+   *  payload — consumers fall back to qtyP2 − qtyP1. */
+  delta?: number;
   disparityPct: number;
   category: string;
 }
