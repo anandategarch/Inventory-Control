@@ -40612,3 +40612,20 @@ Stage Summary:
 - Kontrak API dikunci Main dulu → 2 agent paralel domain-disjoint tanpa drift; band peer identik antar 3 route (CTE+ORDER+LIMIT sama) → angka konsisten antara Peer Table, expand row, card union, dan PDF.
 - Master context dijaga: rata-rata ABSOLUTE berlabel "Rata-Rata Absolute", arah LOSS/SURPLUS via DIRECTION_FROM_SUM_SQL, tanpa pp, tanpa akhiran P1/P2, kelompok scope peer-set only, sales tidak pernah dicetak di PDF.
 - CATATAN: verifikasi statis saja (DB produksi tak terjangkau) — perilaku runtime SQL/UX perlu dicek saat data live.
+
+---
+Task ID: PEERTOP-R1
+Agent: Main (Z.ai Code) — eksekusi langsung (kontrak lintas query→FE→PDF terkait ketat; tanpa subagent agar tidak ada drift kontrak)
+Task: User feedback atas PEERTOP (f927969): (1) "RANK DI TARGET ganti jadi Rangking Resto di antara Resto yang Selevel per Item"; (2) "TOP DI ganti jadi Nama Resto nya & TOP Di"; (3) "Hapus 8.4 Top Item per Resto Setara (masing-masing sampai 5 item) di laporan PDF"; (4) "8.3 tambah kolom Kuantiti deviasi nilai asli"; (5) "RATA-RATA ABSOLUTE RESTO SETARA pada 8.3 pakai kuantiti deviasi aja diabsolute"; (6) "ARAH gak perlu kolom ini hapus aja. langsung aja jika nilai minus merah".
+
+Work Log:
+- Query peer-top-items.ts: SQL + SUM(qtyDeviasi) "qtyDev" (signed nilai asli), + COALESCE(SUM(ABS(qtyDeviasi)),0) "absQty", + RANK() OVER (PARTITION BY itemId ORDER BY SUM(absNominal) DESC) "itemRank" + COUNT(*) OVER (PARTITION BY itemId) "itemOutletCount" (window setelah GROUP BY; final filter isTarget OR rn<=topN tidak memengaruhi nilai window). Kontrak union: target {rank, absNominal, devBom, qtyDeviasi|null, itemRank, itemOutletCount} — direction dihapus (arah = tanda qty); peerAvgAbsNominal → peerAvgAbsQty (basis |kuantiti deviasi|); peerMaxAbsNominal tetap (kunci sort). rank lama tetap dikirim (styling bold/muted nominal FE).
+- FE types.ts mirror client-safe + top-items-card.tsx: kolom Item · Top di (NAMA resto setara, truncate+tooltip; '—' = khusus target) · "Ranking Resto di antara Resto yang Selevel per Item" (label user verbatim; cell "#3/9") · Nominal (Target) · QTY Deviasi (nilai asli; minus → text-red) · Rata-Rata Absolute (QTY) (fmtNum peerAvgAbsQty); kolom Dir DIHAPUS; header tanpa h-7 (label panjang wrap); subtitle "(N resto)"; InfoTooltip + footnote diperbarui. index.tsx/use-peer-queries tanpa edit (prop totalPeers kini untuk subtitle).
+- PDF: services/types.ts PeerTopItemRow baru (+peerTopNames, +peerAvgAbsQty, target baru, tanpa peerMaxAbsNominal/arah) + PeerTopItemOutletRow & field peerTopItems DIHAPUS; data-fetcher/peer.ts sv 1→2 (shape berubah), peta kode→nama dari perPeer, blok 8.4 dihapus; pdf/sections/peer.ts 8.3 revisi 7 kolom (Top di = "m resto: nama-nama" wrap; Ranking per item header wrap:true; QTY Deviasi minus → C.danger via cellColor ci=5, konvensi 8.1; header "Rata-rata Absolute Resto Setara (QTY Deviasi)") + 8.4 dihapus total. SALES SECRECY tetap: tidak ada nominal sales di payload PDF.
+- MASTER_CONTEXT.md: route /api/peer-comparison/top-items didokumentasikan (tertinggal saat PEERTOP) + catatan revisi R1 + stats disegarkan (35/36 Zod · 21 prefix cache · 32 maxDuration) + daftar route cache +entri 19.
+- Gerbang global: tsc 0 error · lint 0 error/377 warning (baseline) · vitest 512/512. Secret-scan staged diff CLEAN. Commit acc4f4d + push origin main (bdb7567..acc4f4d). Laporan: agent-ctx/PEERTOP-R1.md.
+
+Stage Summary:
+- Kolom "Top Items Across Peers" (UI + PDF 8.3) kini: nama resto tempat item jadi top, ranking resto di antara resto selevel per item (#peringkat/total via RANK window), kuantiti deviasi nilai asli (minus merah), rata-rata absolute berbasis |kuantiti deviasi|; kolom Arah/Dir dihapus; PDF 8.4 dihapus (expand-row FE tetap).
+- Satu definisi "top item" tetap terjaga (agregat per item); master context tetap terjaga (label "Rata-Rata Absolute", tanpa nominal sales di PDF, tanpa pp, tanpa akhiran P1/P2).
+- CATATAN: verifikasi statis saja (DB produksi tak terjangkau) — window RANK + render PDF perlu dicek saat data live.
