@@ -87,7 +87,9 @@
 //     ./data-fetcher/derive.ts         — deriveReportFields
 //                                       (responsibilities 11-12)
 //     ./data-fetcher/peer.ts           — fetchPeerComparison (section 8's
-//                                       serial dependent wave)
+//                                       peer wave: serial auto-target
+//                                       scan + one parallel Promise.all
+//                                       — PERF-AUDIT-1)
 //     ./data-fetcher/assemble.ts       — assembleReport
 //                                       (responsibility 13)
 //  Import path unchanged: route.ts still imports fetchReportData from
@@ -132,9 +134,12 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   // (1-2), trend rows + weekly-composition slicing (7). Pure, no awaits.
   const derived = deriveReportFields(ctx);
 
-  // Peer comparison — the one intentionally-serial dependent wave
-  // (auto-target scan → q-peer-cmp → q-peer-cmp-items); null when the
-  // section is off or the target is unresolvable.
+  // Peer comparison — PERF-AUDIT-1: the auto-target scan is the one
+  // genuinely-serial step (the three peer queries take the RESOLVED
+  // target code); those three now fire as ONE parallel wave (was a
+  // 3-await serial chain — the checklist anti-pattern "sequential
+  // awaits when Promise.all would work"). Null when the section is off
+  // or the target is unresolvable.
   const peerComparison = await fetchPeerComparison(ctx);
 
   // Assemble ReportData + ReportContext.

@@ -84,13 +84,19 @@ export async function GET(req: NextRequest) {
     // RANK() yang sama dengan kolom Rangking (outlet itemRank ≤ 3 di
     // antara SEMUA outlet yang mencatat item; target muncul persis
     // ketika itemRank ≤ 3). sv 2 → 3 flushes the stale pre-R3 rows.
+    // PERF-AUDIT-1 (F1): sv 3 → 4 — this route's prefix was MISSING
+    // from invalidateAnalysisCache()'s routes list until now, so rows
+    // written before a mutation kept serving PRE-mutation data past
+    // it. The prefix is listed now (mutations delete going forward);
+    // this one-time bump also flushes whatever pre-mutation-stale row
+    // is sitting in the unbounded SWR store RIGHT NOW.
     const cacheKey = buildCacheKey({
       route: 'peer-comparison-top-items',
       month,
       week,
       outletCode,
       kelompok: kelompokParam,
-      extra: { mode, topN, limit, sv: 3 },
+      extra: { mode, topN, limit, sv: 4 },
     });
 
     type PeerTopItemsData = Awaited<ReturnType<typeof queryPeerTopItems>>;

@@ -130,6 +130,17 @@ export async function invalidateAnalysisCache(): Promise<void> {
     'item-trend', 'item-peer-comparison', 'item-trend-rank', 'flip-ranking',
     'flip-ranking-drilldown', 'item-anomali-outlets',
     'peer-comparison', 'peer-comparison-items', 'peer-comparison-trend',
+    // PERF-AUDIT-1 (F1 — invalidation-coverage sweep): the top-items
+    // route was MISSING from this list when PEERTOP-1 landed. The
+    // 'peer-comparison\x1f' prefix does NOT match
+    // 'peer-comparison-top-items\x1f' (the char after 'peer-comparison'
+    // is '-', not the \x1f sentinel — same reason 'peer-comparison-items'
+    // needs its own entry). Result: after a mutation (ingest/delete/
+    // settings/pic), the Peer tab's "Top Items Across Peers" card +
+    // Peer Table expand rows kept serving PRE-mutation data for the
+    // 5-min TTL (plus the unbounded SWR stale-serve window) — the exact
+    // stale-data incident class this list exists to prevent.
+    'peer-comparison-top-items',
     'price-effect', 'item-search', 'heatmap-cell-detail',
     'benchmark-opportunity', 'change-analysis', 'change-analysis-items',
     'q-rules', 'q-hist-rules', 'q-variance', 'q-kpis', 'q-topcat', 'q-trend',
@@ -158,6 +169,16 @@ export async function invalidateAnalysisCache(): Promise<void> {
     // composition — same rule: mutations must kill these rows or the export
     // serves pre-mutation data for up to 30 min.
     'q-self-anom', 'q-week-comp',
+    // PERF-AUDIT-1 (F1 — invalidation-coverage sweep): 'q-peer-topitems'
+    // (the export PDF 8.3 query, TTL 30 min) was MISSING from this list
+    // when PEERTOP-2-b landed — mutations never deleted its rows, so an
+    // export after an ingest could embed PRE-mutation "Top di"/Rangking
+    // data for up to 30 min (route-level 'export-report' rows WERE
+    // invalidated, but the recompute read the surviving stale q-row).
+    // 'q-peer-autotarget' (PERF-AUDIT-1 F3) is listed alongside from
+    // birth: the export's auto-target scan now sits in a q-* row and
+    // must die on every mutation like its siblings.
+    'q-peer-topitems', 'q-peer-autotarget',
   ];
   await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }
