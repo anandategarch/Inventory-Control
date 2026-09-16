@@ -3,7 +3,7 @@
 // ============================================================
 import { fmtIDR, fmtNum, fmtPct } from '../../format-helpers';
 import { C, stripMark } from '../pdf-primitives';
-import { fmtVsHist } from '../pdf-style';
+import { fmtVsHist, negColor } from '../pdf-style';
 import type { SectionEnv } from '../section-context';
 
 export function drawTopItemsSection(env: SectionEnv): void {
@@ -103,14 +103,23 @@ export function drawTopItemsSection(env: SectionEnv): void {
       // averages, and 3.6's qtyLossSurplus is SIGNED, so a −10 current
       // vs a 5 abs baseline is a GROWN deviation (red), not a smaller
       // one. (Waste/Susut/Trial are always ≥ 0 — unchanged behavior.)
+      // PDFCOLOR-1 (user: "terkait minus atau penurunan harusnya warna
+      // merah"): the QTY value columns are minus-red — 3.6's QTY columns
+      // print SIGNED digits (SUM(qtyLossSurplus)), and a "-45.6" cell in
+      // neutral ink contradicted the minus-red rule already applied to
+      // the nominal twin tables (3.1/3.2 rowText). The two benchmark
+      // columns are ABS — negColor is a no-op there.
       cellColor: (row, ri, ci) => {
-        if (ci !== 7 && ci !== 9) return undefined;
-        const it = ct2.items[ri];
-        if (it == null) return undefined;
-        const base = ci === 7 ? it.histAvgQty : it.areaAvgQty;
-        if (base == null || base === 0) return undefined;
-        const mag = Math.abs(it.qty);
-        return mag > base ? C.danger : mag < base ? C.success : undefined;
+        if (ci === 7 || ci === 9) {
+          const it = ct2.items[ri];
+          if (it == null) return undefined;
+          const base = ci === 7 ? it.histAvgQty : it.areaAvgQty;
+          if (base == null || base === 0) return undefined;
+          const mag = Math.abs(it.qty);
+          return mag > base ? C.danger : mag < base ? C.success : undefined;
+        }
+        if (ci === 4 || ci === 5 || ci === 6 || ci === 8) return negColor(row[ci]);
+        return undefined;
       },
     });
   }

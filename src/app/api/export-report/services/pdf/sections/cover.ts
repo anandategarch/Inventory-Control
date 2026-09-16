@@ -23,10 +23,10 @@
 //  colored green/red. The card's % Nominal Deviasi to Sales dropped its
 //  "%-sign" prefix (renamed "Nominal Deviasi to Sales").
 // ============================================================
-import { calcGrowth } from '@/lib/metrics';
+import { calcGrowth, calcGrowthAbs } from '@/lib/metrics';
 import { fmtIDR, fmtPct } from '../../format-helpers';
 import { C, markOf } from '../pdf-primitives';
-import { chgColor, titleCase } from '../pdf-style';
+import { chgColor, negColor, titleCase } from '../pdf-style';
 import type { SectionEnv } from '../section-context';
 
 export function drawCover(env: SectionEnv): void {
@@ -46,10 +46,20 @@ export function drawCover(env: SectionEnv): void {
     const devToSalesPrev = (s.sales.previous != null && s.sales.previous > 0 && s.nominalDeviasi.previous != null)
       ? s.nominalDeviasi.previous / s.sales.previous
       : null;
-    const devToSalesG = devToSalesCur != null && devToSalesPrev != null ? calcGrowth(devToSalesCur, devToSalesPrev) : null;
+    // PDFCOLOR-8: MAGNITUDE growth on the signed dev-to-sales ratio
+    // (calcGrowthAbs) — the signed formula + goodUp=false painted a
+    // WORSENED loss-side ratio GREEN (see exec.ts for the full note).
+    const devToSalesG = devToSalesCur != null && devToSalesPrev != null ? calcGrowthAbs(devToSalesCur, devToSalesPrev) : null;
     // Hoisted (TS narrowing through repeated pm?.x ternaries inside one
     // object literal is fragile) — also avoids re-running calcGrowth.
     const bomG = pm?.deviationToBom != null ? calcGrowth(s.deviationToBom, pm.deviationToBom) : null;
+    // PDFCOLOR-1 (user: "terkait minus atau penurunan harusnya warna
+    // merah"): the two signed KPI VALUES carry minus-red — a loss-side
+    // "-Rp 4.5 Jt" on the report's most prominent number was neutral ink
+    // while the same figure is red everywhere else (3.1/8.1/8.3/…).
+    // % Deviasi To BOM is ABS/ABS (never negative — negColor is a no-op
+    // there, kept for uniformity); the Penjualan card's value stays the
+    // chgColor-colored % change (REFINE-1 sales secrecy).
     rpt.kpiCards([
       {
         label: 'Penjualan',
@@ -60,16 +70,19 @@ export function drawCover(env: SectionEnv): void {
       },
       {
         label: 'Nominal Deviasi', value: fmtIDR(s.nominalDeviasi.current),
+        valueColor: negColor(fmtIDR(s.nominalDeviasi.current)),
         sub: s.nominalDeviasi.growth != null && cmpFull ? `${markOf(s.nominalDeviasi.growth)}vs ${cmpFull}: ${fmtPct(s.nominalDeviasi.growth, true)}` : undefined,
         subColor: chgColor(s.nominalDeviasi.growth, false) ?? C.muted,
       },
       {
         label: '% Deviasi To BOM', value: fmtPct(s.deviationToBom, false),
+        valueColor: negColor(fmtPct(s.deviationToBom, false)),
         sub: bomG != null && cmpFull ? `${markOf(bomG)}vs ${cmpFull}: ${fmtPct(bomG, true)}` : undefined,
         subColor: chgColor(bomG, false) ?? C.muted,
       },
       {
         label: 'Nominal Deviasi to Sales', value: fmtPct(devToSalesCur, false),
+        valueColor: negColor(fmtPct(devToSalesCur, false)),
         sub: devToSalesG != null && cmpFull ? `${markOf(devToSalesG)}vs ${cmpFull}: ${fmtPct(devToSalesG, true)}` : undefined,
         subColor: chgColor(devToSalesG, false) ?? C.muted,
       },

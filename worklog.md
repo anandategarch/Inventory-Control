@@ -40749,3 +40749,20 @@ Stage Summary:
 - 2 temuan baru selama implementasi (bedah library): (1) csv-parse 7.0.2 delimiter_auto crash pada quoted CSV — library bug, 7.0.2 = latest → sniffer in-house; (2) Prisma contains memang tidak meng-escape wildcard (bukti query-log) — konfirmasi temuan A4 sisi Prisma.
 - Catatan label: "X7" pada penomoran percakapan = BUG-X5 pada laporan findings-BUGHUNT-X.md (CSV delimiter).
 - Semua gates + scratch harness hijau; commit + push ke main via PAT.
+
+---
+Task ID: PDFCOLOR-1
+Agent: Main (Z.ai Code)
+Task: Deep audit laporan PDF — "terkait minus atau penurunan harusnya warna merah" (user). Audit seluruh semantik warna nilai-minus & perubahan di services/pdf/**, perbaiki semua pelanggaran, verifikasi dinamis render, ship lengkap.
+
+Work Log:
+- Audit statik penuh: pdf-style/pdf-primitives/pdf-charts/pdf-builder + 10 section + format-helpers + metrics/growth + telusur sign tiap field sampai SQL (dashboard.ts, health-ranking.ts, weekly-composition.ts, self-history-anomaly.ts, peer-comparison.ts, shared-cte.ts).
+- 8 temuan (findings-PDFCOLOR.md): PDFC-1 P1 tabel S7 minus netral vs bar merah tepat di bawahnya; PDFC-2..7 minus VALUE netral di cover KPI / S1 / S2 / 3.6 QTY / 4.1-4.2 nominal / 6.1 / 6.2 / 8.2 (kontradiksi intra-section dgn 8.3 yang sudah minus-merah per PEERTOP-R1); PDFC-8 P2 INVERSI: baris "Nominal Deviasi to Sales" pakai signed calcGrowth + goodUp=false → sisi loss warna terbalik (memburuk hijau ▼-104%, membaik merah) — kelas REFINE-4 yang terlewat pada rasio signed.
+- Kecurigaan awal "inversi QTY Loss/Surplus & QTY Deviasi" GUGUR setelah cek SQL: KPI = SUM(absQty*) selalu ≥0 → signed ≡ magnitude, benar.
+- Fix: negColor() helper baru di pdf-style (stripMark → '-' → C.danger; '—' lolos) diterapkan pada kolom NILAI di 9 lokasi (cover KPI valueColor ×2; exec ci1/3; growth ci1/2; S7 ci1-3; 3.3-3.6 ci4/5/6/8; 4.1/4.2 ci5/6; 6.1 ci5/6/9; 6.2 ci8; 8.2 ci2-5). Kolom PERUBAHAN tetap chgColor. PDFC-8: devToSalesGrowth = calcGrowthAbs (magnitude) di exec/growth/cover. rv 11 → 12 dua sisi (route cache-key + useDashboardActions param) — render-only, tanpa sv.
+- Harness dinamis /home/z/pdfcolor-harness: mock ReportData dgn minus tertanam di semua lokasi → buildPdfReport ASLI, dua render (git-stash OLD vs NEW), pdftotext -bbox + pdftoppm PPM 72dpi + pixel-scan tinta merah per bbox kata → **30/30 PASS** (17 fix 0→merah; 5 aturan lama retained; 4 kontrol hijau-favorable tetap; PDFC-8 terbukti: OLD "-104.37%" HIJAU ×3 → NEW "+104.37%" MERAH 47-51px).
+- Gates: tsc 0 err · lint 0/377 baseline · vitest 512/512 · secret-scan staged diff bersih.
+- Parity note: FE growthColorClass uniform naik=merah — devToSales card FE berpotensi inversi sama (backlog F4/X1 drift).
+
+Stage Summary:
+- 11 file (174+/40-). Aturan minus-merah kini seragam di seluruh nilai signed report; S7 tabel & bar chart sepakat; inversi devToSales ditutup. rv 12 dua sisi. Detail + bukti render: /home/z/my-project/audit-findings/findings-PDFCOLOR.md + harness /home/z/pdfcolor-harness (gen/scan/assert).

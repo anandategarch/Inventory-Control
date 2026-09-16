@@ -11,7 +11,7 @@
 // ============================================================
 import { fmtIDR, fmtNum } from '../../format-helpers';
 import { C, markOf } from '../pdf-primitives';
-import { fmtVsHist } from '../pdf-style';
+import { fmtVsHist, negColor } from '../pdf-style';
 import type { SectionEnv } from '../section-context';
 
 export function drawAnomalySection(env: SectionEnv): void {
@@ -62,13 +62,20 @@ export function drawAnomalySection(env: SectionEnv): void {
     // deltaQty is |qty| − histAvg, so the comparison is already
     // magnitude-to-magnitude): |cur| > histAvg = red (the deviation
     // widened), |cur| < histAvg = green.
-    cellColor: (_row, ri, ci) => {
-      if (ci !== 7 && ci !== 8) return undefined;
-      const it = an[ri];
-      if (it == null) return undefined;
-      return Math.abs(it.qty) > it.histAvgQty
-        ? C.danger
-        : Math.abs(it.qty) < it.histAvgQty ? C.success : undefined;
+    // PDFCOLOR-1 (user: "terkait minus atau penurunan harusnya warna
+    // merah"): the QTY column prints SIGNED SUM(qtyDeviasi) and the
+    // Nominal Deviasi column SIGNED SUM(nominalDeviasi) — minus digits
+    // are red now. Rata-rata Absolute is ABS — negColor is a no-op.
+    cellColor: (row, ri, ci) => {
+      if (ci === 7 || ci === 8) {
+        const it = an[ri];
+        if (it == null) return undefined;
+        return Math.abs(it.qty) > it.histAvgQty
+          ? C.danger
+          : Math.abs(it.qty) < it.histAvgQty ? C.success : undefined;
+      }
+      if (ci === 5 || ci === 6 || ci === 9) return negColor(row[ci]);
+      return undefined;
     },
   });
 
@@ -111,12 +118,18 @@ export function drawAnomalySection(env: SectionEnv): void {
       // red = loss side — same convention as section 9); the Pola text
       // stays neutral ink (a flip is a pattern to investigate, not a
       // good/bad verdict — DESAIN-SIMPEL).
-      cellColor: (_row, ri, ci) => {
-        if (ci !== 5 && ci !== 6) return undefined;
-        const it = flips[ri];
-        if (it == null) return undefined;
-        const v = ci === 5 ? it.histSignedAvgQty : it.qty;
-        return v < 0 ? C.danger : v > 0 ? C.success : undefined;
+      // PDFCOLOR-1: the SIGNED Nominal Deviasi column is minus-red too
+      // (it printed "-Rp …" in neutral ink while its own row's QTY cells
+      // were already sign-colored).
+      cellColor: (row, ri, ci) => {
+        if (ci === 5 || ci === 6) {
+          const it = flips[ri];
+          if (it == null) return undefined;
+          const v = ci === 5 ? it.histSignedAvgQty : it.qty;
+          return v < 0 ? C.danger : v > 0 ? C.success : undefined;
+        }
+        if (ci === 8) return negColor(row[8]);
+        return undefined;
       },
     });
   }

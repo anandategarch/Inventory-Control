@@ -162,7 +162,13 @@ export function useDashboardActions({
       // per-periode (SUM per periode lalu AVG, bukan AVG per baris mentah
       // yang understated k× untuk multi-record per periode); angka kolom
       // historis + persentase fmtVsHist berubah.
-      params.set('rv', '11');
+      // PDFCOLOR-1: rv 12 — minus-RED on VALUE columns (user: "terkait
+      // minus atau penurunan harusnya warna merah"): KPI hero cards,
+      // current/previous columns of sections 1/2/7, 3.3-3.6 QTY columns,
+      // 4.1/4.2 nominal columns, 6.1/6.2 signed columns, 8.2 QTY columns
+      // (8.3 already was minus-red). The S7 trend table now agrees with
+      // its own red diverging bars. Render-only — no data change.
+      params.set('rv', '12');
 
       // FIX (BUG-3-b A3): AbortController + 120s timeout — a hung export no
       // longer spins forever; the fetch is aborted and the user gets a

@@ -4,7 +4,7 @@
 import { fmtIDR } from '../../format-helpers';
 import { hBarChart } from '../pdf-charts';
 import { C, PAGE, CONTENT_W, markOf } from '../pdf-primitives';
-import { tickIDR } from '../pdf-style';
+import { negColor, tickIDR } from '../pdf-style';
 import type { SectionEnv } from '../section-context';
 
 export function drawVarianceSection(env: SectionEnv): void {
@@ -38,7 +38,14 @@ export function drawVarianceSection(env: SectionEnv): void {
       rows: va.topWorsened.map((it, i) => [String(i + 1), it.itemName, it.satuan ?? '\u2014', it.outletCode, it.area, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), markOf(it.selisih) + fmtIDR(it.selisih)]),
       // DESAIN-SIMPEL: only the Selisih column carries the change color
       // (red — worsened); the rest of the row stays neutral ink.
-      cellColor: (_row, _ri, ci) => (ci === 7 ? C.danger : undefined),
+      // PDFCOLOR-1 (user: "terkait minus atau penurunan harusnya warna
+      // merah"): the two Nominal columns print SIGNED SUM(nominalDeviasi)
+      // — a "-Rp …" cell is minus-red now (same rule as 3.1/8.1).
+      cellColor: (row, _ri, ci) => {
+        if (ci === 7) return C.danger;
+        if (ci === 5 || ci === 6) return negColor(row[ci]);
+        return undefined;
+      },
     });
     const worsened = va.topWorsened.slice(0, 10);
     rpt.ensure(18 * worsened.length + 24);
@@ -69,7 +76,12 @@ export function drawVarianceSection(env: SectionEnv): void {
       rows: va.topImproved.map((it, i) => [String(i + 1), it.itemName, it.satuan ?? '\u2014', it.outletCode, it.area, fmtIDR(it.currentNominal), fmtIDR(it.previousNominal), markOf(it.selisih) + fmtIDR(it.selisih)]),
       // DESAIN-SIMPEL: only the Selisih column carries the change color
       // (green — improved); the rest of the row stays neutral ink.
-      cellColor: (_row, _ri, ci) => (ci === 7 ? C.success : undefined),
+      // PDFCOLOR-1: minus-red on the SIGNED Nominal columns (as 4.1).
+      cellColor: (row, _ri, ci) => {
+        if (ci === 7) return C.success;
+        if (ci === 5 || ci === 6) return negColor(row[ci]);
+        return undefined;
+      },
     });
   }
 }

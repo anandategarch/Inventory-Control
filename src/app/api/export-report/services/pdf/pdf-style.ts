@@ -10,7 +10,7 @@
 //  doc metadata + running header.
 // ============================================================
 import { fmtPct } from '../format-helpers';
-import { C, markOf } from './pdf-primitives';
+import { C, markOf, stripMark } from './pdf-primitives';
 
 // ------------------------------------------------------------
 //  Local formatters (moved from the deleted docx-builder.ts — identical
@@ -163,6 +163,25 @@ export const tickIDR = (v: number): string => {
 export function chgColor(v: number | null | undefined, goodUp: boolean): string | undefined {
   if (v == null || isNaN(v) || !isFinite(v) || v === 0) return undefined;
   return v > 0 ? (goodUp ? C.success : C.danger) : (goodUp ? C.danger : C.success);
+}
+
+/** PDFCOLOR-1 (user: "terkait minus atau penurunan harusnya warna merah"):
+ *  minus-RED on VALUE columns. A formatted value cell whose digits carry
+ *  a leading '-' (the loss side of any signed metric — "-Rp 1.23 Jt",
+ *  "-45.6", "-12.34%") renders danger red — the report-wide direction
+ *  convention (Loss = red / Surplus = green: 3.1/3.2 + 8.1 rowText, 8.3,
+ *  6.2, section 9, the heat ramp, the diverging bar chart) finally
+ *  applied to EVERY value column: the KPI hero cards (cover), the
+ *  current/previous columns of sections 1/2/7, 3.3-3.6's QTY columns
+ *  (3.6 is signed), 4.1/4.2's nominal columns, 6.1/6.2's signed columns
+ *  and 8.2's QTY columns (8.3's identically-named column was already
+ *  minus-red — PEERTOP-R1: "langsung aja jika nilai minus merah").
+ *  Neutral cells ('—', '= 0%', unsigned metrics) pass through unchanged;
+ *  CHANGE columns keep their chgColor semantics (favorable green /
+ *  unfavorable red) — this rule is only about the printed digits' side. */
+export function negColor(cell: string | null | undefined): string | undefined {
+  if (cell == null) return undefined;
+  return stripMark(cell).startsWith('-') ? C.danger : undefined;
 }
 
 /** Marker + signed growth string ("▲+1.23%") — null → '—'. */

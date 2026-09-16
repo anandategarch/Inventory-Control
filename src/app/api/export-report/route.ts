@@ -186,7 +186,17 @@ export async function GET(req: NextRequest) {
         // yang understated k× untuk pasangan multi-record per periode; angka
         // kolom historis + persentase fmtVsHist berubah. rv 10 → 11, both
         // sides (+ sv 2 pada q-hist-catavg).
-        rv: '11',
+        // PDFCOLOR-1: minus-RED on VALUE columns (user: "terkait minus
+        // atau penurunan harusnya warna merah") — KPI hero cards, current/
+        // previous columns of sections 1/2/7, 3.3-3.6 QTY, 4.1/4.2 nominal,
+        // 6.1/6.2 signed columns, 8.2 QTY columns (8.3 already was). The
+        // trend table now agrees with its own red diverging bars. rv 11 →
+        // 12, both sides. Render-only (no data change) — no sv bump.
+        // PDFCOLOR-8: "Nominal Deviasi to Sales" change columns (S1/S2/
+        // cover) kini MAGNITUDE growth (calcGrowthAbs) — signed formula
+        // + goodUp=false membalik warna di sisi loss (rasio memburuk
+        // dicetak hijau ▼). Included in the same rv 12 bump.
+        rv: '12',
         // FIX (STALE-PDF, systematic hardening — same incident as the missing
         // PEERTOP rv bump): the SWR store serves EXPIRED rows unbounded (see
         // swr.ts 3b), so a forgotten `rv` bump means a pre-deploy PDF can be

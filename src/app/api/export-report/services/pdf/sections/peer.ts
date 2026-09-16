@@ -34,6 +34,7 @@
 // ============================================================
 import { fmtIDR, fmtNum, fmtPct } from '../../format-helpers';
 import { C } from '../pdf-primitives';
+import { negColor } from '../pdf-style';
 import type { SectionEnv } from '../section-context';
 
 export function drawPeerSection(env: SectionEnv): void {
@@ -113,6 +114,14 @@ export function drawPeerSection(env: SectionEnv): void {
         it.peerAvg != null ? fmtNum(it.peerAvg.qtyDeviasi) : '\u2014',
         it.peerAvg != null ? fmtPct(it.peerAvg.devBom, false) : '\u2014',
       ]),
+      // PDFCOLOR-1 (user: "terkait minus atau penurunan harusnya warna
+      // merah"): the QTY Deviasi columns print SIGNED SUM(qtyDeviasi)
+      // (target AND peer average — both sides can sit on the loss side).
+      // They were neutral ink while 8.3's identically-named "QTY Deviasi
+      // (<tn>)" column was already minus-red (PEERTOP-R1: "langsung aja
+      // jika nilai minus merah") — an intra-section contradiction.
+      // The % Dev/BOM columns are ABS/ABS — negColor is a no-op there.
+      cellColor: (row, _ri, ci) => (ci >= 2 && ci <= 5 ? negColor(row[ci]) : undefined),
     });
   }
 

@@ -4,11 +4,11 @@
 //  ("Perubahan vs Agustus 2026 Week 1") — user: "Kata pembanding jadi Kata
 //  periode yang terpilih menjadi pembanding. Misal Agustus 2026 week 1".
 // ============================================================
-import { calcGrowth } from '@/lib/metrics';
+import { calcGrowth, calcGrowthAbs } from '@/lib/metrics';
 import { fmtIDR, fmtNum, fmtPct } from '../../format-helpers';
 import { hBarChart } from '../pdf-charts';
 import { C, PAGE, CONTENT_W, markOf } from '../pdf-primitives';
-import { chgColor, fmtPp, mkGrowth } from '../pdf-style';
+import { chgColor, fmtPp, mkGrowth, negColor } from '../pdf-style';
 import type { SectionEnv } from '../section-context';
 
 export function drawGrowthSection(env: SectionEnv): void {
@@ -22,6 +22,13 @@ export function drawGrowthSection(env: SectionEnv): void {
     ? s.nominalDeviasi.previous / s.sales.previous
     : null;
   type GRow = { cells: string[]; g: number | null; goodUp: boolean };
+  // PDFCOLOR-8 (deep-audit sign-quadrant pass): "Nominal Deviasi to
+  // Sales" is a SIGNED ratio — its change column is MAGNITUDE growth
+  // now (calcGrowthAbs), matching the exec row + cover KPI sub. The old
+  // signed calcGrowth + goodUp=false inverted on the loss side (ratio
+  // worsening −0.26% → −0.54% painted GREEN "▼−106%" — deviation had
+  // doubled; the REFINE-4 complaint class missed on this ratio).
+  const devToSalesGrowth = devToSalesCur != null && devToSalesPrev != null ? calcGrowthAbs(devToSalesCur, devToSalesPrev) : null;
   const vr = (label: string, cur: number | null, prev: number | null, fmt: typeof fmtIDR, growth: number | null, goodUp: boolean): GRow => ({
     cells: [
       label, fmt(cur), fmt(prev),
@@ -50,7 +57,7 @@ export function drawGrowthSection(env: SectionEnv): void {
     vr('QTY Susut', s.qtySusut.current, s.qtySusut.previous, fmtNum, s.qtySusut.growth, false),
     vr('QTY Trial', s.qtyTrial.current, s.qtyTrial.previous, fmtNum, s.qtyTrial.growth, false),
     rr('% Deviasi To BOM', s.deviationToBom, pm?.deviationToBom ?? null, pm?.deviationToBom != null ? calcGrowth(s.deviationToBom, pm.deviationToBom) : null, false),
-    rr('Nominal Deviasi to Sales', devToSalesCur, devToSalesPrev, devToSalesCur != null && devToSalesPrev != null ? calcGrowth(devToSalesCur, devToSalesPrev) : null, false),
+    rr('Nominal Deviasi to Sales', devToSalesCur, devToSalesPrev, devToSalesGrowth, false),
   ];
   rpt.table({
     cols: [
@@ -63,7 +70,16 @@ export function drawGrowthSection(env: SectionEnv): void {
     boldFirst: true,
     rows: defs.map((d) => d.cells),
     // ▲/▼ + semantic color on the Selisih and Growth % columns.
-    cellColor: (row, ri, ci) => (ci === 3 || ci === 4 ? chgColor(defs[ri]?.g, defs[ri]?.goodUp ?? false) : undefined),
+    // PDFCOLOR-1 (user: "terkait minus atau penurunan harusnya warna
+    // merah"): the current/previous VALUE columns are minus-red — the
+    // "Nominal Deviasi (Rp)" / "Nominal Deviasi to Sales" rows are
+    // SIGNED, and their "-Rp …" / "-x.xx%" cells were neutral ink
+    // (same class as section 1's fix). Unsigned rows are a no-op.
+    cellColor: (row, ri, ci) => {
+      if (ci === 3 || ci === 4) return chgColor(defs[ri]?.g, defs[ri]?.goodUp ?? false);
+      if (ci === 1 || ci === 2) return negColor(row[ci]);
+      return undefined;
+    },
   });
 
   // growth % horizontal bars — sales/BOM up = green (good); deviation

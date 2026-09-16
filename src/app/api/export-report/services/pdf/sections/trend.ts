@@ -10,7 +10,7 @@
 import { fmtIDR, fmtPct } from '../../format-helpers';
 import { barChartV, lineChart, stackedBarChartV } from '../pdf-charts';
 import { C, PAGE, CONTENT_W } from '../pdf-primitives';
-import { tickIDR, titleCase } from '../pdf-style';
+import { negColor, tickIDR, titleCase } from '../pdf-style';
 import type { SectionEnv } from '../section-context';
 
 export function drawTrendSection(env: SectionEnv): void {
@@ -39,6 +39,13 @@ export function drawTrendSection(env: SectionEnv): void {
       // signed "Nominal Deviasi" column right next to it).
       t.sales && t.sales > 0 ? fmtPct(t.nominal / t.sales, false) : '\u2014',
     ]),
+    // PDFCOLOR-1 (user: "terkait minus atau penurunan harusnya warna
+    // merah"): P1 — a net-negative period printed "-Rp …" in NEUTRAL ink
+    // while the diverging bar chart DIRECTLY below drew the same period
+    // as a danger-red DOWN bar (the BUG-HUNT signed-bars fix). Table and
+    // chart now agree: the loss-side digits are red in both. % Dev/BOM
+    // is ABS (never '-') — negColor is a no-op on that column.
+    cellColor: (row, _ri, ci) => (ci >= 1 && ci <= 3 ? negColor(row[ci]) : undefined),
   });
 
   const labels = data.trend.map((t) => t.weekLabel.replace(` ${currLabel.split(' ')[0]}`, '').replace(/\s*$/, '')).map((l, i) => (data.trend.length > 8 && i % 2 === 1 ? '' : l));
