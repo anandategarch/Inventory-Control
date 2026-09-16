@@ -45,7 +45,7 @@ import {
   type ItemPeerRow,
   type ItemPeerAverages,
 } from '@/lib/queries/items/item-peer-comparison';
-import { validateQuery } from '@/lib/validation';
+import { validateQuery, noControlChars } from '@/lib/validation';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 
@@ -57,14 +57,16 @@ const ITEM_PEER_COMPARISON_CACHE_TTL = 5 * 60 * 1000; // 5 min — matches item-
 // Zod schema for /api/item-peer-comparison query params.
 // Defined inline (validation.ts not modified per task constraint).
 // `item`, `month`, `week` are REQUIRED; the rest are optional.
+// FIX (BUGHUNT-A2): control-char gate on every string field — see the note
+// in flip-ranking/route.ts (cache-key poisoning via sanitizeKeyPart).
 const itemPeerComparisonQuerySchema = z.object({
-  item: z.string().min(1).max(200),
-  month: z.string().regex(/^[A-Za-z]+\s+20\d{2}$/),
-  week: z.string().regex(/^WEEK\s+[0-9]+$/i),
-  outletCode: z.string().min(1).max(50).optional(),
-  area: z.string().min(1).max(50).optional(),
-  kelompok: z.string().min(1).max(50).optional(),
-  pic: z.string().min(1).max(100).optional(),
+  item: z.string().min(1).max(200).refine(noControlChars),
+  month: z.string().regex(/^[A-Za-z]+\s+20\d{2}$/).refine(noControlChars),
+  week: z.string().regex(/^WEEK\s+[0-9]+$/i).refine(noControlChars),
+  outletCode: z.string().min(1).max(50).refine(noControlChars).optional(),
+  area: z.string().min(1).max(50).refine(noControlChars).optional(),
+  kelompok: z.string().min(1).max(50).refine(noControlChars).optional(),
+  pic: z.string().min(1).max(100).refine(noControlChars).optional(),
 }).strict();
 
 export async function GET(req: NextRequest) {

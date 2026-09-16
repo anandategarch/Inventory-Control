@@ -21,7 +21,7 @@ import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { queryItemAutocomplete } from '@/lib/queries/items/global-search';
 // FIX (AUDIT-NEWFEATURES C4): use shared schemas instead of inline regex
-import { monthLabelSchema, weekLabelSchema } from '@/lib/validation';
+import { monthLabelSchema, weekLabelSchema, noControlChars } from '@/lib/validation';
 import { CACHE_INTERACTIVE } from '@/lib/cache-headers';
 import { errorResponse } from '@/lib/error-response';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
@@ -33,7 +33,12 @@ const ITEM_SEARCH_CACHE_TTL = 60 * 1000; // 60s — autocomplete staleness toler
 
 const itemSearchQuerySchema = z.object({
   mode: z.literal('autocomplete').default('autocomplete'),
-  q: z.string().min(1).max(200),
+  // FIX (BUGHUNT-A2): control-char gate — previously a crafted `q=teh%1Fbotol`
+  // passed validation, the route's qKey replace() turned it into 'teh botol',
+  // and the (empty) result of the LIKE on the RAW q was cached under the
+  // REAL 'teh botol' key. Rejecting controls here makes the replace below
+  // pure defense-in-depth (no reachable input contains them anymore).
+  q: z.string().min(1).max(200).refine(noControlChars),
   month: monthLabelSchema,
   week: weekLabelSchema,
 });

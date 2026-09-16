@@ -158,7 +158,11 @@ export function useDashboardActions({
       // 11/11 tapi juga muncul di top di"): basis kini RANK() yang sama
       // dengan kolom Rangking — target muncul di Top di persis ketika
       // itemRank ≤ 3.
-      params.set('rv', '10');
+      // BUGHUNT-Q1: rv 11 — "Rata-rata Historical" tabel 3.3-3.6 kini
+      // per-periode (SUM per periode lalu AVG, bukan AVG per baris mentah
+      // yang understated k× untuk multi-record per periode); angka kolom
+      // historis + persentase fmtVsHist berubah.
+      params.set('rv', '11');
 
       // FIX (BUG-3-b A3): AbortController + 120s timeout — a hung export no
       // longer spins forever; the fetch is aborted and the user gets a

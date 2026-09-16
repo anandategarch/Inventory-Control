@@ -181,7 +181,12 @@ export async function GET(req: NextRequest) {
         // persis ketika itemRank ≤ 3, jadi kedua kolom tak mungkin
         // kontradiksi. rv 9 → 10, both sides (+ sv pada q-peer-topitems /
         // top-items route).
-        rv: '10',
+        // BUGHUNT-Q1: "Rata-rata Historical" di tabel 3.3-3.6 kini dihitung
+        // per periode (SUM per periode lalu AVG) — bukan AVG per baris mentah
+        // yang understated k× untuk pasangan multi-record per periode; angka
+        // kolom historis + persentase fmtVsHist berubah. rv 10 → 11, both
+        // sides (+ sv 2 pada q-hist-catavg).
+        rv: '11',
         // FIX (STALE-PDF, systematic hardening — same incident as the missing
         // PEERTOP rv bump): the SWR store serves EXPIRED rows unbounded (see
         // swr.ts 3b), so a forgotten `rv` bump means a pre-deploy PDF can be

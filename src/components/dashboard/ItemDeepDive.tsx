@@ -2,13 +2,14 @@
 
 // PERF (AUDIT-FE): animations disabled — charts re-mount on tab re-entry (Radix unmounts inactive tabs)
 
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { useQuery } from '@tanstack/react-query';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { useDrilldown } from '@/hooks/useAnalysis';
@@ -33,17 +34,38 @@ type TipPayloadEntry = {
 };
 type TipPayload = TipPayloadEntry[] | undefined;
 
+// FIX (BUGHUNT-F1): response shape of /api/item-trend — only the fields the
+// modal's trend chart consumes (queryItemTrendTimeline returns more:
+// z-scores, satuan, outletCount…).
+type ItemTrendDeepDiveResponse = {
+  success: boolean;
+  periods: Array<{
+    monthLabel: string;
+    weekLabel: string;
+    /** SUM(ABS(qtyBom)) for this item in the period. */
+    qtyBom: number;
+    /** SUM(ABS(qtyDeviasi)) for this item in the period. */
+    qtyDeviasi: number;
+    /** SUM(ABS(nominalDeviasi)) for this item in the period. */
+    nominalDeviasi: number;
+  }>;
+};
+
 // ============================================================
 //  ItemDeepDive
 //  Modal detail item (terbuka ketika deepDiveItem.itemName di-set)
 // ============================================================
 export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
-  const { deepDiveItem, setDeepDiveItem, setDrilldown, monthLabel, currentWeek } = useDashboard(useShallow((s) => ({
+  const { deepDiveItem, setDeepDiveItem, setDrilldown, monthLabel, currentWeek, area, kelompok, outletCode, pic } = useDashboard(useShallow((s) => ({
     deepDiveItem: s.deepDiveItem,
     setDeepDiveItem: s.setDeepDiveItem,
     setDrilldown: s.setDrilldown,
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
+    area: s.area,
+    kelompok: s.kelompok,
+    outletCode: s.outletCode,
+    pic: s.pic,
   })));
   const open = Boolean(deepDiveItem?.itemName);
   const itemName = deepDiveItem?.itemName || null;
@@ -61,13 +83,54 @@ export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: Analysi
   // Use limit=500 only when drilling by itemName (no outletCode filter) to get all outlets.
   const drilldownLimit = deepDiveItem?.outletCode ? 50 : 500;
 
-  // Multi-period trend for this item (filter trend data)
-  // Phase B-2: Include devBom for historical trend chart
-  const trendData = (data?.trend || []).map((t) => ({
-    weekLabel: t.weekLabel,
-    nominal: Math.abs(t.nominal || 0),
-    devBom: Math.abs(t.devBom || 0) * 100, // Convert to percentage for chart
-  }));
+  // Multi-period trend for THIS item.
+  // FIX (BUGHUNT-F1): previously the chart rendered data.trend — the
+  // /api/analysis NETWORK-wide aggregate with NO item filter (the old
+  // comment claimed "(filter trend data)" but no filtering existed), so
+  // whenever the modal was opened from a card that does not also set the
+  // global item filter (PriceEffectCard / GrowthComparison rows), the whole
+  // scope's trend was presented under THIS item's name. Fetch the per-item
+  // timeline instead: /api/item-trend returns ALL periods for the item
+  // (exact-name match, SUM(ABS()) aggregates per period), scoped by the
+  // dashboard's area/kelompok/pic filters. The modal's own outlet
+  // (deepDiveItem.outletCode) takes precedence over the global outlet filter.
+  const trendOutlet = deepDiveItem?.outletCode ?? outletCode;
+  const { data: itemTrendData } = useQuery({
+    queryKey: ['item-trend-deepdive', itemName, monthLabel, trendOutlet, area, kelompok, pic],
+    queryFn: async () => {
+      // enabled: Boolean(itemName) guarantees this, but the guard also narrows
+      // the type for the URLSearchParams below (no non-null assertion needed).
+      if (!itemName) throw new Error('No item selected');
+      const p = new URLSearchParams();
+      p.set('itemName', itemName);
+      if (monthLabel) p.set('month', monthLabel);
+      if (trendOutlet && trendOutlet !== 'all') p.set('outlet', trendOutlet);
+      if (area && area !== 'all') p.set('area', area);
+      if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
+      if (pic) p.set('pic', pic);
+      const res = await fetch(`/api/item-trend?${p.toString()}`);
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) throw new Error('Server error');
+      // FIX (BUG-H cross-domain): a JSON error body must not become query data.
+      if (!res.ok) {
+        const e = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(e?.error || `HTTP ${res.status}`);
+      }
+      return res.json() as Promise<ItemTrendDeepDiveResponse>;
+    },
+    enabled: Boolean(itemName),
+    // PERF-FE (PAKET A): 5 min staleTime + 10 min gcTime — the per-item trend
+    // only changes on ingest / manual refresh (both invalidate all data).
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
+  });
+  // Phase B-2: devBom as % for the chart + |nominal| per period — both
+  // aggregates are per THIS item now (previously network-wide).
+  const trendData = useMemo(() => (itemTrendData?.periods || []).map((t) => ({
+    weekLabel: `${t.weekLabel} ${t.monthLabel.split(' ')[0].slice(0, 3)}`,
+    nominal: t.nominalDeviasi,
+    devBom: t.qtyBom > 0 ? (t.qtyDeviasi / t.qtyBom) * 100 : 0,
+  })), [itemTrendData]);
   // Compute historical avg Dev/BOM for reference line
   const histAvgDevBom = trendData.length > 0
     ? trendData.reduce((sum, t) => sum + t.devBom, 0) / trendData.length
