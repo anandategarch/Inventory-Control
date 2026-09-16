@@ -45,7 +45,7 @@ import {
   queryItemTrendRank,
   type ItemTrendRankPeriod,
 } from '@/lib/queries/items/item-trend-rank';
-import { validateQuery } from '@/lib/validation';
+import { validateQuery, noControlChars } from '@/lib/validation';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 import { errorResponse } from '@/lib/error-response';
@@ -60,14 +60,16 @@ const ITEM_TREND_RANK_CACHE_TTL = 5 * 60 * 1000; // 5 min — matches item-trend
 // `item` is REQUIRED; `month` + `week` are OPTIONAL (used for cache-key
 // context only — rank covers ALL periods, same as /api/item-trend).
 // Uses the same regexes as monthLabelSchema + weekLabelSchema in validation.ts.
+// FIX (BUGHUNT-A2): control-char gate on every string field — see the note
+// in flip-ranking/route.ts (cache-key poisoning via sanitizeKeyPart).
 const itemTrendRankQuerySchema = z.object({
-  item: z.string().min(1).max(200),
-  month: z.string().regex(/^[A-Za-z]+\s+20\d{2}$/).optional(),
-  week: z.string().regex(/^WEEK\s+[0-9]+$/i).optional(),
-  area: z.string().min(1).max(50).optional(),
-  kelompok: z.string().min(1).max(50).optional(),
-  outlet: z.string().min(1).max(50).optional(),
-  pic: z.string().min(1).max(100).optional(),
+  item: z.string().min(1).max(200).refine(noControlChars),
+  month: z.string().regex(/^[A-Za-z]+\s+20\d{2}$/).refine(noControlChars).optional(),
+  week: z.string().regex(/^WEEK\s+[0-9]+$/i).refine(noControlChars).optional(),
+  area: z.string().min(1).max(50).refine(noControlChars).optional(),
+  kelompok: z.string().min(1).max(50).refine(noControlChars).optional(),
+  outlet: z.string().min(1).max(50).refine(noControlChars).optional(),
+  pic: z.string().min(1).max(100).refine(noControlChars).optional(),
 }).strict();
 
 export async function GET(req: NextRequest) {

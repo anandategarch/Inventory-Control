@@ -17,6 +17,21 @@ import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../..
 //  Historical Category Average — avg QTY/Nominal across historical periods
 //  Rev 2: For comparing Waste/Susut/Trial/LossSurplus with historical.
 //  Returns a Map keyed by "itemName|outletCode" → { avgQty, avgNominal }
+//
+//  FIX (BUGHUNT-Q1, Rev 3): the average is now computed PER PERIOD —
+//  inner SUM(ABS(col)) per (item, outlet, monthLabel), outer AVG over the
+//  periods — mirroring self-history-anomaly.ts's "Rata-Rata Absolute"
+//  grain (per-PERIOD sums first, then AVG across periods; "a plain AVG
+//  over raw rows would weight months by their row counts"). The previous
+//  AVG(ABS(col)) over RAW ROWS understated the benchmark k× for (item,
+//  outlet) pairs with k records per period (multi-akunPenyesuaian — the
+//  documented production shape), while the adjacent current/prev columns
+//  are per-(item,outlet) SUMs — so an item exactly AT its historical norm
+//  printed "+100%"-style inflation in the export's fmtVsHist cells
+//  (tables 3.3-3.6). The row-level qty!=0 filter is kept verbatim so the
+//  map's membership semantics (periods with only zero-qty rows still
+//  contribute no group → histAvg stays null → '—') are unchanged; for
+//  mixed periods, zero rows add 0 to the SUM either way.
 // ============================================================
 export async function queryHistoricalCategoryAvg(
   historicalPeriods: Array<{ monthLabel: string; weekLabel: string }>,
@@ -42,18 +57,28 @@ export async function queryHistoricalCategoryAvg(
   const monthClauses = Prisma.join(historicalMonths, ', ');
 
   // FIX (AUDIT8-ROLLBACK-1, Item 8): wrap raw SQL in withStatementTimeout.
+  // BUGHUNT-Q1: perPeriod subquery — the WHERE pins one weekLabel
+  // (historicalPeriods[0]) across the historical months, so grouping by
+  // monthLabel IS grouping by (month, week) period. GROUP BY grain matches
+  // self-history-anomaly.ts exactly.
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<{ itemName: string; outletCode: string; avgQty: number; avgNominal: number }[]>`
-    SELECT i.name as "itemName", o.code as "outletCode",
-      AVG(ABS(${qtyRef})) as "avgQty",
-      AVG(ABS(${nomRef})) as "avgNominal"
-    FROM "InventoryRecord" ir
-    JOIN "Item" i ON ir."itemId" = i.id
-    JOIN "Outlet" o ON ir."outletId" = o.id
-    WHERE ir."weekLabel" = ${historicalPeriods[0].weekLabel}
-      AND ir."monthLabel" IN (${monthClauses})
-      AND ${qtyRef} IS NOT NULL AND ${qtyRef} != 0
-      ${f}
-    GROUP BY i.name, o.code
+    SELECT "itemName", "outletCode",
+      AVG("periodQty") as "avgQty",
+      AVG("periodNom") as "avgNominal"
+    FROM (
+      SELECT i.name as "itemName", o.code as "outletCode",
+        SUM(ABS(${qtyRef})) as "periodQty",
+        SUM(ABS(${nomRef})) as "periodNom"
+      FROM "InventoryRecord" ir
+      JOIN "Item" i ON ir."itemId" = i.id
+      JOIN "Outlet" o ON ir."outletId" = o.id
+      WHERE ir."weekLabel" = ${historicalPeriods[0].weekLabel}
+        AND ir."monthLabel" IN (${monthClauses})
+        AND ${qtyRef} IS NOT NULL AND ${qtyRef} != 0
+        ${f}
+      GROUP BY i.name, o.code, ir."monthLabel"
+    ) perPeriod
+    GROUP BY "itemName", "outletCode"
   `);
   const map = new Map<string, { avgQty: number; avgNominal: number }>();
   for (const r of rows) {

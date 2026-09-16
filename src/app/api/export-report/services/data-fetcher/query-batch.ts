@@ -167,24 +167,30 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
     // cachedSharedQueryMap for why Maps must be cached as entry arrays).
     // Empty-periods guard: skip caching degenerate empty rows (the query
     // itself early-returns an empty Map when there is no baseline).
+    // FIX (BUGHUNT-Q1): sv 2 — the query's grain changed (per-row AVG →
+    // per-period SUM then AVG), so pre-fix cached rows under the same key
+    // would keep serving the understated benchmark for up to the 30-min
+    // TTL after a deploy. sv forks a fresh namespace (same convention as
+    // q-topcat sv 2 / q-item-trend-matrix sv 2); the 'q-hist-catavg' route
+    // prefix is unchanged so mutation invalidation still covers it.
     needTopItems && historicalPeriodsList.length > 0 ? cachedSharedQueryMap(
       'q-hist-catavg',
-      { ...histPeriodsKeyParts(historicalPeriodsList), filters: filterOpts, extra: { metric: 'waste' } },
+      { ...histPeriodsKeyParts(historicalPeriodsList), filters: filterOpts, extra: { metric: 'waste', sv: 2 } },
       () => queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'waste'),
     ) : Promise.resolve(new Map<string, { avgQty: number; avgNominal: number }>()),
     needTopItems && historicalPeriodsList.length > 0 ? cachedSharedQueryMap(
       'q-hist-catavg',
-      { ...histPeriodsKeyParts(historicalPeriodsList), filters: filterOpts, extra: { metric: 'susut' } },
+      { ...histPeriodsKeyParts(historicalPeriodsList), filters: filterOpts, extra: { metric: 'susut', sv: 2 } },
       () => queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'susut'),
     ) : Promise.resolve(new Map<string, { avgQty: number; avgNominal: number }>()),
     needTopItems && historicalPeriodsList.length > 0 ? cachedSharedQueryMap(
       'q-hist-catavg',
-      { ...histPeriodsKeyParts(historicalPeriodsList), filters: filterOpts, extra: { metric: 'trial' } },
+      { ...histPeriodsKeyParts(historicalPeriodsList), filters: filterOpts, extra: { metric: 'trial', sv: 2 } },
       () => queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'trial'),
     ) : Promise.resolve(new Map<string, { avgQty: number; avgNominal: number }>()),
     needTopItems && historicalPeriodsList.length > 0 ? cachedSharedQueryMap(
       'q-hist-catavg',
-      { ...histPeriodsKeyParts(historicalPeriodsList), filters: filterOpts, extra: { metric: 'lossSurplus' } },
+      { ...histPeriodsKeyParts(historicalPeriodsList), filters: filterOpts, extra: { metric: 'lossSurplus', sv: 2 } },
       () => queryHistoricalCategoryAvg(historicalPeriodsList, filterOpts, 'lossSurplus'),
     ) : Promise.resolve(new Map<string, { avgQty: number; avgNominal: number }>()),
     // EXPORT-PDF (section 'itemTrend'): per-(month × item) ABS-nominal matrix

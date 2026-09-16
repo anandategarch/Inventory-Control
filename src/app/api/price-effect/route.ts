@@ -29,7 +29,7 @@ import { rateLimit, getClientIP } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { resolveOutletCodeFilters } from '@/lib/outlet-code-filters';
 import { queryPriceEffect, type PriceEffectResult, type PriceEffectSummary } from '@/lib/queries/price-effect';
-import { validateQuery } from '@/lib/validation';
+import { validateQuery, noControlChars } from '@/lib/validation';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 import { errorResponse } from '@/lib/error-response';
@@ -41,15 +41,17 @@ const PRICE_EFFECT_CACHE_TTL = 5 * 60 * 1000; // 5 min — matches analysis rout
 
 // Zod schema — month + week REQUIRED, compare month/week + filters optional.
 // Same regexes as the flip-ranking family.
+// FIX (BUGHUNT-A2): control-char gate on every string field — see the note
+// in flip-ranking/route.ts (cache-key poisoning via sanitizeKeyPart).
 const priceEffectQuerySchema = z.object({
-  month: z.string().regex(/^[A-Za-z]+\s+20\d{2}$/),
-  week: z.string().regex(/^WEEK\s+[0-9]+$/i),
-  compareMonth: z.string().regex(/^[A-Za-z]+\s+20\d{2}$/).optional(),
-  compareWeek: z.string().regex(/^WEEK\s+[0-9]+$/i).optional(),
-  area: z.string().min(1).max(50).optional(),
-  kelompok: z.string().min(1).max(50).optional(),
-  outlet: z.string().min(1).max(50).optional(),
-  pic: z.string().min(1).max(100).optional(),
+  month: z.string().regex(/^[A-Za-z]+\s+20\d{2}$/).refine(noControlChars),
+  week: z.string().regex(/^WEEK\s+[0-9]+$/i).refine(noControlChars),
+  compareMonth: z.string().regex(/^[A-Za-z]+\s+20\d{2}$/).refine(noControlChars).optional(),
+  compareWeek: z.string().regex(/^WEEK\s+[0-9]+$/i).refine(noControlChars).optional(),
+  area: z.string().min(1).max(50).refine(noControlChars).optional(),
+  kelompok: z.string().min(1).max(50).refine(noControlChars).optional(),
+  outlet: z.string().min(1).max(50).refine(noControlChars).optional(),
+  pic: z.string().min(1).max(100).refine(noControlChars).optional(),
 }).strict();
 
 export async function GET(req: NextRequest) {

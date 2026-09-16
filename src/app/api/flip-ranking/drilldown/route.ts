@@ -51,7 +51,7 @@ import {
   type FlipDrillOutlet,
   type FlipDrillPeriod,
 } from '@/lib/queries/items/flip-drilldown';
-import { validateQuery } from '@/lib/validation';
+import { validateQuery, noControlChars } from '@/lib/validation';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 import { errorResponse } from '@/lib/error-response';
@@ -66,15 +66,17 @@ const FLIP_DRILLDOWN_CACHE_TTL = 5 * 60 * 1000; // 5 min — matches flip-rankin
 // `item`, `week`, `month1`, `month2` are REQUIRED; the rest are optional
 // filters. `month1`/`month2` accept either a full label ("Juli 2026") or
 // a short 3-char prefix ("Jul") — the query function matches via ILIKE.
+// FIX (BUGHUNT-A2): control-char gate on every string field — see the note
+// in flip-ranking/route.ts (cache-key poisoning via sanitizeKeyPart).
 const flipDrilldownQuerySchema = z.object({
-  item: z.string().min(1).max(200),
-  week: z.string().regex(/^WEEK\s+[0-9]+$/i),
-  month1: z.string().min(1).max(50),
-  month2: z.string().min(1).max(50),
-  area: z.string().min(1).max(50).optional(),
-  kelompok: z.string().min(1).max(50).optional(),
-  outlet: z.string().min(1).max(50).optional(),
-  pic: z.string().min(1).max(100).optional(),
+  item: z.string().min(1).max(200).refine(noControlChars),
+  week: z.string().regex(/^WEEK\s+[0-9]+$/i).refine(noControlChars),
+  month1: z.string().min(1).max(50).refine(noControlChars),
+  month2: z.string().min(1).max(50).refine(noControlChars),
+  area: z.string().min(1).max(50).refine(noControlChars).optional(),
+  kelompok: z.string().min(1).max(50).refine(noControlChars).optional(),
+  outlet: z.string().min(1).max(50).refine(noControlChars).optional(),
+  pic: z.string().min(1).max(100).refine(noControlChars).optional(),
 }).strict();
 
 export async function GET(req: NextRequest) {

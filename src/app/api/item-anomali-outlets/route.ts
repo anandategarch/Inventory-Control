@@ -51,7 +51,7 @@ import {
   queryItemAnomaliOutlets,
   type AnomaliOutlet,
 } from '@/lib/queries/items/item-anomali-outlets';
-import { validateQuery } from '@/lib/validation';
+import { validateQuery, noControlChars } from '@/lib/validation';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 import { errorResponse } from '@/lib/error-response';
@@ -66,15 +66,17 @@ const ITEM_ANOMALI_CACHE_TTL = 5 * 60 * 1000; // 5 min — matches sibling item 
 // `item`, `month`, `week`, `direction` are REQUIRED; the rest are optional
 // filters. `direction` is constrained to the two literal values — anything
 // else returns 400.
+// FIX (BUGHUNT-A2): control-char gate on every string field — see the note
+// in flip-ranking/route.ts (cache-key poisoning via sanitizeKeyPart).
 const itemAnomaliOutletsQuerySchema = z.object({
-  item: z.string().min(1).max(200),
-  month: z.string().regex(/^[A-Za-z]+\s+20\d{2}$/),
-  week: z.string().regex(/^WEEK\s+[0-9]+$/i),
+  item: z.string().min(1).max(200).refine(noControlChars),
+  month: z.string().regex(/^[A-Za-z]+\s+20\d{2}$/).refine(noControlChars),
+  week: z.string().regex(/^WEEK\s+[0-9]+$/i).refine(noControlChars),
   direction: z.enum(['LOSS', 'SURPLUS']),
-  area: z.string().min(1).max(50).optional(),
-  kelompok: z.string().min(1).max(50).optional(),
-  outlet: z.string().min(1).max(50).optional(),
-  pic: z.string().min(1).max(100).optional(),
+  area: z.string().min(1).max(50).refine(noControlChars).optional(),
+  kelompok: z.string().min(1).max(50).refine(noControlChars).optional(),
+  outlet: z.string().min(1).max(50).refine(noControlChars).optional(),
+  pic: z.string().min(1).max(100).refine(noControlChars).optional(),
 }).strict();
 
 export async function GET(req: NextRequest) {

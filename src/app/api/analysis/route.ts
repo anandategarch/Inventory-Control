@@ -18,7 +18,7 @@
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
-import { setCachedRaw } from '@/lib/aggregation-cache';
+import { setCachedRaw, getCacheGeneration } from '@/lib/aggregation-cache';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { validateAndResolve } from './services/validate-and-resolve';
 import type { RawCacheHit } from './services/validate-and-resolve';
@@ -42,6 +42,18 @@ export async function GET(req: NextRequest) {
     if (outcome.kind === 'response') return outcome.response;
     rejectComputation = outcome.rejectComputation;
     const { params, cacheKey, resolveComputation } = outcome;
+
+    // FIX (BUGHUNT-A1): capture the cache generation BEFORE the compute
+    // stages start — the SAME guard withCacheAndDedup (swr.ts step 4) and
+    // background-recompute.ts already apply, but this bespoke pipeline's
+    // write-back never had it. A mutation (ingest/import/delete/settings/
+    // pic/migrate) landing during the 6-15s cold compute bumps the
+    // generation + deletes the cache rows; the unguarded setCachedRaw below
+    // then re-upserted the PRE-mutation payload under a FRESH computedAt —
+    // served as a fresh (no `stale:true`) hit for the full 30-min
+    // ANALYSIS_CACHE_TTL_MS. That resurrected exactly the "data lama setelah
+    // upload" symptom the generation counter was built to prevent.
+    const genAtCompute = getCacheGeneration();
 
     // Stage 2 — fetch slim records + historical stats (parallel with metadata).
     const records = await fetchRecords(params);
@@ -80,10 +92,20 @@ export async function GET(req: NextRequest) {
     // AggregationCache is byte-identical to what setCached() wrote, so warm
     // hits (getCachedRawWithMeta) behave exactly as before.
     const json = JSON.stringify(result);
-    // awaitWrite=true — blocks ~150ms to ensure DB write completes before
-    // response returns. Without this, the next request (fire-and-forget
-    // write still in-flight) misses cache and recomputes 10s.
-    await setCachedRaw(cacheKey, json, true);
+    // FIX (BUGHUNT-A1): generation guard — only persist the computed payload
+    // when NO invalidation landed mid-compute (mirrors swr.ts step 4 /
+    // background-recompute.ts). The response itself is still served + the
+    // in-flight Promise still resolved (one-off, never cached) — concurrent
+    // awaiters get the data once and the NEXT request recomputes clean from
+    // the post-mutation state.
+    if (getCacheGeneration() === genAtCompute) {
+      // awaitWrite=true — blocks ~150ms to ensure DB write completes before
+      // response returns. Without this, the next request (fire-and-forget
+      // write still in-flight) misses cache and recomputes 10s.
+      await setCachedRaw(cacheKey, json, true);
+    } else {
+      logger.info('[analysis] cold compute skipped cache write-back (cache invalidated mid-compute)', { cacheKey });
+    }
 
     // FIX M3: Resolve the in-flight Promise so concurrent requests get the
     // result. PERF (H-8-5): resolve with the SAME P3-HYG-1 raw marker the

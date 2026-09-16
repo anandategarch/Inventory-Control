@@ -17,7 +17,16 @@ import { z } from 'zod';
 //     \u001bNONE — key-builder.ts). Rejecting controls at the door keeps
 //     them impossible to reproduce from user input.
 const CONTROL_CHAR = /[\u0000-\u001f\u007f-\u009f]/;
-const noControlChars = (v: string) => !CONTROL_CHAR.test(v);
+// FIX (BUGHUNT-A2): exported so the routes that define their Zod schemas
+// INLINE (flip-ranking family, item-trend-rank, item-peer-comparison,
+// price-effect, item-anomali-outlets, item-search) can apply the SAME
+// control-char gate to their own string fields. Previously those schemas
+// skipped this refine entirely, so a control char passed validation and
+// key-builder.ts's sanitizeKeyPart silently STRIPPED it — building the
+// exact cache key of the real (control-free) value. The crafted request
+// then cached its EMPTY result under the REAL filter's key (cache-key
+// poisoning: `?pic=An%1Bdi` poisoned `pic=Andi` for the full TTL).
+export const noControlChars = (v: string) => !CONTROL_CHAR.test(v);
 
 // Month label: "Januari 2026", "Mei 2026", "AGUSTUS 2026", etc. — Indonesian month name + 4-digit year
 // FIX (AUDIT-SECURITY-PERF C4): was /^[A-Z][a-z]+\s+20\d{2}$/ — rejected uppercase "AGUSTUS 2026".
@@ -339,7 +348,9 @@ export const importDriveBodySchema = z.object({
 
 // /api/area-item-heatmap GET query params (BUG-A-01 from orphaned 400b538)
 export const heatmapQuerySchema = z.object({
-  month: z.string().min(3).max(50),
+  // FIX (BUGHUNT-A2): free-form month lacked the control-char gate (shared
+  // monthLabelSchema has it; this inline field didn't) — see noControlChars.
+  month: z.string().min(3).max(50).refine(noControlChars),
   week: weekLabelSchema,
   metric: z.enum(['absNominalDeviasi', 'nominalWaste', 'nominalSusut', 'pctQtyDeviasiToBom', 'recordCount']).optional(),
   itemLimit: z.coerce.number().int().min(5).max(100).optional(),
@@ -356,9 +367,12 @@ export const heatmapQuerySchema = z.object({
 // for the cache key (the query itself returns ALL periods for the item).
 // `metric` selects which QTY to Z-Score on (default: qtyDeviasi).
 export const itemTrendQuerySchema = z.object({
-  month: z.string().min(3).max(50).optional(),
+  // FIX (BUGHUNT-A2): month + itemName lacked the control-char gate — a
+  // control char in either would collide with the real value's cache key
+  // after sanitizeKeyPart (see noControlChars export note).
+  month: z.string().min(3).max(50).refine(noControlChars).optional(),
   week: weekLabelSchema,
-  itemName: z.string().min(1).max(200),
+  itemName: z.string().min(1).max(200).refine(noControlChars),
   metric: z.enum(['qtyDeviasi', 'qtyWaste', 'qtySusut', 'qtyTrial']).optional(),
   area: areaSchema,
   kelompok: kelompokSchema,

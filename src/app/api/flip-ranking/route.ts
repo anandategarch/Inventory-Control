@@ -48,7 +48,7 @@ import {
   queryFlipRanking,
   type FlipRankItem,
 } from '@/lib/queries/items/flip-ranking';
-import { validateQuery } from '@/lib/validation';
+import { validateQuery, noControlChars } from '@/lib/validation';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 import { errorResponse } from '@/lib/error-response';
@@ -64,13 +64,19 @@ const FLIP_RANKING_CACHE_TTL = 5 * 60 * 1000; // 5 min — matches item-trend-ra
 // `month` is OPTIONAL (when set, only flip pairs involving that month are counted).
 // `area`, `kelompok`, `outlet`, `pic` are all OPTIONAL filters.
 // `limit` is OPTIONAL (default 20, max 50) — top N items to return.
+// FIX (BUGHUNT-A2): every string field now carries the shared control-char
+// gate — without it a control char passed validation and sanitizeKeyPart
+// stripped it, building the cache key of the REAL filter value (the crafted
+// request then cached its empty result under that key). Regex'd fields
+// (week/month) can't contain controls anyway, but the refine is kept for
+// uniformity with validation.ts's own schemas.
 const flipRankingQuerySchema = z.object({
-  week: z.string().regex(/^WEEK\s+[0-9]+$/i).optional(),
-  month: z.string().regex(/^[A-Za-z]+\s+20\d{2}$/).optional(),
-  area: z.string().min(1).max(50).optional(),
-  kelompok: z.string().min(1).max(50).optional(),
-  outlet: z.string().min(1).max(50).optional(),
-  pic: z.string().min(1).max(100).optional(),
+  week: z.string().regex(/^WEEK\s+[0-9]+$/i).refine(noControlChars).optional(),
+  month: z.string().regex(/^[A-Za-z]+\s+20\d{2}$/).refine(noControlChars).optional(),
+  area: z.string().min(1).max(50).refine(noControlChars).optional(),
+  kelompok: z.string().min(1).max(50).refine(noControlChars).optional(),
+  outlet: z.string().min(1).max(50).refine(noControlChars).optional(),
+  pic: z.string().min(1).max(100).refine(noControlChars).optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 }).strict();
 
