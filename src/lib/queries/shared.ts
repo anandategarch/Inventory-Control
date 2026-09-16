@@ -213,10 +213,52 @@ export function buildSqlFilters(
     // on BOTH SQLite (default case-insensitive LIKE) and PostgreSQL (default
     // case-sensitive LIKE). Without this, "ayam" matches "Ayam Goreng" in
     // local SQLite testing but NOT in production PostgreSQL.
-    parts.push(Prisma.sql`AND ${a}."itemId" IN (SELECT id FROM "Item" WHERE LOWER(name) LIKE LOWER(${'%' + opts.itemName + '%'}))`);
+    //
+    // FIX (BUGHUNT-A4): escape %/_/\ in the pattern + an explicit ESCAPE
+    // clause — previously `item=%` matched EVERY item (filter silently
+    // dropped while the response still reported filters.itemName='%') and
+    // '_' in a real product code over-matched single-char variants
+    // (TEH_BOTOL matched TEHXBOTOL). See escapeLikeWildcards (bottom of
+    // this file) for the full rationale + connector notes.
+    const itemPattern = `%${escapeLikeWildcards(opts.itemName)}%`;
+    parts.push(Prisma.sql`AND ${a}."itemId" IN (SELECT id FROM "Item" WHERE LOWER(name) LIKE LOWER(${itemPattern}) ESCAPE '\\')`);
   }
   // Prisma.join requires ≥1 element; return empty fragment when no filters
   if (parts.length === 0) return Prisma.sql``;
   if (parts.length === 1) return parts[0];
   return Prisma.join(parts, ' ');
+}
+
+// ============================================================
+//  FIX (BUGHUNT-A4): LIKE wildcard escaping for the itemName filter.
+//  A user item filter containing '%' or '_' used to be interpolated into
+//  the LIKE pattern verbatim: `item=%` matched EVERY item (the filter was
+//  effectively dropped while the response still reported
+//  filters.itemName='%'), and any real item name containing '_' (common in
+//  product codes) also matched every name differing in that one character
+//  (TEH_BOTOL matched TEHXBOTOL) — filtered aggregates silently included
+//  rows from other items.
+//
+//  The fix escapes the SQL LIKE wildcards (plus the escape character
+//  itself) before interpolation and makes the escape explicit with an
+//  `ESCAPE '\'` clause — in the JS template literal the double backslash
+//  cooks down to one, so the SQL text is ESCAPE '<backslash>'. That syntax
+//  is honored by BOTH connectors this code ever runs on:
+//    - PostgreSQL (production — see prisma/schema.prisma): the DEFAULT LIKE
+//      escape character is already the backslash, so the clause is
+//      explicit-but-consistent;
+//    - SQLite (local test harnesses): there is NO default escape — the
+//      clause is what makes the backslash mean "next char is literal".
+//  A filter with no wildcard chars escapes to itself — zero behavior
+//  change for the normal case.
+// ============================================================
+
+/**
+ * FIX (BUGHUNT-A4): escape `\`, `%`, `_` for use inside a SQL LIKE pattern
+ * (paired with the explicit `ESCAPE` clause in buildSqlFilters above).
+ * Exported so the Prisma-contains path (build-where.ts) shares the exact
+ * same escaping semantics.
+ */
+export function escapeLikeWildcards(input: string): string {
+  return input.replace(/[\\%_]/g, '\\$&');
 }

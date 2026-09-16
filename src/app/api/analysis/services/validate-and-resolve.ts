@@ -22,7 +22,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
-import { buildCacheKey, getCachedRawWithMeta, getInflight, setInflight } from '@/lib/aggregation-cache';
+import { buildCacheKey, getCachedRawWithMeta, getInflight, setInflight, getCacheGeneration } from '@/lib/aggregation-cache';
 import { validateQuery, analysisQuerySchema } from '@/lib/validation';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { triggerBackgroundRecompute } from './background-recompute';
@@ -80,6 +80,50 @@ function rawCacheResponse(hit: RawCacheHit): NextResponse {
   return new NextResponse('{'.concat(inject, hit.__rawJson.slice(1)), {
     headers: { ...CACHE_ANALYSIS, 'Content-Type': 'application/json' },
   });
+}
+
+/**
+ * FIX (BUGHUNT-A3): serve an awaited in-flight result — extracted so the
+ * generation-guarded awaiter below can reuse the EXACT serving semantics for
+ * both the first await and the post-invalidation re-entered await. Returns
+ * null when the settled value is neither a RawCacheHit marker nor a
+ * success-shaped object — the caller then falls through to the compute path
+ * (same behavior as the pre-fix code falling out of the if-block).
+ */
+function serveInflightResult(
+  inflightResult: unknown,
+  startedAt: number
+): ValidateAndResolveOutcome | null {
+  // P3-HYG-1: a CACHE HIT resolves the in-flight with the raw marker (see
+  // the hit path below) — serve the same zero-parse raw response.
+  if (isRawCacheHit(inflightResult)) {
+    return { kind: 'response', response: rawCacheResponse(inflightResult) };
+  }
+  if (inflightResult && typeof inflightResult === 'object' && 'success' in inflightResult) {
+    const r = inflightResult as Record<string, unknown>;
+    // FIX (BUG-H): the ONLY object (non-RawCacheHit) resolution of the
+    // in-flight Promise is route.ts's empty-data short-circuit — the 404
+    // "No records found" payload. Concurrent awaiters used to serve it as
+    // HTTP 200 + cached:true, which (a) diverges from the direct 404 the
+    // first requester gets and (b) makes fetchAnalysis treat the body as a
+    // VALID AnalysisData (200 + JSON passes its guards) → the dashboard
+    // renders a malformed payload and ExecutiveStatus dereferences
+    // data.executiveSummary → TypeError. Serve the SAME 404 (status + body)
+    // the direct path returns. Fresh copy — do NOT mutate the payload the
+    // first requester is still serializing into its own 404 response.
+    if (r.success === false) {
+      return {
+        kind: 'response',
+        // No CACHE_ANALYSIS headers — matches the direct 404 in route.ts
+        // (a CDN must not pin a "no data" answer for 5 min after an upload).
+        response: NextResponse.json({ ...r }, { status: 404 }),
+      };
+    }
+    r.cached = true;
+    r.durationMs = Date.now() - startedAt;
+    return { kind: 'response', response: NextResponse.json(r, { headers: CACHE_ANALYSIS }) };
+  }
+  return null;
 }
 
 // FIX Medium #1: DB-level caching via AggregationCache table.
@@ -280,37 +324,45 @@ export async function validateAndResolve(req: NextRequest): Promise<ValidateAndR
 
   // FIX M3 (AUDIT-5): Check in-flight Promise map (prevents cache stampede).
   // If another request for the same key is already computing, await its result.
+  //
+  // FIX (BUGHUNT-A3): generation re-check on the awaited result — mirrors
+  // withCacheAndDedup's awaiter (swr.ts step 1). Previously this awaiter
+  // served the awaited payload UNCONDITIONALLY: a request B that joined
+  // request A's in-flight compute and crossed a mutation boundary
+  // (invalidateAnalysisCache bumps the generation while B awaits) received
+  // A's PRE-mutation payload as a normal `cached:true` 200 — the one-off,
+  // non-persisted sibling of BUGHUNT-A1 (which guarded only the
+  // write-back). generation.ts's header even claims "in-flight awaiters use
+  // the same check" — now this one actually does: capture the generation
+  // BEFORE awaiting; on mismatch re-enter the dedup (join a newer
+  // post-invalidation in-flight registration if one exists), else fall
+  // through and become the request that computes fresh below.
   const inflight = getInflight<unknown>(cacheKey);
   if (inflight) {
+    const genAtAwait = getCacheGeneration();
     const inflightResult = await inflight;
-    // P3-HYG-1: a CACHE HIT resolves the in-flight with the raw marker (see
-    // the hit path below) — serve the same zero-parse raw response.
-    if (isRawCacheHit(inflightResult)) {
-      return { kind: 'response', response: rawCacheResponse(inflightResult) };
-    }
-    if (inflightResult && typeof inflightResult === 'object' && 'success' in inflightResult) {
-      const r = inflightResult as Record<string, unknown>;
-      // FIX (BUG-H): the ONLY object (non-RawCacheHit) resolution of the
-      // in-flight Promise is route.ts's empty-data short-circuit — the 404
-      // "No records found" payload. Concurrent awaiters used to serve it as
-      // HTTP 200 + cached:true, which (a) diverges from the direct 404 the
-      // first requester gets and (b) makes fetchAnalysis treat the body as a
-      // VALID AnalysisData (200 + JSON passes its guards) → the dashboard
-      // renders a malformed payload and ExecutiveStatus dereferences
-      // data.executiveSummary → TypeError. Serve the SAME 404 (status + body)
-      // the direct path returns. Fresh copy — do NOT mutate the payload the
-      // first requester is still serializing into its own 404 response.
-      if (r.success === false) {
-        return {
-          kind: 'response',
-          // No CACHE_ANALYSIS headers — matches the direct 404 in route.ts
-          // (a CDN must not pin a "no data" answer for 5 min after an upload).
-          response: NextResponse.json({ ...r }, { status: 404 }),
-        };
+    if (genAtAwait === getCacheGeneration()) {
+      const served = serveInflightResult(inflightResult, startedAt);
+      if (served) return served;
+    } else {
+      // An invalidation landed while we awaited — the settled result was
+      // computed from PRE-mutation data and must NOT be served. Join a newer
+      // in-flight registration if another post-invalidation request already
+      // started one (avoids a duplicate compute), else fall through.
+      const refreshed = getInflight<unknown>(cacheKey);
+      if (refreshed && refreshed !== inflight) {
+        const genAtSecondAwait = getCacheGeneration();
+        const refreshedResult = await refreshed;
+        if (genAtSecondAwait === getCacheGeneration()) {
+          const served = serveInflightResult(refreshedResult, startedAt);
+          if (served) return served;
+        }
       }
-      r.cached = true;
-      r.durationMs = Date.now() - startedAt;
-      return { kind: 'response', response: NextResponse.json(r, { headers: CACHE_ANALYSIS }) };
+      // Still stale (invalidation landed again) or nobody re-registered —
+      // fall through to the fresh path below. No deadlock: the awaited
+      // Promise has already settled, and setInflight overwrites the stale
+      // registration safely (its settle-cleanup is identity-guarded — see
+      // inflight.ts).
     }
   }
 

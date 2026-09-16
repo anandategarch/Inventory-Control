@@ -136,6 +136,20 @@ export function usePeerQueries({ activeOutlet, monthLabel, currentWeek, kelompok
 
   // Trend query — depends on peerCodes from main for stable peer
   // set across weeks. `enabled` waits for peerCodes.
+  //
+  // FIX (BUGHUNT-F2): peer-set freshness gate. mainData uses
+  // keepPreviousData, so on an outlet switch A→B the derived peerCodes
+  // still belong to A until the fresh main query resolves. The queryKey
+  // switches to B IMMEDIATELY though, and the old `enabled` (peerCodes.length
+  // > 0) still passed with A's stale non-empty list → the fetch fired as
+  // `outletCode=B&peers=<A's peers>` — B's target line drawn against A's
+  // peer average, plus a poisoned 5-min server cache row under that exact
+  // key (the backend uses the explicit peers list verbatim). Gate on the
+  // TARGET row's own outletCode matching activeOutlet: only true once
+  // mainData belongs to the CURRENT outlet. While disabled, the card
+  // shows its empty/loading state instead of wrong numbers; when the fresh
+  // main data lands, peerCodesKey changes → new key → correct fetch.
+  const peerSetFresh = targetRow?.outletCode === activeOutlet;
   const { data: trendData, isLoading: trendLoading, error: trendError } = useQuery({
     // FIX (BUG2-RESTO-1 / FIX-P1-PEER-1): kelompok added to queryKey + URL params.
     // peerCodesKey already changes when kelompok changes (main query refetches
@@ -159,7 +173,7 @@ export function usePeerQueries({ activeOutlet, monthLabel, currentWeek, kelompok
       }
       return res.json() as Promise<TrendResponse>;
     },
-    enabled: Boolean(activeOutlet && monthLabel && peerCodes.length > 0),
+    enabled: Boolean(activeOutlet && monthLabel && peerCodes.length > 0 && peerSetFresh),
     // PERF-FE (PAKET A): see main query — 5 min staleTime + 10 min gcTime
     // instead of the 30s default refetch-on-remount storm.
     staleTime: 5 * 60_000,

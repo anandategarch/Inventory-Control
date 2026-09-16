@@ -22,6 +22,7 @@
 //  internally. Both call-sites produce the same Prisma query.
 // ============================================================
 import { Prisma } from '@prisma/client';
+import { escapeLikeWildcards } from '@/lib/queries/shared';
 
 export interface BuildInventoryWhereOpts {
   /** Current week label (e.g. "WEEK 2") */
@@ -93,7 +94,18 @@ export function buildInventoryWhere(
 
   if (area && area !== 'all') w.area = area;
   // BUG FIX (BUG-NORECORDS-2): case-insensitive itemName filter (mode: 'insensitive')
-  if (itemName) w.item = { name: { contains: itemName, mode: 'insensitive' } };
+  // FIX (BUGHUNT-A4): escape LIKE wildcards first. Verified against the
+  // Prisma 6.11 engine's generated SQL: `contains` wraps the value with
+  // '%' WITHOUT escaping (`contains 'TEH%'` → `LIKE '%TEH%%'` — the
+  // wildcards stay active), so an itemName containing %/_ matched the
+  // wrong row set ('%' matched EVERY item — the record path then fed
+  // unfiltered records into the response while still reporting
+  // filters.itemName='%'). escapeLikeWildcards makes them literal: on
+  // PostgreSQL (this app's only connector — prisma/schema.prisma) LIKE's
+  // DEFAULT escape character is the backslash, so `\%`/`\_` inside the
+  // contains value match the literal characters exactly. A filter with
+  // no wildcard chars is a no-op — existing behavior unchanged.
+  if (itemName) w.item = { name: { contains: escapeLikeWildcards(itemName), mode: 'insensitive' } };
 
   if (kelompok && kelompok !== 'all') {
     if (kelompokOutletCodes.length === 0) {
