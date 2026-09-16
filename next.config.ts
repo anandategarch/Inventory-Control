@@ -19,6 +19,29 @@ const nextConfig: NextConfig = {
   // runtime (fs + __dirname) — keeping it external (not webpack-bundled)
   // preserves those file reads in every deployment target (Vercel/Railway).
   serverExternalPackages: ['pdfkit'],
+  // VFNS-1 (Functions Storage fix, -71% per deployment):
+  // Vercel "Functions Storage" meter hit 56.99 GB / 10 GB on Hobby. Root cause
+  // (verified by parsing all .nft.json trace manifests of a local build):
+  // every DB route traced ~82 MB, of which ~57 MB was DEAD WEIGHT — Prisma's
+  // WASM engine variants for OTHER databases (query_engine_bg.{mysql,sqlserver,
+  // sqlite,cockroachdb,postgresql}.wasm-base64.{js,mjs} + query_compiler_bg.*)
+  // and .prisma/client/query_engine_bg.wasm. We use prisma-client-js with the
+  // LIBRARY engine (libquery_engine-*.so.node, loaded via dynamic path), so
+  // static tracing cannot analyze the require() and conservatively includes
+  // the whole runtime folder into all 36 DB routes ≈ 2.06 GB per deployment.
+  // These WASM files are NEVER read at runtime in this setup.
+  // Globs are matched by picomatch(contains:true, dot:true) against traced
+  // file paths resolved from the project root; key '*' applies to every route.
+  // Measured result: 2.97 GB → 0.87 GB traced per deployment.
+  // ⚠ IF migrating to engineType="client" / queryCompiler (wasm) someday,
+  // these excludes MUST be removed or the engine will 404 at runtime.
+  outputFileTracingExcludes: {
+    '*': [
+      'node_modules/@prisma/client/runtime/query_engine_bg*',
+      'node_modules/@prisma/client/runtime/query_compiler_bg*',
+      'node_modules/.prisma/client/query_engine_bg*',
+    ],
+  },
   // Disable Next.js dev tools floating widget ("N" circle in bottom-right)
   devIndicators: false,
   // FIX: enable gzip compression for API responses (334KB → ~40KB, 85% reduction)
