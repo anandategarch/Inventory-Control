@@ -1,45 +1,16 @@
-// Supplementary format tests — covers trendColor, severityColor, priorityColor,
+// Supplementary format tests — covers severityColor, priorityColor,
 // and edge cases NOT already covered by src/lib/format.test.ts.
+// P23: trendColor tests removed together with the dead helper (zero src callers).
 import { describe, it, expect } from 'vitest';
 import {
   fmtIDR,
   fmtNum,
   fmtPct,
   fmtPctAbs,
-  trendColor,
   severityColor,
   priorityColor,
   toNum,
 } from '@/lib/format';
-
-describe('trendColor', () => {
-  it('returns muted for null/undefined', () => {
-    expect(trendColor(null)).toBe('text-muted-foreground');
-    expect(trendColor(undefined)).toBe('text-muted-foreground');
-  });
-
-  it('returns muted for zero (no change)', () => {
-    expect(trendColor(0)).toBe('text-muted-foreground');
-  });
-
-  it('returns emerald for positive (default — non-inverse)', () => {
-    expect(trendColor(0.05)).toBe('text-emerald-600');
-    expect(trendColor(100)).toBe('text-emerald-600');
-  });
-
-  it('returns red for negative (default — non-inverse)', () => {
-    expect(trendColor(-0.05)).toBe('text-red-600');
-    expect(trendColor(-100)).toBe('text-red-600');
-  });
-
-  it('inverts colors when inverse=true', () => {
-    // Negative + inverse = good (e.g. deviation shrinking) → emerald
-    expect(trendColor(-5, true)).toBe('text-emerald-600');
-    // Positive + inverse = bad (e.g. deviation growing) → red
-    expect(trendColor(5, true)).toBe('text-red-600');
-  });
-});
-
 describe('severityColor', () => {
   it('returns red styles for ABNORMAL', () => {
     expect(severityColor('ABNORMAL')).toContain('text-red-600');

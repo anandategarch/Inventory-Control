@@ -65,10 +65,11 @@ export function ProfileCards({ profile, allItems }: ProfileCardsProps) {
             <Row label="Deviasi Growth" value={fmtGrowth(profile.historical.deviasiGrowth)} growthColor={growthColor(profile.historical.deviasiGrowth, true)} />
             <Row label="Nominal Growth" value={fmtGrowth(profile.historical.nominalGrowth)} growthColor={growthColor(profile.historical.nominalGrowth, true)} />
             <div className="flex items-center gap-2 pt-1.5 mt-1.5 border-t">
-              {profile.historical.trend === 'DETERIORATING' && <TrendingUp className="h-4 w-4 text-red-600" />}
-              {profile.historical.trend === 'IMPROVING' && <TrendingDown className="h-4 w-4 text-emerald-600" />}
+              {/* P23 C7: trend colors were light-mode-only — add dark: variants. */}
+              {profile.historical.trend === 'DETERIORATING' && <TrendingUp className="h-4 w-4 text-red-600 dark:text-red-400" />}
+              {profile.historical.trend === 'IMPROVING' && <TrendingDown className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />}
               {profile.historical.trend === 'STABLE' && <Minus className="h-4 w-4 text-muted-foreground" />}
-              <span className={`font-semibold text-xs ${profile.historical.trend === 'DETERIORATING' ? 'text-red-600' : profile.historical.trend === 'IMPROVING' ? 'text-emerald-600' : 'text-muted-foreground'}`}>
+              <span className={`font-semibold text-xs ${profile.historical.trend === 'DETERIORATING' ? 'text-red-600 dark:text-red-400' : profile.historical.trend === 'IMPROVING' ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}>
                 {profile.historical.trend}
               </span>
             </div>

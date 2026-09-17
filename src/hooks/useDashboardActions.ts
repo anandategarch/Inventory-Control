@@ -226,7 +226,8 @@ export function useDashboardActions({
           variant: 'destructive',
         });
       } else {
-        toast({ title: '❌ Export gagal', description: (e instanceof Error ? e.message : 'Unknown error'), variant: 'destructive' });
+        // P23 D5: 'Unknown error' fallback → Indonesian.
+        toast({ title: '❌ Export gagal', description: (e instanceof Error ? e.message : 'Error tidak diketahui'), variant: 'destructive' });
       }
     } finally {
       setIsExporting(false);

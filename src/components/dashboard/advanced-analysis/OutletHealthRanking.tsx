@@ -13,7 +13,7 @@ import { Heart } from 'lucide-react';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import { useDashboard } from '@/hooks/useDashboard';
-import { fmtIDR, fmtPctAbs } from '@/lib/format';
+import { fmtIDR, fmtPctAbs, numberColorNeg } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { healthScoreBg, healthScoreColor } from './health-badges';
@@ -91,12 +91,12 @@ export const OutletHealthRanking = memo(function OutletHealthRanking({ data }: {
                   <TableCell className="text-xs px-3 py-2 text-right tabular-nums">{fmtPctAbs(o.devBom)}</TableCell>
                   <TableCell className="text-xs px-3 py-2 text-right text-red-600 dark:text-red-400 font-medium tabular-nums">{o.abnormal}</TableCell>
                   <TableCell className="text-xs px-3 py-2 text-right font-semibold tabular-nums">
-                    {/* FIX: display SIGNED nominalDeviasi (negative=LOSS=red, positive=SURPLUS=green) */}
+                    {/* FIX: display SIGNED nominalDeviasi (negative=LOSS=red; positive neutral — P23) */}
                     {/* FIX (AUDIT-CALC-FRONTEND P1-3): was fallback to o.absNominal (always ≥0) when
                         nominalDeviasi is null → worst-ranking outlets colored green. Now show '—' if null. */}
-                    <span className={o.nominalDeviasi != null
-                      ? (o.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400')
-                      : 'text-muted-foreground'}>
+                    {/* P23 B8: numberColorNeg — minus-red only (PDF negColor parity);
+                        null/NaN → muted (the helper's own null branch replaces the ternary). */}
+                    <span className={numberColorNeg(o.nominalDeviasi)}>
                       {o.nominalDeviasi != null ? fmtIDR(o.nominalDeviasi) : '—'}
                     </span>
                   </TableCell>

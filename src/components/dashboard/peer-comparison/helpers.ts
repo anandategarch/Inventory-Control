@@ -32,12 +32,19 @@ export const COLUMNS: MetricDef[] = [
  *
  * - Empty string when there are no peers (peerCount === 0).
  * - `text-muted-foreground` when target ≈ avg (within 0.001 absolute).
- * - `text-emerald-600 font-semibold` when target is *better* than avg.
- * - `text-red-600 font-semibold` when target is *worse* than avg.
+ * - `text-emerald-600 dark:text-emerald-400 font-semibold` when target is *better* than avg.
+ * - `text-red-600 dark:text-red-400 font-semibold` when target is *worse* than avg.
+ *
+ * P23 A1: MAGNITUDE comparison — compare |target| vs |avg|, not signed
+ * difference. `nominalDeviasi` (and other signed sums) are deviations from
+ * zero, so "better" = smaller |value| regardless of sign. The old signed
+ * diff inverted the typical all-loss band: deeper-loss-than-avg rendered
+ * EMERALD ("lebih baik") and less-loss rendered RED. Mirrors the FE-26
+ * magnitude-gap approach in items-table.tsx + card-compute.ts abs-ranking.
  *
  * "Better" depends on `higherIsBetter`:
- *   true  → diff > 0 (target above avg) = better
- *   false → diff < 0 (target below avg) = better
+ *   true  → |target| > |avg| (target above avg) = better
+ *   false → |target| < |avg| (target below avg) = better
  */
 export function colorCell(
   targetVal: number,
@@ -46,8 +53,14 @@ export function colorCell(
   higherIsBetter: boolean = false,
 ): string {
   if (peerCount === 0) return '';
-  const diff = targetVal - avgVal;
+  // P23 A1: magnitude gap (|target| − |avg|) — for all-positive metrics
+  // (sales, devBom, totalLoss, …) this is identical to the old signed diff;
+  // for signed sums it correctly treats bigger deviation as worse.
+  const diff = Math.abs(targetVal) - Math.abs(avgVal);
   if (Math.abs(diff) < 0.001) return 'text-muted-foreground';
   const isBetter = higherIsBetter ? diff > 0 : diff < 0;
-  return isBetter ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold';
+  // P23 A1: dark: variants were missing on both semantic classes.
+  return isBetter
+    ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
+    : 'text-red-600 dark:text-red-400 font-semibold';
 }

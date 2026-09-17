@@ -11,7 +11,7 @@
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { fmtIDR, fmtNum, numberColor } from '@/lib/format';
+import { fmtIDR, fmtNum, numberColorNeg } from '@/lib/format';
 import type { NestedItem } from './types';
 
 export function NestedItemToOutlet({
@@ -43,6 +43,13 @@ export function NestedItemToOutlet({
           {/* FIX (BUG-HUNT B14/B2-05): leftover EN "by deviation" (VH-7 sweep miss). */}
           Top 10 item berdasarkan deviasi. Klik untuk lihat outlet mana yang menyumbang 80% per item.
         </p>
+        {/* P23 B2 (LEFTOVER #6): horizontal-scroll wrapper — the fixed-width
+            shrink-0 row spans (~500px min) were clipped by the Card's
+            overflow-hidden on <480px viewports (%/Cum columns cut off).
+            min-w mirrors QuadrantCard's overflow-auto + Table min-w-[600px]
+            pattern: header + rows scroll together on narrow screens. */}
+        <div className="overflow-x-auto">
+          <div className="min-w-[500px]">
         {/* Column headers */}
         <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 pb-1 border-b border-border/40 mb-1">
           <span className="w-5 shrink-0">#</span>
@@ -67,8 +74,9 @@ export function NestedItemToOutlet({
                   {isExpanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
                   <span className="min-w-[120px] flex-1 truncate font-medium" title={item.itemName}>{item.itemName}</span>
                   <span className="text-muted-foreground text-[10px] tabular-nums shrink-0">{item.outletCount} resto</span>
-                  <span className={`w-20 text-right tabular-nums shrink-0 ${numberColor(item.qtyDeviasi)}`}>{fmtNum(item.qtyDeviasi)}</span>
-                  <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(item.nominalDeviasi)}`}>{fmtIDR(item.nominalDeviasi)}</span>
+                  {/* P23 B2: signed VALUE columns (qty/nominalDeviasi SUM) — minus-red only (PDF negColor). */}
+                  <span className={`w-20 text-right tabular-nums shrink-0 ${numberColorNeg(item.qtyDeviasi)}`}>{fmtNum(item.qtyDeviasi)}</span>
+                  <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColorNeg(item.nominalDeviasi)}`}>{fmtIDR(item.nominalDeviasi)}</span>
                   <span className="w-10 text-right text-muted-foreground tabular-nums shrink-0">{item.sharePct.toFixed(0)}%</span>
                   <span className="w-10 text-right text-muted-foreground/60 tabular-nums shrink-0">{item.cumPct.toFixed(0)}%</span>
                 </button>
@@ -89,8 +97,9 @@ export function NestedItemToOutlet({
                         <span className="w-4 text-muted-foreground tabular-nums shrink-0">{j + 1}.</span>
                         <span className="min-w-[100px] flex-1 truncate" title={o.outletName}>{o.outletName}</span>
                         <span className="text-muted-foreground text-[10px] shrink-0">{o.area}</span>
-                        <span className={`w-20 text-right tabular-nums shrink-0 ${numberColor(o.qtyDeviasi)}`}>{fmtNum(o.qtyDeviasi)}</span>
-                        <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(o.nominalDeviasi)}`}>{fmtIDR(o.nominalDeviasi)}</span>
+                        {/* P23 B2: signed VALUE columns — minus-red only (PDF negColor). */}
+                        <span className={`w-20 text-right tabular-nums shrink-0 ${numberColorNeg(o.qtyDeviasi)}`}>{fmtNum(o.qtyDeviasi)}</span>
+                        <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColorNeg(o.nominalDeviasi)}`}>{fmtIDR(o.nominalDeviasi)}</span>
                         <span className="w-10 text-right text-muted-foreground tabular-nums shrink-0">{o.sharePct.toFixed(0)}%</span>
                         <span className="w-10 text-right text-muted-foreground/60 tabular-nums shrink-0">{o.cumPct.toFixed(0)}%</span>
                       </div>
@@ -100,6 +109,8 @@ export function NestedItemToOutlet({
               </div>
             );
           })}
+        </div>
+          </div>
         </div>
       </CardContent>
     </Card>

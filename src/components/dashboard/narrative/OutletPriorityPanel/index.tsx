@@ -145,7 +145,8 @@ export const OutletPriorityPanel = memo(function OutletPriorityPanel({ data }: {
             </Button>
           </div>
         ) : lens === 'peluang' && oppResp && !oppResp.success ? (
-          <p className="py-4 text-center text-xs text-red-600 dark:text-red-400">Error: {oppResp.error || 'Unknown'}</p>
+          // P23 D5: "Error: … || 'Unknown'" → Indonesian headline + fallback.
+          <p className="py-4 text-center text-xs text-red-600 dark:text-red-400">Gagal memuat peluang perbaikan — {oppResp.error || 'Tidak diketahui'}</p>
         ) : lens === 'perubahan' && chgLoading && shown.length === 0 ? (
           Array.from({ length: 3 }).map((_, i) => <PulseRow key={i} />)
         ) : lens === 'perubahan' && chgError ? (
@@ -156,7 +157,8 @@ export const OutletPriorityPanel = memo(function OutletPriorityPanel({ data }: {
             </Button>
           </div>
         ) : lens === 'perubahan' && chgResp && !chgResp.success ? (
-          <p className="py-4 text-center text-xs text-red-600 dark:text-red-400">Error: {chgResp.error || 'Unknown'}</p>
+          // P23 D5: "Error: … || 'Unknown'" → Indonesian headline + fallback.
+          <p className="py-4 text-center text-xs text-red-600 dark:text-red-400">Gagal memuat analisa perubahan — {chgResp.error || 'Tidak diketahui'}</p>
         ) : shown.length === 0 ? (
           <p className="py-6 text-center text-xs text-muted-foreground">
             {lens === 'prioritas' && 'Tidak ada resto prioritas pada periode ini.'}

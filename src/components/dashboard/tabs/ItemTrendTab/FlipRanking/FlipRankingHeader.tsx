@@ -4,7 +4,7 @@
 //  FlipRankingHeader — card header for the flip ranking widget
 //  --------------------------------------------------------
 //  SPLIT-B (pure move from FlipRanking.tsx — no behavior change):
-//  purple Shuffle icon + title + "ⓘ" tooltip (flip pattern
+//  chart-token Shuffle icon + title + "ⓘ" tooltip (flip pattern
 //  detection explainer) + cache/stale badges + scanned-count
 //  line + the risk summary line (N risiko TINGGI · N sedang ·
 //  N total flip · N sempurna).
@@ -29,7 +29,8 @@ export function FlipRankingHeader({ data, itemCount, summary }: FlipRankingHeade
   return (
     <CardHeader className="pb-3">
       <CardTitle className="text-sm flex items-center gap-2.5 flex-wrap">
-        <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 shrink-0">
+        {/* P23 C1: purple (off-token family) → adaptive --chart-2 token utilities (teal light / green dark). */}
+        <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-chart-2/10 dark:bg-chart-2/20 text-chart-2 shrink-0">
           <Shuffle className="h-3.5 w-3.5" />
         </span>
         Flip Ranking — Cross-Item

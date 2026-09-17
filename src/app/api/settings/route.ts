@@ -108,8 +108,9 @@ export async function GET() {
       },
     });
   } catch (e: unknown) {
+    // P23 D4: 'Internal server error' → ID ('Gagal …' convention, see ingest services).
     return NextResponse.json(
-      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Internal server error" },
+      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Gagal memproses permintaan" },
       { status: 500 }
     );
   }
@@ -250,8 +251,9 @@ export async function POST(req: NextRequest) {
       errors: errors.length > 0 ? errors : undefined,
     });
   } catch (e: unknown) {
+    // P23 D4: 'Internal server error' → ID ('Gagal …' convention, see ingest services).
     return NextResponse.json(
-      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Internal server error" },
+      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Gagal memproses permintaan" },
       { status: 500 }
     );
   }
@@ -338,8 +340,9 @@ export async function DELETE(req: NextRequest) {
       message: key ? `Reset ${key} to default` : 'All settings reset to defaults',
     });
   } catch (e: unknown) {
+    // P23 D4: 'Internal server error' → ID ('Gagal …' convention, see ingest services).
     return NextResponse.json(
-      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Internal server error" },
+      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Gagal memproses permintaan" },
       { status: 500 }
     );
   }

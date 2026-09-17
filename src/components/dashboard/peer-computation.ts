@@ -79,12 +79,16 @@ export function computePeerScatterPoints(peers: PeerRow[], targetCode: string | 
  *  nominalDeviasi, qtyWaste. Rank 1 = best, N = worst. */
 export function computePeerRankItems(target: PeerRow, peers: PeerRow[]): { items: RankItem[]; total: number } {
   const total = peers.length;
-  const keyMetrics: Array<{ key: keyof PeerRow; label: string; higherBetter: boolean }> = [
+  const keyMetrics: Array<{ key: keyof PeerRow; label: string; higherBetter: boolean; rankByAbs?: boolean }> = [
     { key: 'sales',          label: 'Sales',          higherBetter: true  },
     { key: 'devBom',         label: 'Dev/BOM',        higherBetter: false },
     { key: 'totalLoss',      label: 'Total LOSS',     higherBetter: false },
     { key: 'residualQty',    label: 'Residual',       higherBetter: false },
-    { key: 'nominalDeviasi', label: 'Nominal Deviasi', higherBetter: false },
+    // P23 A2: rankByAbs — nominalDeviasi is a SIGNED SUM (peer-comparison.ts
+    // SUM(nominalDeviasi)), so ranking raw values put the biggest LOSS at
+    // #1 with emerald+star. Rank by |value| instead: smallest deviation
+    // magnitude = best (mirrors card-compute.ts abs-ranking).
+    { key: 'nominalDeviasi', label: 'Nominal Deviasi', higherBetter: false, rankByAbs: true },
     { key: 'qtyWaste',       label: 'QTY Waste',      higherBetter: false },
   ];
   const rankColor = (rank: number, t: number) => {
@@ -95,8 +99,10 @@ export function computePeerRankItems(target: PeerRow, peers: PeerRow[]): { items
   };
   const items: RankItem[] = keyMetrics.map(m => {
     const sorted = [...peers].sort((a, b) => {
-      const av = a[m.key] as number;
-      const bv = b[m.key] as number;
+      // P23 A2: signed metrics rank by magnitude (see keyMetrics note) —
+      // no-op for the all-positive metrics (|x| === x for x ≥ 0).
+      const av = m.rankByAbs ? Math.abs(a[m.key] as number) : (a[m.key] as number);
+      const bv = m.rankByAbs ? Math.abs(b[m.key] as number) : (b[m.key] as number);
       // For higherBetter: highest = best = rank 1 → sort descending.
       // For bad metrics (lower better): lowest = best = rank 1 → sort ascending.
       return m.higherBetter ? bv - av : av - bv;

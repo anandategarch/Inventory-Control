@@ -249,10 +249,18 @@ export const GrowthComparison = memo(function GrowthComparison({ data }: { data:
                     <span className="text-muted-foreground font-medium">{d.name}</span>
                     {top ? (
                       <span className="flex items-center gap-1 min-w-0">
+                        {/* P23 A4: metric-aware driver direction. nominalDeviasi
+                            drivers are SUM(|nominalDeviasi|) MAGNITUDES (drivers.ts) —
+                            "Naik" = memburuk → red, mirroring the B8 bar cells'
+                            badWhenUp for the same metric. qtyDeviasi drivers are
+                            SIGNED sums (Naik = toward-surplus) → emerald stays
+                            (two semantics documented at the panel below). */}
                         <span className={`truncate max-w-[140px] ${
                           d.key === 'price'
                             ? top.dir === 'up' ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'
-                            : top.dir === 'up' ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'
+                            : d.key === 'nominalDeviasi'
+                              ? top.dir === 'up' ? 'text-red-700 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-400'
+                              : top.dir === 'up' ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'
                         }`} title={top.name}>
                           {top.name}
                         </span>
@@ -351,6 +359,13 @@ export const GrowthComparison = memo(function GrowthComparison({ data }: { data:
               if (!md) return null;
               const growthVal = chartData.find(c => c.key === expanded)?.growth;
               const panelId = `growth-pareto-${expanded}`;
+              // P23 A4: metric-aware panel semantics. The nominalDeviasi
+              // drivers are SUM(|nominalDeviasi|) magnitudes — Naik =
+              // memburuk (red), Turun = improving (emerald), consistent with
+              // the bar cells above (B8 badWhenUp). qtyDeviasi drivers use
+              // SIGNED sums (Naik = toward-surplus) — emerald defensible and
+              // kept: two documented semantics, signed vs magnitude.
+              const badWhenUp = expanded === 'nominalDeviasi';
               return (
                 <div id={panelId} role="region" aria-label={`${md.label} Pareto 80% detail`} className="mt-3 rounded-lg border p-3 space-y-3 bg-muted/20">
                   <div className="flex items-center justify-between">
@@ -365,7 +380,7 @@ export const GrowthComparison = memo(function GrowthComparison({ data }: { data:
                   {/* Up drivers */}
                   {md.up.drivers.length > 0 && (
                     <div>
-                      <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400 mb-1 flex items-center gap-1">
+                      <p className={`text-xs font-medium mb-1 flex items-center gap-1 ${badWhenUp ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                         <TrendingUp className="h-3 w-3" /> Naik — 80% Pareto ({md.up.drivers.length} item)
                       </p>
                       <div className="space-y-1">
@@ -374,9 +389,9 @@ export const GrowthComparison = memo(function GrowthComparison({ data }: { data:
                             <span className="w-4 text-muted-foreground">{i + 1}.</span>
                             <span className="flex-1 min-w-0 break-words leading-tight" title={d.item}>{d.item}</span>
                             <div className="w-20 h-2 rounded-full bg-muted overflow-hidden shrink-0">
-                              <div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, d.sharePct)}%` }} />
+                              <div className={`h-full ${badWhenUp ? 'bg-red-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, d.sharePct)}%` }} />
                             </div>
-                            <span className="w-14 text-right tabular-nums text-emerald-600 dark:text-emerald-400 font-medium shrink-0">
+                            <span className={`w-14 text-right tabular-nums font-medium shrink-0 ${badWhenUp ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                               +{formatDelta(d.delta)}
                             </span>
                             <span className="w-9 text-right tabular-nums text-muted-foreground">{fmtPct(d.sharePct / 100, false, 0)}</span>
@@ -395,7 +410,7 @@ export const GrowthComparison = memo(function GrowthComparison({ data }: { data:
                   {/* Down drivers */}
                   {md.down.drivers.length > 0 && (
                     <div>
-                      <p className="text-xs font-medium text-red-600 dark:text-red-400 mb-1 flex items-center gap-1">
+                      <p className={`text-xs font-medium mb-1 flex items-center gap-1 ${badWhenUp ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
                         <TrendingDown className="h-3 w-3" /> Turun — 80% Pareto ({md.down.drivers.length} item)
                       </p>
                       <div className="space-y-1">
@@ -404,9 +419,9 @@ export const GrowthComparison = memo(function GrowthComparison({ data }: { data:
                             <span className="w-4 text-muted-foreground">{i + 1}.</span>
                             <span className="flex-1 min-w-0 break-words leading-tight" title={d.item}>{d.item}</span>
                             <div className="w-20 h-2 rounded-full bg-muted overflow-hidden shrink-0">
-                              <div className="h-full bg-red-500" style={{ width: `${Math.min(100, d.sharePct)}%` }} />
+                              <div className={`h-full ${badWhenUp ? 'bg-emerald-500' : 'bg-red-500'}`} style={{ width: `${Math.min(100, d.sharePct)}%` }} />
                             </div>
-                            <span className="w-14 text-right tabular-nums text-red-600 dark:text-red-400 font-medium shrink-0">
+                            <span className={`w-14 text-right tabular-nums font-medium shrink-0 ${badWhenUp ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
                               {formatDelta(d.delta)}
                             </span>
                             <span className="w-9 text-right tabular-nums text-muted-foreground">{fmtPct(d.sharePct / 100, false, 0)}</span>

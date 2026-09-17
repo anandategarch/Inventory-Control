@@ -25,7 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Target, AlertTriangle, TrendingUp } from 'lucide-react';
 import { memo } from 'react';
-import { fmtIDR, fmtPctAbs } from '@/lib/format';
+import { fmtIDR, fmtPctAbs, numberColorNeg } from '@/lib/format';
 import type { Recommendation, OutletItem } from './priority-summary/types';
 
 // Backward-compat re-exports — RestoAnalysis.tsx imports these from here.
@@ -97,7 +97,10 @@ export const PrioritySummaryCard = memo(function PrioritySummaryCard({
             </div>
             <div>
               <p className="text-xs text-muted-foreground uppercase tracking-wider">Nominal</p>
-              <p className={`text-sm font-semibold tabular-nums ${r.metrics.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+              {/* P23 B6: signed VALUE metric — numberColorNeg (minus-red only,
+                  dark: variants built in) for strict PDF negColor parity; was an
+                  inline ternary painting positive emerald. */}
+              <p className={`text-sm font-semibold tabular-nums ${numberColorNeg(r.metrics.nominalDeviasi)}`}>
                 {fmtIDR(r.metrics.nominalDeviasi)}
               </p>
             </div>

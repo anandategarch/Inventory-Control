@@ -85,14 +85,6 @@ export function fmtHeatmapCompact(v: number | null | undefined): string {
   return `${sign}${abs.toFixed(0)}`;
 }
 
-export function trendColor(v: number | null | undefined, inverse = false): string {
-  if (v == null) return 'text-muted-foreground';
-  if (v === 0) return 'text-muted-foreground';
-  const positive = v > 0;
-  const isGood = inverse ? !positive : positive;
-  return isGood ? 'text-emerald-600' : 'text-red-600';
-}
-
 export function severityColor(s: string): string {
   switch (s) {
     case 'ABNORMAL': return 'text-red-600 bg-red-50 border-red-200 dark:bg-red-950/40 dark:border-red-900 dark:text-red-400';
@@ -120,6 +112,20 @@ export function directionColor(d: string | null | undefined): string {
 export function numberColor(v: number | null | undefined): string {
   if (v == null || isNaN(v)) return 'text-muted-foreground';
   return v < 0 ? 'text-red-600 dark:text-red-400' : v > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground';
+}
+
+// ============================================================
+//  numberColorNeg — P23 (COLOR-PARITY): neg-only variant for signed
+//  VALUE columns. Canonical PDF negColor() paints ONLY minus red and
+//  keeps positive/zero neutral; numberColor() paints positive emerald
+//  (chart-like convention — keep it ONLY on magnitude/chart surfaces
+//  such as BarList/heatmaps). Use this on signed VALUE columns for
+//  strict PDF parity (mirrors top-items-card.tsx minus-red pattern).
+//  P23 note: replaces dead trendColor() (removed — zero callers).
+// ============================================================
+export function numberColorNeg(v: number | null | undefined): string {
+  if (v == null || isNaN(v)) return 'text-muted-foreground';
+  return v < 0 ? 'text-red-600 dark:text-red-400' : '';
 }
 
 export function priorityColor(p: string): string {

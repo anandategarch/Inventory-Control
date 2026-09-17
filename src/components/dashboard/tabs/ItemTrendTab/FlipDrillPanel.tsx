@@ -147,11 +147,13 @@ export function FlipDrillPanel({ item, flip, area, kelompok, outletCode, pic }: 
   const categoryDisplay = flip.category.charAt(0).toUpperCase() + flip.category.slice(1);
   const cb = categoryBadge(flip.category);
 
+  // P23 C1: purple cluster (off-token family) → adaptive --chart-2 token utilities
+  // (teal light / green dark) — same FLIP feature accent as FlipRanking.
   return (
-    <div className="bg-purple-50/40 dark:bg-purple-950/10 border-t border-purple-200/60 dark:border-purple-900/40 p-3 space-y-3">
+    <div className="bg-chart-2/5 dark:bg-chart-2/10 border-t border-chart-2/25 dark:border-chart-2/35 p-3 space-y-3">
       {/* Header */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs font-semibold text-purple-700 dark:text-purple-400 flex items-center gap-1.5">
+        <span className="text-xs font-semibold text-chart-2 flex items-center gap-1.5">
           <Shuffle className="h-3.5 w-3.5" />
           Flip Drill-down: <span className="text-foreground">{item}</span>
           <span className="text-muted-foreground">·</span>
@@ -193,7 +195,8 @@ export function FlipDrillPanel({ item, flip, area, kelompok, outletCode, pic }: 
       {/* Body: loading / error / unified flip table */}
       {isLoading ? (
         <div className="flex items-center justify-center py-6">
-          <Loader2 className="h-4 w-4 animate-spin text-purple-500" />
+          {/* P23 C1: purple spinner → --chart-2 token utility. */}
+          <Loader2 className="h-4 w-4 animate-spin text-chart-2" />
           <span className="ml-2 text-xs text-muted-foreground">Memuat per-outlet breakdown...</span>
         </div>
       ) : error ? (
@@ -217,7 +220,7 @@ export function FlipDrillPanel({ item, flip, area, kelompok, outletCode, pic }: 
               Diurutkan by <span className="font-medium text-foreground">Flip Disparity %</span> ascending
               (terkecil = paling balanced di atas).
               {' '}
-              <span className="text-purple-600 dark:text-purple-400 font-medium tabular-nums">
+              <span className="text-chart-2 font-medium tabular-nums">
                 {unifiedRows.length} outlet flip
               </span>
               {' '}dari{' '}
@@ -226,10 +229,11 @@ export function FlipDrillPanel({ item, flip, area, kelompok, outletCode, pic }: 
             </span>
           </div>
           {/* FIX (IDE-3): unified table — 1 row per outlet with P1 + P2 + delta + net + flip% */}
-          <div className="rounded-md border border-purple-200/60 dark:border-purple-900/40 bg-background/80 dark:bg-zinc-950/40 overflow-hidden">
+          {/* P23 C1: purple borders/bgs → --chart-2 token utilities (adaptive). */}
+          <div className="rounded-md border border-chart-2/25 dark:border-chart-2/35 bg-background/80 dark:bg-zinc-950/40 overflow-hidden">
             {/* Period header */}
-            <div className="px-2.5 py-1.5 border-b border-purple-200/60 dark:border-purple-900/40 bg-purple-50/40 dark:bg-purple-950/20 flex items-center justify-between gap-2 flex-wrap">
-              <span className="text-xs font-semibold text-purple-700 dark:text-purple-400 tabular-nums">
+            <div className="px-2.5 py-1.5 border-b border-chart-2/25 dark:border-chart-2/35 bg-chart-2/10 flex items-center justify-between gap-2 flex-wrap">
+              <span className="text-xs font-semibold text-chart-2 tabular-nums">
                 {flip.period1Label} → {flip.period2Label} · {flip.weekLabel}
               </span>
               <span className="text-[10px] text-muted-foreground tabular-nums">
@@ -237,7 +241,7 @@ export function FlipDrillPanel({ item, flip, area, kelompok, outletCode, pic }: 
               </span>
             </div>
             {/* Totals */}
-            <div className="px-2.5 py-1 text-[10px] text-muted-foreground border-b border-purple-200/40 dark:border-purple-900/30 flex items-center gap-3 flex-wrap tabular-nums">
+            <div className="px-2.5 py-1 text-[10px] text-muted-foreground border-b border-chart-2/15 dark:border-chart-2/25 flex items-center gap-3 flex-wrap tabular-nums">
               <span>
                 Total P1:{' '}
                 <span className={totals.p1 < 0 ? 'text-red-600 dark:text-red-400 font-medium' : 'text-emerald-600 dark:text-emerald-400 font-medium'}>

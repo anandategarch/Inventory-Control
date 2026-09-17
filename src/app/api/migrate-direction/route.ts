@@ -118,8 +118,9 @@ export async function POST(req: NextRequest) {
     });
   } catch (e: unknown) {
     logger.error("[migrate-direction] error", { error: e });
+    // P23 D4: 'Internal server error' → ID ('Gagal …' convention, see ingest services).
     return NextResponse.json(
-      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Internal server error" },
+      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Gagal memproses permintaan" },
       { status: 500 }
     );
   }
@@ -174,8 +175,9 @@ export async function GET(req: NextRequest) {
     });
   } catch (e: unknown) {
     logger.error("[migrate-direction] GET error", { error: e });
+    // P23 D4: 'Internal server error' → ID ('Gagal …' convention, see ingest services).
     return NextResponse.json(
-      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Internal server error" },
+      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Gagal memproses permintaan" },
       { status: 500 }
     );
   }

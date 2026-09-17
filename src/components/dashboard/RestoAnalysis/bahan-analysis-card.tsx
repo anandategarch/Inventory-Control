@@ -15,7 +15,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AlertTriangle } from 'lucide-react';
 import type { Dispatch } from 'react';
-import { fmtIDR, fmtNum, fmtPct, fmtDecimal } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtPct, fmtDecimal, numberColorNeg } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import type { ItemRow } from '@/components/dashboard/resto-analysis/types';
 import { priorityColor, priorityBg, directionColor } from '@/components/dashboard/resto-analysis/helpers';
@@ -96,7 +96,12 @@ export function BahanAnalysisCard({
                         <TableCell className="text-xs py-1.5 font-medium max-w-[200px] whitespace-normal" title={r.itemName}>{r.itemName}</TableCell>
                         <TableCell className="text-xs py-1.5 text-right font-mono tabular-nums">{fmtNum(r.qtyBom)}</TableCell>
                         <TableCell className="text-xs py-1.5 text-right font-mono tabular-nums">{fmtNum(r.qtyDeviasi)}</TableCell>
-                        <TableCell className="text-xs py-1.5 text-right font-mono font-semibold text-red-600 dark:text-red-400 tabular-nums">{fmtPct(r.devBom)}</TableCell>
+                        {/* P23 C6: Dev/BOM was painted red UNCONDITIONALLY. Source check
+                            (build-item-breakdown.ts:98): devBom = raw pctQtyDeviasiToBom,
+                            which is SIGNED (rules.yaml — negative for LOSS), so the ratio
+                            gets sign-only coloring (minus-red, positive neutral) instead of
+                            always-bad magnitude painting — same rule as item-detail-modal. */}
+                        <TableCell className={`text-xs py-1.5 text-right font-mono font-semibold tabular-nums ${numberColorNeg(r.devBom)}`}>{fmtPct(r.devBom)}</TableCell>
                         <TableCell className="text-xs py-1.5 text-right font-mono tabular-nums">{fmtIDR(r.nominalLossSurplus)}</TableCell>
                         <TableCell className={`text-xs py-1.5 text-center font-bold ${directionColor(r.direction)}`}>{r.direction === 'LOSS' ? 'L' : r.direction === 'SURPLUS' ? 'S' : '-'}</TableCell>
                         <TableCell className="text-xs py-1.5 text-right font-mono text-muted-foreground tabular-nums">{r.qtyWaste > 0 ? fmtNum(r.qtyWaste) : '—'}</TableCell>

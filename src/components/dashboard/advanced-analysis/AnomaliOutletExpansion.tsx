@@ -9,7 +9,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AlertTriangle, Loader2 } from 'lucide-react';
-import { fmtIDR, fmtNum } from '@/lib/format';
+import { fmtIDR, fmtNum, numberColorNeg } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 
 // ============================================================
@@ -96,7 +96,7 @@ export function AnomaliOutletExpansion({
       <TableCell colSpan={8} className="p-0">
         <div className="bg-amber-50/40 dark:bg-amber-950/10 border-t border-amber-200/60 dark:border-amber-900/40 p-3">
           <div className="flex items-center gap-2 mb-2">
-            <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+            <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
             <span className="text-xs font-semibold text-amber-700 dark:text-amber-400">
               {outlets.length} Outlet {direction} (Anomali — berbeda dari mayoritas)
             </span>
@@ -106,7 +106,7 @@ export function AnomaliOutletExpansion({
               <Loader2 className="h-3 w-3 animate-spin" /> Memuat outlet...
             </div>
           ) : error ? (
-            <div className="text-xs text-red-600 py-2">Gagal memuat: {error.message}</div>
+            <div className="text-xs text-red-600 dark:text-red-400 py-2">Gagal memuat: {error.message}</div>
           ) : outlets.length === 0 ? (
             <div className="text-xs text-muted-foreground py-2">Tidak ada outlet anomali.</div>
           ) : (
@@ -123,16 +123,14 @@ export function AnomaliOutletExpansion({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {outlets.map((o, i) => {
-                    const isLoss = o.qtyDeviasi < 0;
-                    return (
-                      <TableRow
-                        key={`${o.outletCode}-${i}`}
-                        className={`cursor-pointer hover:bg-muted/40 ${i % 2 === 1 ? 'bg-muted/20' : ''}`}
-                        {...clickableRowProps(() => {
-                          setFocusOutlet(o.outletCode);
-                        })}
-                      >
+                  {outlets.map((o, i) => (
+                    <TableRow
+                      key={`${o.outletCode}-${i}`}
+                      className={`cursor-pointer hover:bg-muted/40 ${i % 2 === 1 ? 'bg-muted/20' : ''}`}
+                      {...clickableRowProps(() => {
+                        setFocusOutlet(o.outletCode);
+                      })}
+                    >
                         <TableCell className="py-1.5">
                           <div className="flex flex-col leading-tight">
                             <span className="text-[11px] font-medium tabular-nums">{o.outletCode}</span>
@@ -141,10 +139,12 @@ export function AnomaliOutletExpansion({
                         </TableCell>
                         <TableCell className="text-[10px] text-muted-foreground py-1.5">{o.area || '—'}</TableCell>
                         <TableCell className="text-[10px] text-muted-foreground py-1.5">{o.pic || '—'}</TableCell>
-                        <TableCell className={`text-right text-[11px] py-1.5 tabular-nums font-medium ${isLoss ? 'text-red-600' : 'text-emerald-600'}`}>
+                        {/* P23 B9: signed VALUE columns — numberColorNeg (minus-red only,
+                            PDF negColor; dark: variants built in — were missing). */}
+                        <TableCell className={`text-right text-[11px] py-1.5 tabular-nums font-medium ${numberColorNeg(o.qtyDeviasi)}`}>
                           {fmtNum(o.qtyDeviasi)}
                         </TableCell>
-                        <TableCell className={`text-right text-[11px] py-1.5 tabular-nums ${o.nominalDeviasi < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                        <TableCell className={`text-right text-[11px] py-1.5 tabular-nums ${numberColorNeg(o.nominalDeviasi)}`}>
                           {fmtIDR(o.nominalDeviasi)}
                         </TableCell>
                         <TableCell className="text-center py-1.5">
@@ -153,8 +153,7 @@ export function AnomaliOutletExpansion({
                           </Badge>
                         </TableCell>
                       </TableRow>
-                    );
-                  })}
+                  ))}
                 </TableBody>
               </Table>
             </div>

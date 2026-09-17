@@ -127,7 +127,8 @@ export async function fetchRecords(params: ResolvedParams): Promise<FetchedRecor
   params.compareMonthExplicit = resolvedCompareMonth;
   const allPeriods = weeksRaw
     .map((w) => {
-      const ml = monthLabelByKey.get(w.monthKey) || 'Unknown';
+      // P23 D5: 'Unknown' fallback label → 'Tidak diketahui' (display-only).
+      const ml = monthLabelByKey.get(w.monthKey) || 'Tidak diketahui';
       return {
         monthLabel: ml,
         weekLabel: w.weekLabel,

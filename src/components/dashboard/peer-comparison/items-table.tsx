@@ -10,10 +10,12 @@
 // ============================================================
 
 import { memo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, BarChart3 } from 'lucide-react';
+import { Loader2, BarChart3, RotateCcw } from 'lucide-react';
 import { fmtIDR, fmtNum } from '@/lib/format';
 import type { ItemComparisonResponse } from './types';
 
@@ -31,6 +33,15 @@ export const ItemLevelComparison = memo(function ItemLevelComparison({
    *  falls back to "Target" while the main query is still loading. */
   targetName?: string | null;
 }) {
+  // P23 D6 (LEFTOVER #5): retry affordance — parity with the 13 error states
+  // that already offer "Coba Lagi". The items query lives in use-peer-queries
+  // (no refetch prop threaded down), so retry = invalidate the
+  // ['peer-comparison','items'] cache (same wiring QuickSettings uses for
+  // the ['peer-comparison'] family).
+  const queryClient = useQueryClient();
+  const retry = () => {
+    void queryClient.invalidateQueries({ queryKey: ['peer-comparison', 'items'] });
+  };
   // PEERTOP-R2: headers/subtitle reference the outlet's own name.
   const tn = targetName || 'Target';
   return (
@@ -58,9 +69,13 @@ export const ItemLevelComparison = memo(function ItemLevelComparison({
             Pilih outlet untuk melihat item-level comparison
           </p>
         ) : error || !data?.success ? (
-          <p className="text-center text-xs text-red-600 dark:text-red-400 py-6">
-            Error: {error?.message || data?.error || 'Unknown'}
-          </p>
+          // P23 D5: "Error: … || 'Unknown'" → Indonesian headline + fallback.
+          <div className="py-6 text-center space-y-2">
+            <p className="text-xs text-red-600 dark:text-red-400">Gagal memuat item-level comparison — {error?.message || data?.error || 'Tidak diketahui'}</p>
+            <Button onClick={retry} variant="outline" size="sm">
+              <RotateCcw className="h-3.5 w-3.5" /> Coba Lagi
+            </Button>
+          </div>
         ) : !data.items || data.items.length === 0 ? (
           <p className="text-center text-xs text-muted-foreground py-6">
             Tidak ada item dengan deviasi signifikan pada periode ini.

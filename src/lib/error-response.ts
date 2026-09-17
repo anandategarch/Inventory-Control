@@ -9,7 +9,9 @@ import { logger } from './logger';
 
 /**
  * Log error server-side + return generic 500 to client.
- * In production: returns "Internal server error"
+ * In production: returns "Gagal memproses permintaan"
+ * (P23 D4: Indonesian — matches the 'Gagal …' convention of route-level
+ * messages; D4 swept 12 route-level English 500s to the same phrasing)
  * In development: returns the actual error message (for debugging)
  */
 export function errorResponse(
@@ -24,7 +26,7 @@ export function errorResponse(
   return NextResponse.json(
     {
       success: false,
-      error: isDev ? message : 'Internal server error',
+      error: isDev ? message : 'Gagal memproses permintaan',
     },
     { status },
   );

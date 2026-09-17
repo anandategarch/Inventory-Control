@@ -44,9 +44,11 @@
 // ============================================================
 
 import { memo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, Layers } from 'lucide-react';
+import { Loader2, Layers, RotateCcw } from 'lucide-react';
 import { fmtIDR, fmtNum } from '@/lib/format';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import type { PeerTopItemsResponse } from './types';
@@ -83,6 +85,16 @@ export const TopItemsAcrossPeers = memo(function TopItemsAcrossPeers({
   // parallel).
   const tn = targetName || 'Resto Kamu';
 
+  // P23 D6 (LEFTOVER #5): retry affordance — parity with the 13 error states
+  // that already offer "Coba Lagi". The top-items query lives in use-peer-queries
+  // (no refetch prop threaded down), so retry = invalidate the
+  // ['peer-comparison','top-items'] cache (same wiring QuickSettings uses for
+  // the ['peer-comparison'] family).
+  const queryClient = useQueryClient();
+  const retry = () => {
+    void queryClient.invalidateQueries({ queryKey: ['peer-comparison', 'top-items'] });
+  };
+
   return (
     <Card className="overflow-visible shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-2">
@@ -109,9 +121,13 @@ export const TopItemsAcrossPeers = memo(function TopItemsAcrossPeers({
             Pilih outlet untuk melihat top item peer
           </p>
         ) : error || !data?.success ? (
-          <p className="text-center text-xs text-red-600 dark:text-red-400 py-6">
-            Error: {error?.message || data?.error || 'Unknown'}
-          </p>
+          // P23 D5: "Error: … || 'Unknown'" → Indonesian headline + fallback.
+          <div className="py-6 text-center space-y-2">
+            <p className="text-xs text-red-600 dark:text-red-400">Gagal memuat top item peer — {error?.message || data?.error || 'Tidak diketahui'}</p>
+            <Button onClick={retry} variant="outline" size="sm">
+              <RotateCcw className="h-3.5 w-3.5" /> Coba Lagi
+            </Button>
+          </div>
         ) : !data.items || data.items.length === 0 ? (
           <p className="text-center text-xs text-muted-foreground py-6">
             Tidak ada item deviasi pada periode ini.

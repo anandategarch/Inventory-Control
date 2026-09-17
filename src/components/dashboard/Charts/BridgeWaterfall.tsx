@@ -38,7 +38,9 @@
 //  Colors — --chart-* tokens ONLY, no new hex (§5.4):
 //    anchors  = --chart-residual (zinc family)
 //    legs +   = --chart-waste    (amber family)
-//    legs −   = --chart-loss     (red)
+//    legs −   = --chart-surplus  (green — deviation shrinking = IMPROVING;
+//                 P23 A7: was --chart-loss/red, contradicting the hosting
+//                 PriceEffectCard's effectColor where negative = emerald)
 //    anomali  = --chart-residual (zinc — neutral, not a verdict)
 //
 //  PERF (AUDIT-FE): isAnimationActive={false} on the Bar — the
@@ -55,10 +57,13 @@ import { getTooltipStyle } from '@/lib/chart-constants';
 import type { PriceEffectSummary } from '@/hooks/usePriceEffect';
 
 // Semantic colors — tokens only (zinc anchors, amber positive legs,
-// red negative legs; dark-mode variants resolve via the CSS vars).
+// green negative legs = improvement; dark-mode variants resolve via CSS vars).
 const ANCHOR_COLOR = 'var(--chart-residual)';
 const LEG_UP_COLOR = 'var(--chart-waste)';
-const LEG_DOWN_COLOR = 'var(--chart-loss)';
+// P23 A7: negative legs (deviation shrinking) read as IMPROVEMENT — use the
+// surplus token (green), matching PriceEffectCard's effectColor (negative
+// effect = emerald). Was var(--chart-loss) (red) — inverted semantics.
+const LEG_DOWN_COLOR = 'var(--chart-surplus)';
 // FIX (BUG-2-a #8): anomaly is data quality noise, not a verdict — neutral zinc.
 const ANOMALY_COLOR = 'var(--chart-residual)';
 

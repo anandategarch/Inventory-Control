@@ -4,7 +4,7 @@
 //  FlipRankingStates — non-data states for the flip ranking
 //  --------------------------------------------------------
 //  SPLIT-B (pure move from FlipRanking.tsx — no behavior change):
-//  loading (purple spinner) / error (message + Coba Lagi) /
+//  loading (chart-token spinner) / error (message + Coba Lagi) /
 //  empty (Shuffle EmptyState — "Butuh minimal 2 periode
 //  same-week untuk analisis flip.").
 // ============================================================
@@ -17,7 +17,8 @@ import { EmptyState } from '@/components/ui/empty-state';
 export function FlipRankingLoadingState() {
   return (
     <div className="flex items-center justify-center py-12">
-      <Loader2 className="h-5 w-5 animate-spin text-purple-500" />
+      {/* P23 C1: purple (off-token family) → adaptive --chart-2 token utility (teal light / green dark). */}
+      <Loader2 className="h-5 w-5 animate-spin text-chart-2" />
       <span className="ml-2 text-xs text-muted-foreground">Memuat flip ranking...</span>
     </div>
   );

@@ -188,7 +188,8 @@ export const FlipMatrix = memo(function FlipMatrix({ periods, flips, satuan }: F
                           <td
                             key={mk}
                             className="text-center px-2 py-1 rounded bg-muted/20 text-muted-foreground/30 min-w-[58px]"
-                            title="No data"
+                            /* P23 C4: EN fallback tooltip → Indonesian. */
+                            title="Tidak ada data"
                           >
                             —
                           </td>
@@ -222,9 +223,10 @@ export const FlipMatrix = memo(function FlipMatrix({ periods, flips, satuan }: F
                           <TooltipContent side="top" className="text-[11px] p-2.5 max-w-xs">
                             <div className="space-y-1">
                               <p className="font-semibold">{p.monthLabel} · {p.weekLabel}</p>
+                              {/* P23 C4: tooltip signed-value colors were light-mode-only — add dark: variants. */}
                               <div className="flex justify-between gap-4">
                                 <span className="text-muted-foreground">Signed QTY:</span>
-                                <span className={`font-medium tabular-nums ${p.qtyDeviasiSigned < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                                <span className={`font-medium tabular-nums ${p.qtyDeviasiSigned < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                                   {p.qtyDeviasiSigned.toLocaleString('id-ID', { maximumFractionDigits: 1 })}{unitLabel ? ` ${unitLabel}` : ''}
                                 </span>
                               </div>

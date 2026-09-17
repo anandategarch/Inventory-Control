@@ -91,6 +91,12 @@ export const ItemPriorityPanel = memo(function ItemPriorityPanel({ data }: { dat
           outletCode: it.outletCode,
           magnitude: Math.abs(it.nominalDeviasi),
           valueLabel: fmtIDR(it.nominalDeviasi),
+          // P23 B5: DELIBERATELY kept emerald-positive (numberColor chart
+          // semantics, NOT numberColorNeg) — this is a chart-like magnitude
+          // surface: each row's proportional mini-bar below colors by direction
+          // (emerald=surplus, same as TopItems' BarList), and the VALUE text
+          // matches its bar per PDF chart conventions (§9 / HEAT-SIGN green
+          // surplus). The neutral-positive VALUE-column rule does not apply.
           valueCls: it.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400',
           barCls: it.nominalDeviasi < 0 ? 'bg-red-500' : 'bg-emerald-500',
         }))

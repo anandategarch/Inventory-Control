@@ -9,7 +9,11 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { useDrilldown } from '@/hooks/useAnalysis';
 import type { DrilldownRecord } from '@/hooks/useAnalysis';
-import { fmtIDR, fmtNum, fmtPctAbs, directionColor, numberColor } from '@/lib/format';
+// P23 B10: numberColorNeg (neg-only) on the record-table VALUE cells — strict
+// PDF negColor parity (positive neutral); volume/magnitude columns (QTY BOM /
+// COM / Waste / Susut / Trial) are non-negative so they render neutral, matching
+// the uncolored Nom Sales column treatment (no more spurious emerald).
+import { fmtIDR, fmtNum, fmtPctAbs, directionColor, numberColorNeg } from '@/lib/format';
 import { Database, Download, X } from 'lucide-react';
 import { useMemo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -155,7 +159,8 @@ export function SourceDataModal() {
           )}
           {drill.error && (
             <div className="flex items-center gap-3 p-4 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900">
-              <p className="text-sm text-red-600 flex-1">Error: {drill.error.message}</p>
+              {/* P23 B10: EN fallback prefix translated (VH-7/i18n sweep). */}
+              <p className="text-sm text-red-600 dark:text-red-400 flex-1">Gagal memuat: {drill.error.message}</p>
               <Button variant="outline" size="sm" className="h-7 text-xs shrink-0" onClick={() => drill.refetch()}>
                 Coba Lagi
               </Button>
@@ -259,14 +264,16 @@ function VirtualizedRecordsTable({ records }: { records: DrilldownRecord[] }) {
                   <div>{r.period?.weekLabel ?? '—'}</div>
                   <div className="text-[11px] text-muted-foreground">{r.period?.monthLabel ?? '—'}</div>
                 </td>
-                <td className={`p-2 text-right ${numberColor(r.qty?.bom ?? null)}`}>{fmtNum(r.qty?.bom ?? null)}</td>
-                <td className={`p-2 text-right ${numberColor(r.qty?.com ?? null)}`}>{fmtNum(r.qty?.com ?? null)}</td>
-                <td className={`p-2 text-right font-semibold ${numberColor(r.qty?.deviasi ?? null)}`}>{fmtNum(r.qty?.deviasi ?? null)}</td>
-                <td className={`p-2 text-right ${numberColor(r.qty?.waste ?? null)}`}>{fmtNum(r.qty?.waste ?? null)}</td>
-                <td className={`p-2 text-right ${numberColor(r.qty?.susut ?? null)}`}>{fmtNum(r.qty?.susut ?? null)}</td>
-                <td className={`p-2 text-right ${numberColor(r.qty?.trial ?? null)}`}>{fmtNum(r.qty?.trial ?? null)}</td>
-                <td className={`p-2 text-right ${numberColor(r.qty?.lossSurplus ?? null)}`}>{fmtNum(r.qty?.lossSurplus ?? null)}</td>
-                <td className={`p-2 text-right font-semibold ${numberColor(r.nominal?.deviasi ?? null)}`}>{fmtIDR(r.nominal?.deviasi ?? null)}</td>
+                {/* P23 B10: QTY BOM/COM/Waste/Susut/Trial = non-negative volumes → neutral;
+                    QTY Dev / QTY LS / Nom Dev = signed → minus-red only (PDF negColor). */}
+                <td className={`p-2 text-right ${numberColorNeg(r.qty?.bom ?? null)}`}>{fmtNum(r.qty?.bom ?? null)}</td>
+                <td className={`p-2 text-right ${numberColorNeg(r.qty?.com ?? null)}`}>{fmtNum(r.qty?.com ?? null)}</td>
+                <td className={`p-2 text-right font-semibold ${numberColorNeg(r.qty?.deviasi ?? null)}`}>{fmtNum(r.qty?.deviasi ?? null)}</td>
+                <td className={`p-2 text-right ${numberColorNeg(r.qty?.waste ?? null)}`}>{fmtNum(r.qty?.waste ?? null)}</td>
+                <td className={`p-2 text-right ${numberColorNeg(r.qty?.susut ?? null)}`}>{fmtNum(r.qty?.susut ?? null)}</td>
+                <td className={`p-2 text-right ${numberColorNeg(r.qty?.trial ?? null)}`}>{fmtNum(r.qty?.trial ?? null)}</td>
+                <td className={`p-2 text-right ${numberColorNeg(r.qty?.lossSurplus ?? null)}`}>{fmtNum(r.qty?.lossSurplus ?? null)}</td>
+                <td className={`p-2 text-right font-semibold ${numberColorNeg(r.nominal?.deviasi ?? null)}`}>{fmtIDR(r.nominal?.deviasi ?? null)}</td>
                 <td className="p-2 text-right">{fmtIDR(r.nominal?.sales ?? null)}</td>
                 <td className="p-2 text-right">{fmtPctAbs(r.derived?.pctQtyDeviasiToBom ?? null)}</td>
                 <td className="p-2 text-right">

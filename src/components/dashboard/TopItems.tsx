@@ -5,7 +5,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { fmtIDR, fmtPctAbs, numberColor } from '@/lib/format';
+// P23 B1: numberColorNeg (neg-only) on signed VALUE columns — strict PDF
+// negColor parity (positive stays neutral); the BarList barColor above keeps
+// the chart convention (emerald surplus) since it is a magnitude surface.
+import { fmtIDR, fmtPctAbs, numberColorNeg } from '@/lib/format';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import type { AnalysisData } from '@/hooks/useAnalysis';
@@ -260,7 +263,8 @@ export const ParetoDevBomCard = memo(function ParetoDevBomCard({ data }: { data:
                           </span>
                         </TableCell>
                         <TableCell className="text-xs px-3 py-2 text-right font-bold tabular-nums text-red-600 dark:text-red-400">{(item.devBomAbs * 100).toFixed(0)}%</TableCell>
-                        <TableCell className={`text-xs px-3 py-2 text-right font-medium tabular-nums ${numberColor(item.nominalDeviasi)}`}>{fmtIDR(item.nominalDeviasi)}</TableCell>
+                        {/* P23 B1: signed SUM(nominalDeviasi) VALUE column — minus-red only (PDF negColor). */}
+                        <TableCell className={`text-xs px-3 py-2 text-right font-medium tabular-nums ${numberColorNeg(item.nominalDeviasi)}`}>{fmtIDR(item.nominalDeviasi)}</TableCell>
                         <TableCell className="text-xs px-3 py-2 text-right text-muted-foreground tabular-nums">{item.sharePct.toFixed(0)}%</TableCell>
                         <TableCell className="text-xs px-3 py-2 text-right text-muted-foreground/60 tabular-nums">{item.cumPct.toFixed(0)}%</TableCell>
                       </TableRow>
@@ -274,8 +278,11 @@ export const ParetoDevBomCard = memo(function ParetoDevBomCard({ data }: { data:
                           <TableCell className="text-[11px] px-3 py-1.5 pl-9">
                             <span className="block truncate max-w-[200px]" title={`${o.outletName} (${o.outletCode})`}>{o.outletName}</span>
                           </TableCell>
-                          <TableCell className={`text-[11px] px-3 py-1.5 text-right font-bold tabular-nums ${numberColor(o.devBom)}`}>{(o.devBom * 100).toFixed(0)}%</TableCell>
-                          <TableCell className={`text-[11px] px-3 py-1.5 text-right font-medium tabular-nums ${numberColor(o.nominalDeviasi)}`}>{fmtIDR(o.nominalDeviasi)}</TableCell>
+                          {/* P23 B1: o.devBom is SIGNED (ΣqtyDeviasi/Σ|qtyBom|, by-other-metric-pareto.ts:72) —
+                              minus-red only; positive no longer paints emerald (a positive Dev/BOM is not "good"). */}
+                          <TableCell className={`text-[11px] px-3 py-1.5 text-right font-bold tabular-nums ${numberColorNeg(o.devBom)}`}>{(o.devBom * 100).toFixed(0)}%</TableCell>
+                          {/* P23 B1: signed VALUE column — minus-red only (PDF negColor). */}
+                          <TableCell className={`text-[11px] px-3 py-1.5 text-right font-medium tabular-nums ${numberColorNeg(o.nominalDeviasi)}`}>{fmtIDR(o.nominalDeviasi)}</TableCell>
                           <TableCell className="text-[11px] px-3 py-1.5 text-right text-muted-foreground tabular-nums">{o.sharePct.toFixed(0)}%</TableCell>
                           <TableCell className="text-[11px] px-3 py-1.5 text-right text-muted-foreground/60 tabular-nums">{o.cumPct.toFixed(0)}%</TableCell>
                         </TableRow>
@@ -425,7 +432,8 @@ export const GapAnalysisCard = memo(function GapAnalysisCard({ data }: { data: A
                                           <TableCell className="text-[11px] px-2 py-1.5 text-center tabular-nums">{o.rankNominal}</TableCell>
                                           <TableCell className="text-[11px] px-2 py-1.5 text-center tabular-nums">{o.rankBom}</TableCell>
                                           <TableCell className={`text-[11px] px-2 py-1.5 text-center font-bold tabular-nums ${oGap > 0 ? 'text-red-600 dark:text-red-400' : oGap < 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{oGap > 0 ? `+${oGap}` : oGap}</TableCell>
-                                          <TableCell className={`text-[11px] px-2 py-1.5 text-right font-medium tabular-nums ${numberColor(o.nominalDeviasi)}`}>{fmtIDR(o.nominalDeviasi)}</TableCell>
+                                          {/* P23 B1: signed VALUE column — minus-red only (PDF negColor). */}
+                                          <TableCell className={`text-[11px] px-2 py-1.5 text-right font-medium tabular-nums ${numberColorNeg(o.nominalDeviasi)}`}>{fmtIDR(o.nominalDeviasi)}</TableCell>
                                         </TableRow>
                                       );
                                     })}

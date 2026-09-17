@@ -232,7 +232,8 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
       } else {
         toast({
           title: '✗ Migration gagal',
-          description: data.error || 'Unknown error',
+          // P23 D5: 'Unknown error' fallback → Indonesian.
+          description: data.error || 'Error tidak diketahui',
           variant: 'destructive',
         });
       }

@@ -108,8 +108,11 @@ export const BenchmarkOpportunityCard = memo(function BenchmarkOpportunityCard({
         ) : !data ? (
           <p className="text-center text-xs text-muted-foreground py-6">Menunggu data periode…</p>
         ) : !data.success ? (
+          // P23 D5: "Error: … || 'Unknown'" → Indonesian headline + fallback
+          // (payload error, not a query error — no retry here, matches the
+          // !success branches in OutletPriorityPanel).
           <p className="text-center text-xs text-red-600 dark:text-red-400 py-6">
-            Error: {data.error || 'Unknown'}
+            Gagal memuat peluang perbaikan — {data.error || 'Tidak diketahui'}
           </p>
         ) : data.areaCount === 0 ? (
           <p className="text-center text-xs text-muted-foreground py-6">

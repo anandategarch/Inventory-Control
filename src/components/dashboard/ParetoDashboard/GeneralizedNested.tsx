@@ -13,7 +13,7 @@
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { fmtIDR, fmtNum, numberColor } from '@/lib/format';
+import { fmtIDR, fmtNum, numberColorNeg } from '@/lib/format';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import { DIM_LABELS } from './constants';
 import type { ParetoData, ParetoDimension } from './types';
@@ -55,6 +55,12 @@ export function GeneralizedNested({
               one card-width away already says "berdasarkan |nominalDeviasi|". */}
           Top 10 {DIM_LABELS[parentDim].toLowerCase()} berdasarkan deviasi. Klik untuk lihat {DIM_LABELS[childDim].toLowerCase()} mana yang menyumbang 80% per parent.
         </p>
+        {/* P23 B3 (LEFTOVER #6): horizontal-scroll wrapper — the fixed-width
+            shrink-0 row spans (~480px min) were clipped by the Card's
+            overflow-hidden on <480px viewports (%/Cum columns cut off).
+            Mirrors QuadrantCard's overflow-auto + Table min-w-[600px] pattern. */}
+        <div className="overflow-x-auto">
+          <div className="min-w-[480px]">
         <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 pb-1 border-b border-border/40 mb-1">
           <span className="w-5 shrink-0">#</span>
           <span className="w-3 shrink-0"></span>
@@ -77,8 +83,9 @@ export function GeneralizedNested({
                   <span className="w-5 text-muted-foreground tabular-nums shrink-0">{i + 1}.</span>
                   {isExpanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
                   <span className="min-w-[120px] flex-1 truncate font-medium" title={item.name}>{item.name}</span>
-                  <span className={`w-20 text-right tabular-nums shrink-0 ${numberColor(item.qtyDeviasi)}`}>{fmtNum(item.qtyDeviasi)}</span>
-                  <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(item.nominalDeviasi)}`}>{fmtIDR(item.nominalDeviasi)}</span>
+                  {/* P23 B3: signed VALUE columns (qty/nominalDeviasi SUM) — minus-red only (PDF negColor). */}
+                  <span className={`w-20 text-right tabular-nums shrink-0 ${numberColorNeg(item.qtyDeviasi)}`}>{fmtNum(item.qtyDeviasi)}</span>
+                  <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColorNeg(item.nominalDeviasi)}`}>{fmtIDR(item.nominalDeviasi)}</span>
                   <span className="w-10 text-right text-muted-foreground tabular-nums shrink-0">{item.sharePct.toFixed(0)}%</span>
                   <span className="w-10 text-right text-muted-foreground/60 tabular-nums shrink-0">{item.cumPct.toFixed(0)}%</span>
                 </button>
@@ -96,8 +103,9 @@ export function GeneralizedNested({
                       <div key={`${c.name}-${j}`} className="flex items-center gap-2 text-[11px] py-1 px-2 rounded bg-muted/20">
                         <span className="w-4 text-muted-foreground tabular-nums shrink-0">{j + 1}.</span>
                         <span className="min-w-[100px] flex-1 truncate" title={c.name}>{c.name}</span>
-                        <span className={`w-20 text-right tabular-nums shrink-0 ${numberColor(c.qtyDeviasi)}`}>{fmtNum(c.qtyDeviasi)}</span>
-                        <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColor(c.nominalDeviasi)}`}>{fmtIDR(c.nominalDeviasi)}</span>
+                        {/* P23 B3: signed VALUE columns — minus-red only (PDF negColor). */}
+                        <span className={`w-20 text-right tabular-nums shrink-0 ${numberColorNeg(c.qtyDeviasi)}`}>{fmtNum(c.qtyDeviasi)}</span>
+                        <span className={`w-24 text-right tabular-nums font-medium shrink-0 ${numberColorNeg(c.nominalDeviasi)}`}>{fmtIDR(c.nominalDeviasi)}</span>
                         <span className="w-10 text-right text-muted-foreground tabular-nums shrink-0">{c.sharePct.toFixed(0)}%</span>
                         <span className="w-10 text-right text-muted-foreground/60 tabular-nums shrink-0">{c.cumPct.toFixed(0)}%</span>
                       </div>
@@ -107,6 +115,8 @@ export function GeneralizedNested({
               </div>
             );
           })}
+        </div>
+          </div>
         </div>
       </CardContent>
     </Card>

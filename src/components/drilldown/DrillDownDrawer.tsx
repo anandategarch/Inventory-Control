@@ -8,7 +8,11 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { useDrilldown } from '@/hooks/useAnalysis';
 import type { DrilldownRecord } from '@/hooks/useAnalysis';
-import { fmtIDR, fmtNum, fmtPctAbs, directionColor, numberColor } from '@/lib/format';
+// P23 B10: numberColorNeg (neg-only) on the record-table VALUE cells — strict
+// PDF negColor parity (positive neutral); volume/magnitude columns (QTY BOM /
+// COM / Waste / Susut / Trial) are non-negative so they render neutral, matching
+// the uncolored Nom Sales column treatment (no more spurious emerald).
+import { fmtIDR, fmtNum, fmtPctAbs, directionColor, numberColorNeg } from '@/lib/format';
 import { ExternalLink, X, Loader2 } from 'lucide-react';
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -149,7 +153,8 @@ export function DrillDownDrawer() {
           {drill.isLoading && <p className="text-sm text-muted-foreground">Memuat data sumber...</p>}
           {drill.error && (
             <div className="flex items-center gap-3 p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900">
-              <p className="text-sm text-red-600 flex-1">Error: {drill.error.message}</p>
+              {/* P23 B10: EN fallback prefix translated (VH-7/i18n sweep). */}
+              <p className="text-sm text-red-600 dark:text-red-400 flex-1">Gagal memuat: {drill.error.message}</p>
               <Button variant="outline" size="sm" className="h-7 text-xs shrink-0" onClick={() => drill.refetch()}>
                 Coba Lagi
               </Button>
@@ -210,7 +215,7 @@ export function DrillDownDrawer() {
                         <div><span className="text-muted-foreground">Residual Qty:</span> <span className="font-medium">{fmtNum(r.derived?.residualQty ?? null)}</span></div>
                         <div><span className="text-muted-foreground">Residual Ratio:</span> <span className="font-medium">{fmtPctAbs(r.derived?.residualRatio ?? null)}</span></div>
                         <div><span className="text-muted-foreground">Avg Price:</span> <span className="font-medium">{fmtIDR(r.derived?.avgPrice ?? null)}</span></div>
-                        <div><span className="text-muted-foreground">Tolerance:</span> <span className="font-medium">{r.derived?.tolerancePct != null ? fmtPctAbs(r.derived.tolerancePct) : 'Not set'}</span></div>
+                        <div><span className="text-muted-foreground">Tolerance:</span> <span className="font-medium">{r.derived?.tolerancePct != null ? fmtPctAbs(r.derived.tolerancePct) : 'Tidak disetel'}</span></div>
                         <div><span className="text-muted-foreground">Abs Nominal:</span> <span className="font-medium">{fmtIDR(r.derived?.absNominalDeviasi ?? null)}</span></div>
                         <div className="col-span-2"><span className="text-muted-foreground">Source File:</span> <span className="font-medium">{r.source?.fileName ?? '—'}</span></div>
                       </div>
@@ -276,9 +281,11 @@ function VirtualizedDrawerTable({ records }: { records: DrilldownRecord[] }) {
                   <div className="text-[11px] text-muted-foreground">{r.outlet?.code ?? '—'}</div>
                 </td>
                 <td className="p-2 font-medium">{r.item?.name ?? '—'}</td>
-                <td className={`p-2 text-right ${numberColor(r.qty?.bom ?? null)}`}>{fmtNum(r.qty?.bom ?? null)}</td>
-                <td className={`p-2 text-right ${numberColor(r.qty?.deviasi ?? null)}`}>{fmtNum(r.qty?.deviasi ?? null)}</td>
-                <td className={`p-2 text-right font-semibold ${numberColor(r.nominal?.deviasi ?? null)}`}>{fmtIDR(r.nominal?.deviasi ?? null)}</td>
+                {/* P23 B10: QTY BOM = non-negative volume → neutral; QTY Dev / Nom Dev =
+                    signed → minus-red only (PDF negColor). */}
+                <td className={`p-2 text-right ${numberColorNeg(r.qty?.bom ?? null)}`}>{fmtNum(r.qty?.bom ?? null)}</td>
+                <td className={`p-2 text-right ${numberColorNeg(r.qty?.deviasi ?? null)}`}>{fmtNum(r.qty?.deviasi ?? null)}</td>
+                <td className={`p-2 text-right font-semibold ${numberColorNeg(r.nominal?.deviasi ?? null)}`}>{fmtIDR(r.nominal?.deviasi ?? null)}</td>
                 <td className="p-2 text-right">{fmtPctAbs(r.derived?.pctQtyDeviasiToBom ?? null)}</td>
                 <td className={`p-2 text-center font-semibold ${directionColor(r.derived?.direction ?? null)}`}>{r.derived?.direction?.[0] ?? '—'}</td>
               </tr>

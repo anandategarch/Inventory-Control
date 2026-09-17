@@ -34,6 +34,8 @@ export const PeerTableRow = memo(function PeerTableRow({
   // instead of `nominalDeviasi` sign (GROSS from SUM(nominalDeviasi)). These
   // two can differ when surplus items outweigh loss items in the same bucket
   // — the row color should match the direction badge, not the gross sign.
+  // P23 A8 note: this now applies ONLY to the Nominal Deviasi cell + badge
+  // (row-level NET verdict); the QTY Deviasi cell colors by its own sign.
   const isLoss = row.direction === 'LOSS';
   const flags = useMemo(
     () => computeAnomalyFlags({
@@ -74,10 +76,19 @@ export const PeerTableRow = memo(function PeerTableRow({
       <TableCell className="text-xs px-3 py-2 text-muted-foreground">{row.area}</TableCell>
       <TableCell className="text-xs px-3 py-2 text-muted-foreground">{row.pic || '—'}</TableCell>
       <TableCell className="text-xs px-3 py-2 text-right tabular-nums">{fmtNum(row.qtyBom)}</TableCell>
-      <TableCell className={`text-xs px-3 py-2 text-right tabular-nums ${isLoss ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+      {/* P23 A8: color by the cell value's OWN sign — qtyDeviasi is a SIGNED
+          sum (item-peer-comparison.ts SUM(qtyDeviasi)); row.direction is the
+          NET from nominalLossSurplus, so when signs diverge a "-5,0" used to
+          render emerald. Minus = kekurangan → red (top-items-card.tsx parity);
+          positive/zero stays neutral (PDF negColor convention). */}
+      <TableCell className={`text-xs px-3 py-2 text-right tabular-nums ${
+        row.qtyDeviasi < 0 ? 'text-red-600 dark:text-red-400' : ''
+      }`}>
         {fmtNum(row.qtyDeviasi)}
       </TableCell>
-      <TableCell className={`text-xs px-3 py-2 text-right tabular-nums ${isLoss ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+      {/* P23 A8: Dev/BOM is a magnitude ratio (not inherently bad) — render
+          neutral/muted instead of inheriting the row's NET direction color. */}
+      <TableCell className="text-xs px-3 py-2 text-right tabular-nums text-muted-foreground">
         {row.devBom != null ? fmtPctAbs(row.devBom) : '—'}
       </TableCell>
       <TableCell className={`text-xs px-3 py-2 text-right tabular-nums font-medium ${isLoss ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>

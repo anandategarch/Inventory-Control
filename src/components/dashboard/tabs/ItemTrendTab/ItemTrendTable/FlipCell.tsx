@@ -62,15 +62,16 @@ export function FlipCell({ flip, flipCat, flipCfg, unitLabel }: FlipCellProps) {
                 <span className="text-muted-foreground">vs Predecessor:</span>
                 <span className="font-medium">{flip.period1Label}</span>
               </div>
+              {/* P23 C4: tooltip signed-value colors were light-mode-only — add dark: variants. */}
               <div className="flex justify-between gap-4">
                 <span className="text-muted-foreground">P1 (signed):</span>
-                <span className={`font-medium tabular-nums ${flip.qtyP1 < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                <span className={`font-medium tabular-nums ${flip.qtyP1 < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                   {flip.qtyP1.toLocaleString('id-ID', { maximumFractionDigits: 1 })}{unitLabel ? ` ${unitLabel}` : ''}
                 </span>
               </div>
               <div className="flex justify-between gap-4">
                 <span className="text-muted-foreground">P2 (signed):</span>
-                <span className={`font-medium tabular-nums ${flip.qtyP2 < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                <span className={`font-medium tabular-nums ${flip.qtyP2 < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                   {flip.qtyP2.toLocaleString('id-ID', { maximumFractionDigits: 1 })}{unitLabel ? ` ${unitLabel}` : ''}
                 </span>
               </div>

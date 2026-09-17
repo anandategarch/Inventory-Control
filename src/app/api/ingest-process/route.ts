@@ -178,8 +178,10 @@ export async function POST(req: NextRequest) {
     );
   } catch (e: unknown) {
     logger.error("[ingest-process] error", { error: e });
+    // P23 D4: 'Internal server error' → ID — matches the 'Gagal …' convention
+    // used by the sibling ingest/import services (e.g. 'Gagal parse Excel').
     return NextResponse.json(
-      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Internal server error" },
+      { success: false, error: process.env.NODE_ENV === "development" ? (e instanceof Error ? e.message : String(e)) : "Gagal memproses permintaan" },
       { status: 500 }
     );
   }

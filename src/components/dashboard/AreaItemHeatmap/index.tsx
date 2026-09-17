@@ -27,11 +27,12 @@ import { useShallow } from 'zustand/shallow';
 import dynamic from 'next/dynamic';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import { fmtDecimal } from '@/lib/format';
-import { Grid3x3 as HeatMapIcon } from 'lucide-react';
+import { Grid3x3 as HeatMapIcon, RotateCcw } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 
 import { HeatmapControls } from './HeatmapControls';
@@ -109,7 +110,7 @@ function AreaItemHeatmapInner() {
     return p;
   }, [monthLabel, currentWeek, metric, itemLimit, mode, area, kelompok, outletCode, pic]);
 
-  const { data, isLoading, isError, isFetching } = useQuery<HeatmapResponse>({
+  const { data, isLoading, isError, isFetching, refetch } = useQuery<HeatmapResponse>({
     queryKey: ['area-item-heatmap', params.toString()],
     queryFn: async () => {
       const res = await fetch(`/api/area-item-heatmap?${params.toString()}`);
@@ -211,8 +212,15 @@ function AreaItemHeatmapInner() {
         )}
 
         {isError && (
-          <div className="text-xs text-red-600 p-4 border border-red-200 rounded bg-red-50">
-            Gagal memuat heatmap. Coba refresh atau ganti filter.
+          <div className="text-xs text-red-600 p-4 border border-red-200 rounded bg-red-50 space-y-2">
+            {/* P23 D6 (LEFTOVER #5): retry affordance — same Button variant/size/
+                label as the 13 error states that already offer "Coba Lagi"
+                (peer-table-card, ChangeItemTable, …). This component owns its
+                query, so retry = the query's own refetch(). */}
+            <p>Gagal memuat heatmap.</p>
+            <Button onClick={() => { void refetch(); }} variant="outline" size="sm">
+              <RotateCcw className="h-3.5 w-3.5" /> Coba Lagi
+            </Button>
           </div>
         )}
 

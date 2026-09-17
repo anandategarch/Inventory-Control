@@ -21,7 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Target, TrendingUp } from 'lucide-react';
 import { fmtIDR, fmtNum } from './helpers';
-import { fmtDecimal } from '@/lib/format';
+import { fmtDecimal, numberColorNeg } from '@/lib/format';
 import type { AnalysisData, DeviasiRankItem } from '@/hooks/useAnalysis';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
@@ -75,7 +75,9 @@ export const RankingNasionalCard = memo(function RankingNasionalCard({
         </CardTitle>
         <p className="text-xs text-muted-foreground ml-9">
           Top 30 item deviasi untuk <span className="font-medium text-foreground">{focusOutlet}</span>.
-          Negatif (merah) = rugi. Positif (hijau) = untung.
+          {/* P23 B7: VALUE columns are now minus-red only (PDF negColor parity) —
+              only the Trend mini-chart keeps loss/surplus hue; caption updated. */}
+          Negatif (merah) = rugi. Warna mini-chart Trend mengikuti arah deviasi (merah rugi, hijau surplus).
           AVG Dev By BOM = rata-rata |QTY Deviasi| item yang sama di resto lain dengan BOM ±50%.
         </p>
         <div className="flex items-center gap-2 pt-2 flex-wrap ml-9">
@@ -131,23 +133,26 @@ export const RankingNasionalCard = memo(function RankingNasionalCard({
                   <TableCell className="font-medium text-xs max-w-[150px] whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
                   <TableCell className="text-xs text-muted-foreground" title={it.outletCode}>{it.outletCode}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{it.pic || '—'}</TableCell>
-                  <TableCell className={`text-right text-xs tabular-nums ${it.qtyDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtNum(it.qtyDeviasi)}</TableCell>
+                  {/* P23 B7: signed VALUE column — numberColorNeg (minus-red only, PDF negColor). */}
+                  <TableCell className={`text-right text-xs tabular-nums ${numberColorNeg(it.qtyDeviasi)}`}>{fmtNum(it.qtyDeviasi)}</TableCell>
                   {/* FIX (BUG-HUNT B11/B2-06): QTY Waste / QTY BOM are non-negative volume
                       columns — the LOSS/SURPLUS sign coloring was a copy-paste from the
                       Deviasi column and painted waste counts emerald ("membaik") even when
                       large. Neutral muted now; sign coloring stays on Deviasi/LS/%LS/Nominal. */}
                   <TableCell className="text-right text-xs tabular-nums text-muted-foreground">{fmtNum(it.qtyWaste)}</TableCell>
-                  <TableCell className={`text-right text-xs tabular-nums ${it.qtyLossSurplus < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtNum(it.qtyLossSurplus)}</TableCell>
+                  {/* P23 B7: signed VALUE column — numberColorNeg (minus-red only). */}
+                  <TableCell className={`text-right text-xs tabular-nums ${numberColorNeg(it.qtyLossSurplus)}`}>{fmtNum(it.qtyLossSurplus)}</TableCell>
                   {/* pctLossSurplusToBom is always ≥0 (SQL uses ABS). Color by
-                      nominalDeviasi sign: negative = LOSS (red), positive = SURPLUS (green). */}
-                  <TableCell className={`text-right text-xs tabular-nums ${it.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                      nominalDeviasi sign (signed) — P23 B7: numberColorNeg (minus-red only). */}
+                  <TableCell className={`text-right text-xs tabular-nums ${numberColorNeg(it.nominalDeviasi)}`}>
                     {it.pctLossSurplusToBom != null ? `${fmtDecimal(Math.abs(it.pctLossSurplusToBom * 100), 2)}%` : '—'}
                   </TableCell>
                   <TableCell className="text-right text-xs tabular-nums text-muted-foreground">{fmtNum(it.qtyBom)}</TableCell>
                   <TableCell className="text-right text-xs text-muted-foreground tabular-nums">
                     {it.avgDeviasiByBom != null ? fmtNum(it.avgDeviasiByBom) : '—'}
                   </TableCell>
-                  <TableCell className={`text-right font-semibold text-xs tabular-nums ${it.nominalDeviasi < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                  {/* P23 B7: signed VALUE column — numberColorNeg (minus-red only). */}
+                  <TableCell className={`text-right font-semibold text-xs tabular-nums ${numberColorNeg(it.nominalDeviasi)}`}>
                     {fmtIDR(it.nominalDeviasi)}
                   </TableCell>
                   {/* TREMOR Pattern 5 — SparkLine cell. Renders a 3-point
@@ -158,11 +163,15 @@ export const RankingNasionalCard = memo(function RankingNasionalCard({
                       baseline (avgDeviasiByBom is null). */}
                   <TableCell className="text-center py-1.5">
                     {it.avgDeviasiByBom != null ? (
+                      /* P23 B7: hardcoded hex #dc2626/#10b981 bypassed the var(--chart-*)
+                         token family (no dark-mode adaptation) — now the adaptive
+                         --chart-loss/--chart-surplus tokens with raw-hex fallback,
+                         mirroring ItemDeepDive's var(--chart-*, #hex) pattern. */
                       <SparkLine
                         data={[0, it.avgDeviasiByBom, Math.abs(it.qtyDeviasi)]}
                         width={60}
                         height={20}
-                        color={it.qtyDeviasi < 0 ? '#dc2626' : '#10b981'}
+                        color={it.qtyDeviasi < 0 ? 'var(--chart-loss, #dc2626)' : 'var(--chart-surplus, #10b981)'}
                         showDot
                       />
                     ) : (

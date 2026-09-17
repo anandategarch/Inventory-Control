@@ -30,7 +30,10 @@ export interface BarListItem {
   key?: string | number;
   name: string;
   value: number;
-  color?: 'amber' | 'emerald' | 'red' | 'zinc' | 'purple';
+  // P23 C3: 'purple' removed — zero callers (grep) and purple is an
+  // off-token family (see globals.css chart tokens); bars stay amber/
+  // emerald/red/zinc only.
+  color?: 'amber' | 'emerald' | 'red' | 'zinc';
   href?: string;
   metadata?: string;
 }
@@ -38,7 +41,7 @@ export interface BarListItem {
 export interface BarListProps {
   data: BarListItem[];
   valueFormatter?: (v: number) => string;
-  color?: 'amber' | 'emerald' | 'red' | 'zinc' | 'purple';
+  color?: 'amber' | 'emerald' | 'red' | 'zinc';
   sortOrder?: 'descending' | 'ascending' | 'none';
   showAnimation?: boolean;
   onValueChange?: (item: BarListItem) => void;
@@ -50,7 +53,6 @@ const colorMap = {
   emerald: 'bg-emerald-500',
   red: 'bg-red-500',
   zinc: 'bg-zinc-400',
-  purple: 'bg-purple-500',
 };
 
 export const BarList = memo(function BarList({

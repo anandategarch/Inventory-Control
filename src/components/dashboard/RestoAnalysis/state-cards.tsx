@@ -14,7 +14,8 @@
 
 import { type ReactNode } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
-import { AlertTriangle, Loader2, Target } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { AlertTriangle, Loader2, RotateCcw, Target } from 'lucide-react';
 
 export function NoOutletCard({ children }: { children: ReactNode }) {
   return (
@@ -65,7 +66,11 @@ export function LoadingCard() {
   );
 }
 
-export function ErrorCard({ message }: { message: string }) {
+// P23 D6 (LEFTOVER #5): `onRetry` adds the "Coba Lagi" button — same
+// Button variant/size/label as the 13 error states that already offer it
+// (peer-table-card, ChangeItemTable, …). Optional so a non-query caller
+// can render the card without a retry action.
+export function ErrorCard({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
     <Card className="overflow-hidden border-red-200/70 dark:border-red-900/60">
       <CardContent className="py-12 text-center">
@@ -75,6 +80,11 @@ export function ErrorCard({ message }: { message: string }) {
           </div>
           <p className="text-sm text-red-700 dark:text-red-400 font-medium">Gagal Memuat Data</p>
           <p className="text-xs text-muted-foreground mt-1 max-w-md">{message}</p>
+          {onRetry && (
+            <Button onClick={onRetry} variant="outline" size="sm" className="mt-3">
+              <RotateCcw className="h-3.5 w-3.5" /> Coba Lagi
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>

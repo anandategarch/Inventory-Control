@@ -17,7 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Loader2, BarChart3, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
 import { Fragment, memo, useMemo, useState } from 'react';
 import type { Dispatch } from 'react';
-import { fmtIDR, fmtPct } from '@/lib/format';
+import { fmtIDR, fmtPct, numberColorNeg } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import type { MetricDef, PeerAverages, PeerRow, PeerTopItemsResponse } from '@/components/dashboard/peer-comparison/types';
 import { COLUMNS, colorCell } from '@/components/dashboard/peer-comparison/helpers';
@@ -119,7 +119,8 @@ export function PeerTableCard({
         ) : mainError || !mainData?.success ? (
           <div className="py-10 text-center">
             <p className="text-red-600 dark:text-red-400 font-medium">Gagal Memuat Data</p>
-            <p className="text-xs text-muted-foreground mt-1">{mainError?.message || mainData?.error || 'Unknown'}</p>
+            {/* P23 A3: EN fallback string → Indonesian. */}
+            <p className="text-xs text-muted-foreground mt-1">{mainError?.message || mainData?.error || 'Kesalahan tidak diketahui'}</p>
             {/* FIX #20: retry button so users can recover from transient errors */}
             <Button onClick={() => onRetryMain()} variant="outline" size="sm" className="mt-3">
               <RotateCcw className="h-3.5 w-3.5" /> Coba Lagi
@@ -216,7 +217,14 @@ export function PeerTableCard({
                     <TableCell className="text-xs max-w-[160px] truncate" title={p.topItem || ''}>{p.topItem || '—'}</TableCell>
                     {columns.map(col => {
                       const val = p[col.key] as number;
-                      const colorClass = p.isTarget ? colorCell(val, peerAverages[col.key] as number, otherPeers.length, col.higherBetter) : '';
+                      // P23 A3: target row keeps the peer-avg comparison color
+                      // (colorCell is now magnitude-based — P23 A1). Non-target
+                      // rows get minus-red on the SIGNED Nominal Deviasi column
+                      // (PDF peer.ts applies danger row-wide for loss rows;
+                      // numberColorNeg = strict VALUE-column neg-only parity).
+                      const colorClass = p.isTarget
+                        ? colorCell(val, peerAverages[col.key] as number, otherPeers.length, col.higherBetter)
+                        : col.key === 'nominalDeviasi' ? numberColorNeg(val) : '';
                       return (
                         <TableCell key={col.key} className={`text-xs text-right font-mono tabular-nums ${colorClass}`}>
                           {col.format(val)}

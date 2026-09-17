@@ -202,8 +202,9 @@ export async function GET(req: NextRequest) {
     logger.error('[item-peer-comparison] error:', {
       error: e instanceof Error ? e.message : String(e),
     });
+    // P23 D4: 'Internal server error' → ID ('Gagal …' convention, see ingest services).
     return NextResponse.json(
-      { success: false, error: 'Internal server error' },
+      { success: false, error: 'Gagal memproses permintaan' },
       { status: 500 },
     );
   }

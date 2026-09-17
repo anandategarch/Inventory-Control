@@ -44,7 +44,9 @@ export const CorrelationInsightCard = memo(function CorrelationInsightCard({
       const bestPeer = peers.reduce((best, p) => (p.devBom < best.devBom ? p : best), peers[0]);
       out.push({
         type: 'info',
-        text: `${bestPeer.outletName} adalah best practice: Dev/BOM ${fmtDecimal(bestPeer.devBom * 100, 1)}% (terendah di peer group).`,
+        // P23 D2: 'best practice' → 'praktik terbaik' (EN/ID mix fix;
+        // 'peer', 'Dev/BOM', 'outlier' stay — established loanwords).
+        text: `${bestPeer.outletName} adalah praktik terbaik: Dev/BOM ${fmtDecimal(bestPeer.devBom * 100, 1)}% (terendah di peer group).`,
       });
     }
 
@@ -55,7 +57,7 @@ export const CorrelationInsightCard = memo(function CorrelationInsightCard({
     if (highSalesLowDev.length > 0) {
       out.push({
         type: 'good',
-        text: `${highSalesLowDev.length} peer dengan sales tinggi tapi deviasi rendah — kemungkinan practice yang bisa direplikasi.`,
+        text: `${highSalesLowDev.length} peer dengan sales tinggi tapi deviasi rendah — kemungkinan praktik yang bisa direplikasi.`,
       });
     }
 
@@ -66,7 +68,9 @@ export const CorrelationInsightCard = memo(function CorrelationInsightCard({
         type: 'warn',
         // FIX (BUG-HUNT B16/B2-11): residualQty was interpolated raw — every other
         // number in the card goes through fmtIDR/fmtNum/fmtDecimal.
-        text: `Residual ${fmtNum(target.residualQty)} adalah ${fmtDecimal(residualRatio, 1)}× rata-rata peer — potensi data entry error atau fraud.`,
+        // P23 D2: 'data entry error' → 'kesalahan input data' (validator.ts
+        // uses 'salah input'); 'fraud' stays — established loanword.
+        text: `Residual ${fmtNum(target.residualQty)} adalah ${fmtDecimal(residualRatio, 1)}× rata-rata peer — potensi kesalahan input data atau fraud.`,
       });
     }
 
@@ -84,7 +88,8 @@ export const CorrelationInsightCard = memo(function CorrelationInsightCard({
     if (salesRatio < 0.9 && salesRatio > 0) {
       out.push({
         type: 'info',
-        text: `Sales ${fmtIDR(target.sales)} adalah ${fmtDecimal((1 - salesRatio) * 100, 0)}% di bawah rata-rata peer — walaupun dalam ±10% band, target ada di sisi bawah.`,
+        // P23 D2: '±10% band' → 'rentang ±10%' (EN/ID mix fix).
+        text: `Sales ${fmtIDR(target.sales)} adalah ${fmtDecimal((1 - salesRatio) * 100, 0)}% di bawah rata-rata peer — walaupun masih dalam rentang ±10%, target ada di sisi bawah.`,
       });
     }
 
@@ -92,7 +97,8 @@ export const CorrelationInsightCard = memo(function CorrelationInsightCard({
     if (target.devBom === Math.min(...peers.map(p => p.devBom), target.devBom)) {
       out.push({
         type: 'good',
-        text: `Target adalah best in class untuk Dev/BOM — pertahankan practice saat ini.`,
+        // P23 D2: 'best in class' → Indonesian; 'practice' → 'praktik'.
+        text: `Target adalah yang terbaik di peer group untuk Dev/BOM — pertahankan praktik saat ini.`,
       });
     }
 

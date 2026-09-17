@@ -207,6 +207,7 @@ export async function GET(req: NextRequest) {
     logger.error("[/api/status] Error:", { error: errMsg });
     // SEC-03: Don't leak DB internals in production
     const isDev = process.env.NODE_ENV === 'development';
-    return NextResponse.json({ success: false, error: isDev ? errMsg : 'Internal server error', hint: isDev ? 'Try visiting /api/setup to create database tables.' : undefined }, { status: 500 });
+    // P23 D4: 'Internal server error' → ID ('Gagal …' convention, see ingest services).
+    return NextResponse.json({ success: false, error: isDev ? errMsg : 'Gagal memproses permintaan', hint: isDev ? 'Try visiting /api/setup to create database tables.' : undefined }, { status: 500 });
   }
 }

@@ -15,7 +15,7 @@
 //    - showArea (filled area under line)
 //
 //  Usage:
-//    <SparkLine data={[10, 15, 8, 20, 18, 25]} color="#f59e0b" />
+//    <SparkLine data={[10, 15, 8, 20, 18, 25]} color="var(--chart-waste, #f59e0b)" />
 //    <SparkLine data={periods.map(p => p.qtyDeviasiSigned)} width={60} showDot />
 // ============================================================
 
@@ -28,7 +28,10 @@ export interface SparkLineProps {
   width?: number;
   /** Height in px (default 24). */
   height?: number;
-  /** Line color (hex or CSS var). Default: amber (#f59e0b). */
+  /** Line color (hex or CSS var). Default: the adaptive amber chart token
+   *  var(--chart-waste, #f59e0b) — same token family the other chart
+   *  components use (light #f59e0b / dark #fbbf24), with a raw-hex fallback
+   *  for contexts where the CSS var is unavailable. */
   color?: string;
   /** Show a dot on the last data point. Default: false. */
   showDot?: boolean;
@@ -47,7 +50,12 @@ export const SparkLine = memo(function SparkLine({
   data,
   width = 80,
   height = 24,
-  color = '#f59e0b',
+  // P23 B11: hardcoded #f59e0b bypassed the var(--chart-*) token family (no
+  // dark-mode adaptation). Now defaults to the --chart-waste amber token with
+  // a raw-hex fallback, mirroring the var(--chart-*, #hex) pattern used by
+  // ItemDeepDive's ReferenceLine strokes. No current caller relies on the
+  // default (ranking-nasional passes explicit colors) — safe change.
+  color = 'var(--chart-waste, #f59e0b)',
   showDot = false,
   showArea = false,
   areaOpacity = 0.15,

@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/table';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 import type { AnalysisData, BomCorrelationFinding, BomCorrelationCounts } from '@/hooks/useAnalysis';
-import { fmtNum, fmtPct, growthColorClass } from '@/lib/format';
+import { fmtNum, fmtPct, growthColor, growthColorClass } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
@@ -292,7 +292,12 @@ function BomCorrelationCardInner({ data }: { data: AnalysisData }) {
                           {RULE_LABELS[f.ruleCode] ?? f.ruleCode}
                         </Badge>
                       </TableCell>
-                      <TableCell className={`text-[11px] px-3 py-2 text-right tabular-nums ${growthColorClass(f.bomGrowth)}`}>
+                      {/* P23 A6: BOM growth is goodUp=true in the canonical
+                          semantics (PDF exec.ts:36, growth.ts:92) — up = emerald,
+                          not red; Section 2 renders the BOM row as a muted
+                          baseline (BUG-BOM-UI-04), so only this per-record cell
+                          was painting up=red via growthColorClass. */}
+                      <TableCell className={`text-[11px] px-3 py-2 text-right tabular-nums ${growthColor(f.bomGrowth)}`}>
                         {f.bomGrowth != null ? fmtPct(f.bomGrowth, true) : '—'}
                       </TableCell>
                       <TableCell className={`text-[11px] px-3 py-2 text-right tabular-nums ${growthColorClass(f.metricGrowth)}`}>

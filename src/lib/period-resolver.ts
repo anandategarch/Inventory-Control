@@ -66,7 +66,9 @@ function buildAllPeriods(tables: PreloadedPeriodTables): PeriodRow[] {
   const monthLabelByKey = new Map(tables.fileMonthKeys.map(f => [f.monthKey, f.monthLabel]));
   return tables.weeksRaw
     .map(w => ({
-      monthLabel: monthLabelByKey.get(w.monthKey) || 'Unknown',
+      // P23 D5: 'Unknown' fallback label → 'Tidak diketahui' (display-only;
+      // period matching uses monthKey/weekLabel, not this label).
+      monthLabel: monthLabelByKey.get(w.monthKey) || 'Tidak diketahui',
       weekLabel: w.weekLabel,
       monthKey: w.monthKey,
       sortKey: `${w.monthKey}|${String(parseInt(w.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,

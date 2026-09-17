@@ -286,7 +286,8 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-sm flex items-center gap-2.5">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 shrink-0">
+          {/* P23 C2: purple (off-token family) → adaptive --chart-2 token utilities (teal light / green dark). */}
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-chart-2/10 dark:bg-chart-2/20 text-chart-2 shrink-0">
             <History className="h-3.5 w-3.5" />
           </span>
           Historical Z-Score Analysis
@@ -322,8 +323,9 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
                   aria-pressed={metricView === m}
                   onClick={() => { setMetricView(m); setDisplayCount(PAGE_SIZE); }}
                   className={`text-[10px] px-2 py-0.5 rounded-md transition-colors ${
+                    // P23 C2: purple active pill → adaptive --chart-2 token (matches the card accent).
                     metricView === m
-                      ? 'bg-purple-600 text-white'
+                      ? 'bg-chart-2 text-white'
                       : 'text-muted-foreground hover:bg-muted/60'
                   }`}
                 >
@@ -446,9 +448,10 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
                           <TooltipContent side="left" className="text-xs p-3 max-w-xs">
                             <div className="space-y-1">
                               <p className="font-semibold">Z-Score Breakdown {metricView === 'qtyDeviasi' ? '(QTY Deviasi)' : '(Dev/BOM)'}</p>
+                              {/* P23 C2: tooltip signed-value colors were light-mode-only — add dark: variants. */}
                               {metricView === 'qtyDeviasi' ? (
                                 <>
-                                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">Current QTY Deviasi:</span><span className={`font-medium tabular-nums ${isLoss ? 'text-red-600' : 'text-emerald-600'}`}>{item.currentQtyDeviasi.toLocaleString('id-ID')}</span></div>
+                                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">Current QTY Deviasi:</span><span className={`font-medium tabular-nums ${isLoss ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{item.currentQtyDeviasi.toLocaleString('id-ID')}</span></div>
                                   <div className="flex justify-between gap-4"><span className="text-muted-foreground">Historical Avg (|weekly|):</span><span className="font-medium tabular-nums">{item.qtyDeviasiHistoricalAvg.toLocaleString('id-ID')}</span></div>
                                   <div className="flex justify-between gap-4"><span className="text-muted-foreground">|Current| vs Avg:</span><span className="font-medium tabular-nums">{fmtDecimal(Math.abs(item.currentQtyDeviasi) / (item.qtyDeviasiHistoricalAvg || 1), 2)}×</span></div>
                                 </>
@@ -456,7 +459,7 @@ export const HistoricalZScoreCard = memo(function HistoricalZScoreCard({ data }:
                                 <>
                                   <div className="flex justify-between gap-4"><span className="text-muted-foreground">Current Dev/BOM:</span><span className="font-medium tabular-nums">{fmtPctAbs(item.currentDevBom)}</span></div>
                                   <div className="flex justify-between gap-4"><span className="text-muted-foreground">Historical Avg:</span><span className="font-medium tabular-nums">{fmtPctAbs(item.historicalAvg)}</span></div>
-                                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">Delta:</span><span className={`font-medium tabular-nums ${Math.abs(item.currentDevBom) > Math.abs(item.historicalAvg) ? 'text-red-600' : 'text-emerald-600'}`}>{fmtDecimal((item.currentDevBom - item.historicalAvg) * 100, 1)}pp</span></div>
+                                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">Delta:</span><span className={`font-medium tabular-nums ${Math.abs(item.currentDevBom) > Math.abs(item.historicalAvg) ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtDecimal((item.currentDevBom - item.historicalAvg) * 100, 1)}pp</span></div>
                                 </>
                               )}
                               <div className="flex justify-between gap-4"><span className="text-muted-foreground">Z-Score:</span><span className={`font-bold tabular-nums ${zScoreColor(activeZ)}`}>{fmtDecimal(activeZ, 2)} ({badge.label})</span></div>

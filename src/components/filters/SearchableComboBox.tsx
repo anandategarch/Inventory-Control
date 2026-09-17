@@ -36,7 +36,9 @@ export function SearchableComboBox({
   onValueChange,
   placeholder = 'Select...',
   searchPlaceholder = 'Search...',
-  emptyText = 'No results found.',
+  // P23 D1: default empty text was English ('No results found.') in an
+  // all-Indonesian UI (all callers pass their own 'X tidak ditemukan.').
+  emptyText = 'Tidak ada hasil.',
   allOptionLabel,
   className,
   disabled,

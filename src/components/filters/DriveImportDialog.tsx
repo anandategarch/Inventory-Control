@@ -107,7 +107,8 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
         toast({ title: '✅ Import berhasil', description: `${ingestResults.filter((r: DriveImportResult) => r.status === 'INGESTED').length} file diimpor` });
       }
     } catch (e: unknown) {
-      toast({ title: '❌ Import gagal', description: e instanceof Error ? e.message : 'Unknown error', variant: 'destructive' });
+      // P23 D5: 'Unknown error' fallback → Indonesian.
+      toast({ title: '❌ Import gagal', description: e instanceof Error ? e.message : 'Error tidak diketahui', variant: 'destructive' });
     } finally {
       setDriveImporting(false);
     }

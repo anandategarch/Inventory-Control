@@ -28,7 +28,7 @@
 import { memo } from 'react';
 import { Card } from '@/components/ui/card';
 import { TrendingUp, TrendingDown, Minus, ArrowRight } from 'lucide-react';
-import { fmtIDR, fmtNum, fmtPct, numberColor } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtPct, numberColorNeg } from '@/lib/format';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { useRecommendations } from '@/hooks/useRecommendations';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
@@ -59,14 +59,15 @@ function DeltaPill({ growth, inverse }: { growth: number; inverse?: boolean }) {
   const strong = deltaType === 'increase' || deltaType === 'decrease' || deltaType === 'unchanged';
   const cls = colorCls.includes('emerald')
     ? strong
-      ? 'bg-emerald-100/80 text-emerald-700'
-      : 'bg-emerald-50/60 text-emerald-600'
+      // P23 A5: dark: variants were missing on every pill saturation.
+      ? 'bg-emerald-100/80 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400'
+      : 'bg-emerald-50/60 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400'
     : colorCls.includes('red')
       ? strong
-        ? 'bg-red-100/80 text-red-700'
-        : 'bg-red-50/60 text-red-600'
+        ? 'bg-red-100/80 text-red-700 dark:bg-red-950/40 dark:text-red-400'
+        : 'bg-red-50/60 text-red-600 dark:bg-red-950/30 dark:text-red-400'
       : colorCls.includes('amber')
-        ? 'bg-amber-50/60 text-amber-700'
+        ? 'bg-amber-50/60 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400'
         : 'bg-muted text-muted-foreground';
   // FIX (BUG-HUNT B5/BUG-3-01): icon must follow the SIGN of the delta, not
   // the 5-level bucket — moderateIncrease/moderateDecrease (the common case,
@@ -154,15 +155,16 @@ export const ExecutiveStatus = memo(function ExecutiveStatus({ data }: { data: A
   const abnormalPct = total > 0 ? (hs.abnormal / total) * 100 : 0;
   const warningPct = total > 0 ? (hs.warning / total) * 100 : 0;
   let verdict = 'SEHAT';
-  let verdictColor = 'text-emerald-600';
+  // P23 A5: dark: variants were missing on all three verdict colors.
+  let verdictColor = 'text-emerald-600 dark:text-emerald-400';
   let verdictBar = 'bg-emerald-500';
   if (abnormalPct > 20) {
     verdict = 'KRITIS';
-    verdictColor = 'text-red-600';
+    verdictColor = 'text-red-600 dark:text-red-400';
     verdictBar = 'bg-red-500';
   } else if (abnormalPct > 5 || warningPct > 15) {
     verdict = 'PERLU PERHATIAN';
-    verdictColor = 'text-amber-700';
+    verdictColor = 'text-amber-700 dark:text-amber-400';
     verdictBar = 'bg-amber-500';
   }
 
@@ -207,6 +209,9 @@ export const ExecutiveStatus = memo(function ExecutiveStatus({ data }: { data: A
           label="Nominal Deviasi"
           tooltip={KPI_TOOLTIPS.nominalDeviasi}
           value={fmtIDR(s.nominalDeviasi.current)}
+          // P23 A5: hero VALUE column — signed value gets minus-red only
+          // (PDF cover.ts negColor parity); positive stays neutral.
+          valueCls={numberColorNeg(s.nominalDeviasi.current)}
           hero
           eyebrow={heroVerdictChip}
           pill={s.nominalDeviasi.growth != null ? (
@@ -283,7 +288,7 @@ export const ExecutiveStatus = memo(function ExecutiveStatus({ data }: { data: A
           {explainedPct != null && <span className="ml-1 text-muted-foreground/70">({fmtPct(explainedPct, false, 0)})</span>}
         </span>
         <ArrowRight className="h-3 w-3 text-muted-foreground/50" aria-hidden />
-        <span className={`font-semibold tabular-nums ${numberColor(netQty)}`} title="NET — belum terjelaskan (Residual)">
+        <span className={`font-semibold tabular-nums ${numberColorNeg(netQty)}`} title="NET — belum terjelaskan (Residual)">
           NET {fmtNum(netQty, '')}
         </span>
       </div>

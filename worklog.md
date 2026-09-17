@@ -40766,3 +40766,50 @@ Work Log:
 
 Stage Summary:
 - 11 file (174+/40-). Aturan minus-merah kini seragam di seluruh nilai signed report; S7 tabel & bar chart sepakat; inversi devToSales ditutup. rv 12 dua sisi. Detail + bukti render: /home/z/my-project/audit-findings/findings-PDFCOLOR.md + harness /home/z/pdfcolor-harness (gen/scan/assert).
+
+---
+Task ID: P23-COLORPARITY-LEFTOVER-R2
+Agent: Main (Z.ai Code) + 4 subagent paralel (P23-R2-A/B/C/D)
+Task: Reimplementasi penuh fix P23 (paritas warna FE + sisa leftover P2/P3) — commit asli 7ac4d1c HILANG bersama sandbox reset sebelum sempat ter-push; PAT baru dari user membuka jalur push.
+
+Work Log:
+- STATE RECOVERY: sesi lalu mengimplementasi 21 fix (commit 7ac4d1c) tapi PUSH TERBLOKIR (PAT ter-scrub) lalu sandbox reset menghapus repo lokal. Verifikasi pemulihan: remote main tetap 09c6d9d, tidak ada branch/ref berisi 7ac4d1c, worklog repo tanpa entri P23, bundle backup tua (4bdb0c2) → reimplementasi dari spesifikasi audit (laporan P23-COLOR-PARITY-AUDIT + P23-LEFTOVER-HUNT di worklog my-project, lengkap dgn file:line).
+- Fondasi (main): lib/format.ts + numberColorNeg(v) — minus-RED + dark:, positif/nol netral ('' → inherit), null → muted; paritas kolom VALUE dgn PDF negColor (mirror pola minus-red top-items-card.tsx:183). trendColor DIHAPUS (dead code, zero src callers; 5 test-nya di tests/lib/format.test.ts ikut dihapus → baseline vitest 512→507). lib/error-response.ts: pesan 500 produksi → 'Gagal memproses permintaan' (menyelaraskan helper bersama dgn sweep D4).
+- P23-R2-A — 3 P1 + 5 P2 semantik warna:
+  * A1 (P1) peer-comparison/helpers.ts colorCell: magnitude-gap |target|−|avg| (identik utk metrik all-positive; membenahi inversi band all-loss dgn nominalDeviasi signed) + dark: kedua kelas.
+  * A2 (P1) peer-computation.ts computePeerRankItems: flag rankByAbs utk nominalDeviasi — rank #1 = deviasi terkecil (emerald+star kini tepat), mirror card-compute.ts abs-ranking.
+  * A3 (P1) PeerComparison/peer-table-card.tsx: baris non-target kolom Nominal Deviasi kini minus-red (numberColorNeg) — paritas PDF peer.ts row-wide danger; fallback 'Unknown' → ID.
+  * A4 (P1) Charts/GrowthComparison.tsx: badge top-driver + panel Pareto metric-aware badWhenUp — nominalDeviasi (SUM ABS): Naik = MERAH/memburuk; qtyDeviasi (SUM signed): Naik = emerald (toward-surplus), dua semantik didokumentasikan in-code; bar cells B8 tak tersentuh.
+  * A5 (P2) narrative/ExecutiveStatus.tsx: hero Nominal Deviasi valueCls=numberColorNeg; NET cascade numberColor→numberColorNeg; verdictColor ×3 + DeltaPill ×5 dark:.
+  * A6 (P2) BomCorrelationCard.tsx: BOM Growth per-record growthColorClass(up=RED) → growthColor() goodUp=true (kanonik exec.ts:36/growth.ts:92; Section 2 aggregate muted tak tersentuh).
+  * A7 (P2) Charts/BridgeWaterfall.tsx: LEG_DOWN_COLOR → var(--chart-surplus) — leg negatif (deviasi mengecil) = membaik, konsisten effectColor PriceEffectCard.
+  * A8 (P2) ItemTrendTab/ItemPeerComparison/PeerTableRow.tsx: QTY Deviasi + Dev/BOM diwarnai per TANDA SEL sendiri (qtyDeviasi<0 → merah; mirror top-items-card), bukan row.direction NET; badge arah baris tetap.
+- P23-R2-B — sweep numberColor + token/hex + overflow mobile:
+  * B1/B2/B3/B4/B5/B6/B7/B8/B9/B10: numberColor → numberColorNeg pada kolom VALUE signed (TopItems ×4, NestedItemToOutlet ×2, GeneralizedNested ×2, QuadrantCard, PrioritySummaryCard, ranking-nasional ×4, OutletHealthRanking, AnomaliOutletExpansion ×2, DrillDownDrawer + SourceDataModal 11 sel) — dgn verifikasi signedness per sumber; surface chart-like (BarList barColor, mini-bar ItemPriorityPanel, SparkLine sel) TETAP emerald-positif + komentar alasan; volume magnitude di tabel drilldown (BOM/COM/Waste/Susut/Trial) → netral (bukti: kolom Nom Sales tak diwarnai).
+  * B4: QuadrantCard medal text-orange-600 → amber-600/400 (satu2nya orange di luar keluarga semantik amber).
+  * B7/B11: SparkLine hex '#dc2626'/'#10b981'/'#f59e0b' → 'var(--chart-loss|surplus|waste, <hex fallback>)' (pola fallback ItemDeepDive).
+  * B12: colorScale.ts HEATMAP_LINEAR lime-500 → amber-600 #ca8a04 (= nilai --chart-trial pengganti lime per FIX #23; ramp tetap 5-stop in-family).
+  * B2/B3 (LEFTOVER #6): nested-breakdown tables dibungkus overflow-x-auto + min-w-[480..500px] — kolom %/Cum tak lagi terpotong di viewport <480px.
+- P23-R2-C — FLIP purple + dark + conditional-red:
+  * C1/C2: keluarga purple FLIP (FlipRankingRow ring/hover/text + tooltip, FlipRankingHeader chip, FlipRankingStates spinner, FlipDrillPanel cluster, HistoricalZScoreCard bg-purple-600 ×2) → utilities token --chart-2 (chart-4 = kuning terang, bentrok aksen amber FLIP; violet off-token); opasitas hierarchy dipertahankan.
+  * C3: BarList opsi warna 'purple' DIHAPUS (grep seluruh repo: zero callers).
+  * C4: FlipCell/FlipMatrix tooltip dark: + title 'No data' → 'Tidak ada data'.
+  * C5: resto-analysis/item-detail-modal.tsx — error state kini punya tombol 'Coba Lagi' (wiring persis peer-table-card: Button outline sm + RotateCcw + void refetch()); Deviasi timeline (signed) → numberColorNeg; Dev/BOM merah-unconditional → numberColorNeg (sumber diverifikasi SIGNED: item-history route pctQtyDeviasiToBom); dark: pada :83/90-93/144.
+  * C6: bahan-analysis-card.tsx Dev/BOM merah-unconditional → numberColorNeg (font-semibold ranking tetap).
+  * C7: profile-cards.tsx trend icon+label dark:.
+- P23-R2-D — EN/ID + retry + tick:
+  * D1: SearchableComboBox 'No results found.' → 'Tidak ada hasil.'
+  * D2: correlation-insight-card 5 frasa EN → ID (loanword konsisten dashboard dipertahankan).
+  * D3: FormulaInfo copy per-series — "Bar Sales & BOM = nilai absolut per periode. Bar Deviasi = nilai signed — tampil dengan tandanya" + contoh signed + 'across multiple period' → 'lintas beberapa periode'.
+  * D4: 12 'Internal server error' di 10 route → 'Gagal memproses permintaan' (konvensi 'Gagal …' sesama route; grep test/consumer: tak ada yang me-assert string lama).
+  * D5: sweep 'Unknown' → 'Tidak diketahui' / 'Error tidak diketahui' (14 situs: items-table, top-items-card, trend-chart, RestoAnalysis/index, OutletPriorityPanel ×2, benchmark-opportunity, monthLabel fallback ×3, toast ×4).
+  * D6 (LEFTOVER #5): 'Coba Lagi' di 5 error-state (trend-chart kedua branch, items-table, top-items-card via invalidateQueries prefix ['peer-comparison',…], state-cards ErrorCard onRetry dari refetch query, AreaItemHeatmap refetch) — visual + wiring identik 13 situs existing.
+  * D7: AnalysisCards.tsx tick Y-axis — threshold Math.abs(v) ≥ 1_000_000 + cabang compact sign-preserving → '-2,5Jt' (label negatif jutaan tak lagi meluber vs '3Jt').
+- Gates final: tsc --noEmit 0 error · lint 0 error/377 warning (= baseline persis, NOL warning baru) · vitest 507/507 (31 file).
+- 62 file berubah (+~530/−250), render-only FE + string copy + token CSS — PDF/kalkulasi/SQL TIDAK tersentuh → tanpa bump rv/sv (deploy-SHA fork cache-key sudah menangani stale pasca-deploy).
+- Secret-scan staged diff: bersih (PAT GitHub/Vercel tidak pernah masuk file ter-commit; kredential push tersimpan di luar repo).
+
+Stage Summary:
+- Seluruh backlog P23 (3 P1 inversi + 5 P2 paritas + 13 P3 sistemik) TERTUTUP ULANG dan kini benar-benar sampai ke remote — commit aslinya hilang sebelum sempat ter-push.
+- Keputusan desain yang dipegang ke depan: (1) numberColorNeg = standar kolom VALUE signed FE, emerald-positif HANYA utk surface chart-like; (2) FLIP accent = --chart-2; (3) Dev/BOM signed → minus-red per tanda (bukan unconditional-red / bukan muted); (4) volume magnitude = netral; (5) pesan error generik = 'Gagal memproses permintaan'.
+- PAT push baru disimpan di luar repo (my-project, chmod 700), tidak direvoc sesuai permintaan user.

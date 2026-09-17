@@ -108,7 +108,8 @@ export async function resolvePipelineSetup(params: ReportParams): Promise<Fetche
   const month = resolveMonthLabel(monthParam, monthResolver) || monthParam;
   const resolvedCompareMonth = userCompareMonth ? resolveMonthLabel(userCompareMonth, monthResolver) : null;
   const allPeriods = weeksRaw.map(w => ({
-    monthLabel: monthLabelByKey.get(w.monthKey) || 'Unknown',
+    // P23 D5: 'Unknown' fallback label → 'Tidak diketahui' (display-only).
+    monthLabel: monthLabelByKey.get(w.monthKey) || 'Tidak diketahui',
     weekLabel: w.weekLabel,
     sortKey: `${w.monthKey}|${String(parseInt(w.weekLabel.replace(/\D/g, '')) || 0).padStart(2, '0')}`,
   })).sort((a, b) => a.sortKey.localeCompare(b.sortKey));

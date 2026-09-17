@@ -35,7 +35,13 @@ export const Z_SCORE_DIVERGING = [
 /** Green → Yellow → Red (heatmap linear, low → high). */
 export const HEATMAP_LINEAR = [
   '#10b981', // emerald-500 (low)
-  '#84cc16', // lime-500
+  // P23 B12: lime-500 removed from the chart token family (FIX #23 — the same
+  // de-lime decision that remapped --chart-trial lime #65a30d → amber-600
+  // #ca8a04 in globals.css). In-family replacement: amber-600 #ca8a04, the
+  // token value the family now uses where lime used to sit; it bridges
+  // emerald-500 → yellow-500 while staying inside the emerald/yellow/amber/red
+  // ramp the other scales (Z_SCORE_DIVERGING, FLIP_DIVERGING) share.
+  '#ca8a04', // amber-600 (--chart-trial — replaced lime per FIX #23)
   '#eab308', // yellow-500
   '#f59e0b', // amber-500
   '#dc2626', // red-600 (high)

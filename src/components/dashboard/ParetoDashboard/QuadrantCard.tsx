@@ -9,7 +9,7 @@
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { fmtIDR, fmtNum, fmtDecimal, numberColor } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtDecimal, numberColorNeg } from '@/lib/format';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import { countSuffix } from './constants';
 import type { ParetoResult } from './types';
@@ -57,7 +57,11 @@ export function QuadrantCard({ title, icon, data, color, tooltip }: { title: str
                 {data.drivers.map((d, i) => (
                   <TableRow key={`${d.name}-${i}`} className="hover:bg-muted/40 transition-colors border-b border-border/20 last:border-0">
                     <TableCell className="text-center text-xs tabular-nums p-1 font-bold shrink-0 w-8">
-                      <span className={i === 0 ? 'text-amber-500' : i === 1 ? 'text-zinc-400' : i === 2 ? 'text-orange-600 dark:text-orange-400' : 'text-muted-foreground'}>
+                      {/* P23 B4: rank-3 medal was the app's ONLY orange-600 text (outside
+                           the amber semantic family) — aligned to the app-wide amber
+                           pattern (amber-600 / dark:amber-400, same as the zScore cell below
+                           + GapAnalysisCard) for token consistency. */}
+                      <span className={i === 0 ? 'text-amber-500' : i === 1 ? 'text-zinc-400' : i === 2 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}>
                         {i + 1}
                       </span>
                     </TableCell>
@@ -65,8 +69,10 @@ export function QuadrantCard({ title, icon, data, color, tooltip }: { title: str
                       <div className="font-medium text-xs truncate max-w-[180px]" title={d.name}>{d.name}</div>
                       {d.outletCount != null && suffix && <div className="text-[10px] text-muted-foreground tabular-nums">{d.outletCount} {suffix}</div>}
                     </TableCell>
-                    <TableCell className={`text-right text-xs tabular-nums p-1 ${numberColor(d.qtyDeviasi)}`}>{fmtNum(d.qtyDeviasi)}</TableCell>
-                    <TableCell className={`text-right text-xs tabular-nums font-medium p-1 ${numberColor(d.nominalDeviasi)}`}>{fmtIDR(d.nominalDeviasi)}</TableCell>
+                    {/* P23 B4: signed VALUE columns (qty/nominalDeviasi SUM) — minus-red
+                        only (PDF negColor); positive no longer paints emerald. */}
+                    <TableCell className={`text-right text-xs tabular-nums p-1 ${numberColorNeg(d.qtyDeviasi)}`}>{fmtNum(d.qtyDeviasi)}</TableCell>
+                    <TableCell className={`text-right text-xs tabular-nums font-medium p-1 ${numberColorNeg(d.nominalDeviasi)}`}>{fmtIDR(d.nominalDeviasi)}</TableCell>
                     <TableCell className="text-right text-xs tabular-nums text-muted-foreground p-1" title={d.histN ? `${d.histN} periode historis (all months)` : ''}>
                       {d.histAvg != null ? fmtIDR(d.histAvg) : '—'}
                     </TableCell>

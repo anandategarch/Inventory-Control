@@ -154,6 +154,7 @@ export async function GET(req: NextRequest) {
   } catch (e: unknown) {
     // BUG-A-07 pattern: Don't leak internal error details to client.
     logger.error('[item-trend] error:', { error: e instanceof Error ? e.message : String(e) });
-    return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
+    // P23 D4: 'Internal server error' → ID ('Gagal …' convention, see ingest services).
+    return NextResponse.json({ success: false, error: 'Gagal memproses permintaan' }, { status: 500 });
   }
 }

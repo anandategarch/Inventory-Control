@@ -117,7 +117,8 @@ export function FlipRankingRow({
                 aria-label={isExpanded ? 'Tutup drill-down' : 'Buka drill-down'}
                 aria-expanded={isExpanded}
                 // FIX (UI2-08): h-8 w-8 (32px) — below 44px touch target but usable; was h-5 w-5 (20px) unusable on mobile
-                className="inline-flex h-8 w-8 items-center justify-center rounded hover:bg-purple-100 dark:hover:bg-purple-950/40 text-purple-600 dark:text-purple-400 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
+                // P23 C1: purple (off-token family) → adaptive --chart-2 token utilities (teal light / green dark) for the FLIP drill accent.
+                className="inline-flex h-8 w-8 items-center justify-center rounded hover:bg-chart-2/15 dark:hover:bg-chart-2/20 text-chart-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-chart-2"
               >
                 {isExpanded ? (
                   <ChevronDown className="h-3.5 w-3.5" />
@@ -142,21 +143,22 @@ export function FlipRankingRow({
                     <p className="font-semibold">
                       {topFlip.period1Label} → {topFlip.period2Label} ({topFlip.weekLabel})
                     </p>
+                    {/* P23 C1: tooltip signed-value colors were light-mode-only — add dark: variants. */}
                     <div className="flex justify-between gap-4">
                       <span className="text-muted-foreground">P1 (signed):</span>
-                      <span className={`font-medium tabular-nums ${topFlip.qtyP1 < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                      <span className={`font-medium tabular-nums ${topFlip.qtyP1 < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                         {fmtNum(topFlip.qtyP1, '', false)}
                       </span>
                     </div>
                     <div className="flex justify-between gap-4">
                       <span className="text-muted-foreground">P2 (signed):</span>
-                      <span className={`font-medium tabular-nums ${topFlip.qtyP2 < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                      <span className={`font-medium tabular-nums ${topFlip.qtyP2 < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                         {fmtNum(topFlip.qtyP2, '', false)}
                       </span>
                     </div>
                     <div className="flex justify-between gap-4">
                       <span className="text-muted-foreground">Δ (P2−P1):</span>
-                      <span className={`font-medium tabular-nums ${topFlipDelta < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                      <span className={`font-medium tabular-nums ${topFlipDelta < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                         {topFlipDelta >= 0 ? '+' : ''}{fmtNum(topFlipDelta, '', false)}
                       </span>
                     </div>

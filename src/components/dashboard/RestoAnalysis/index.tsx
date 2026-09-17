@@ -109,7 +109,7 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
     />
   );
 
-  const { data, isLoading, isFetching, error } = useQuery<OutletItemsResponse>({
+  const { data, isLoading, isFetching, error, refetch } = useQuery<OutletItemsResponse>({
     queryKey: ['outlet-items', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth],
     queryFn: async () => {
       const p = new URLSearchParams();
@@ -172,7 +172,10 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
   }
 
   if (error || !data?.success) {
-    return <ErrorCard message={error?.message || data?.error || 'Unknown'} />;
+    // P23 D5: 'Unknown' fallback → 'Tidak diketahui'; P23 D6 (LEFTOVER #5):
+    // wire the outlet-items query's refetch into ErrorCard's "Coba Lagi"
+    // button (same wiring as peer-table-card's onRetryMain).
+    return <ErrorCard message={error?.message || data?.error || 'Tidak diketahui'} onRetry={() => { void refetch(); }} />;
   }
 
   // CRITICAL null guards: server occasionally returns partial payloads (e.g. during

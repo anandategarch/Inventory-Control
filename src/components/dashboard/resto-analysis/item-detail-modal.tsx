@@ -10,9 +10,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, AlertTriangle, TrendingUp } from 'lucide-react';
+import { Loader2, AlertTriangle, TrendingUp, RotateCcw } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import type { ItemHistoryResponse, ItemHistoryTimelineRow } from './types';
@@ -21,7 +22,7 @@ import {
   fmtGrowth, growthColor, priorityColor, directionColor,
   Row, SummaryCard,
 } from './helpers';
-import { fmtDecimal } from '@/lib/format';
+import { fmtDecimal, numberColorNeg } from '@/lib/format';
 
 export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: {
   outletCode: string; itemName: string; month: string; week: string; onClose: () => void;
@@ -38,7 +39,7 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
     setActiveTab('item');
     onClose();
   };
-  const { data, isLoading, error } = useQuery<ItemHistoryResponse>({
+  const { data, isLoading, error, refetch } = useQuery<ItemHistoryResponse>({
     queryKey: ['item-history', outletCode, itemName, month, week],
     queryFn: async () => {
       const p = new URLSearchParams({ outletCode, itemName, month, week });
@@ -80,17 +81,24 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
             <span className="ml-2 text-sm text-muted-foreground">Memuat historical...</span>
           </div>
         ) : error || !data?.success ? (
-          <div className="py-8 text-center text-red-600 text-sm">
-            Error: {error?.message || data?.error || 'Unknown'}
+          <div className="py-8 text-center text-red-600 dark:text-red-400 text-sm">
+            {/* P23 C5: EN fallback strings → Indonesian (LEFTOVER-HUNT #4) + dark: variant. */}
+            Gagal memuat: {error?.message || data?.error || 'Tidak diketahui'}
+            {/* P23 C5 (LEFTOVER-HUNT #5): error state had no retry affordance —
+                same Button component/variant/size + refetch wiring as peer-table-card. */}
+            <Button onClick={() => { void refetch(); }} variant="outline" size="sm" className="mt-3">
+              <RotateCcw className="h-3.5 w-3.5" /> Coba Lagi
+            </Button>
           </div>
         ) : (
           <div className="space-y-4">
             {/* Summary Cards */}
+            {/* P23 C5: conditional summary-card colors were light-mode-only — add dark: variants. */}
             <div className="grid grid-cols-4 gap-2">
-              <SummaryCard label="Dev/BOM" value={fmtPct(data.current?.devBom)} sub={data.historical?.zScore != null ? `zScore: ${fmtDecimal(data.historical.zScore, 2)}` : ''} color={data.current?.devBom != null && Math.abs(data.current.devBom) > 0.10 ? 'text-red-600' : ''} />
+              <SummaryCard label="Dev/BOM" value={fmtPct(data.current?.devBom)} sub={data.historical?.zScore != null ? `zScore: ${fmtDecimal(data.historical.zScore, 2)}` : ''} color={data.current?.devBom != null && Math.abs(data.current.devBom) > 0.10 ? 'text-red-600 dark:text-red-400' : ''} />
               <SummaryCard label="Nominal" value={fmtIDR(data.current?.nominalLossSurplus)} color={directionColor(data.current?.direction || '')} />
-              <SummaryCard label="Residual%" value={fmtPct(data.current?.residualRatio)} sub={data.current?.residualRatio != null && data.current.residualRatio > 0.5 ? 'TINGGI' : ''} color={data.current?.residualRatio != null && data.current.residualRatio > 0.5 ? 'text-red-600' : ''} />
-              <SummaryCard label="Trend" value={data.historical?.trend || '—'} color={data.historical?.trend === 'DETERIORATING' ? 'text-red-600' : data.historical?.trend === 'IMPROVING' ? 'text-emerald-600' : ''} />
+              <SummaryCard label="Residual%" value={fmtPct(data.current?.residualRatio)} sub={data.current?.residualRatio != null && data.current.residualRatio > 0.5 ? 'TINGGI' : ''} color={data.current?.residualRatio != null && data.current.residualRatio > 0.5 ? 'text-red-600 dark:text-red-400' : ''} />
+              <SummaryCard label="Trend" value={data.historical?.trend || '—'} color={data.historical?.trend === 'DETERIORATING' ? 'text-red-600 dark:text-red-400' : data.historical?.trend === 'IMPROVING' ? 'text-emerald-600 dark:text-emerald-400' : ''} />
             </div>
 
             {/* Benchmark */}
@@ -140,8 +148,15 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
                             {t.isCurrent && <span className="ml-1 text-xs text-primary">●</span>}
                           </TableCell>
                           <TableCell className="text-xs py-1.5 text-right font-mono">{fmtNum(t.qtyBom)}</TableCell>
-                          <TableCell className="text-xs py-1.5 text-right font-mono">{fmtNum(t.qtyDeviasi)}</TableCell>
-                          <TableCell className="text-xs py-1.5 text-right font-mono text-red-600">{fmtPct(t.devBom)}</TableCell>
+                          {/* P23 C5: Deviasi is SIGNED (route passes raw qtyDeviasi) —
+                              minus-red via numberColorNeg (was neutral). */}
+                          <TableCell className={`text-xs py-1.5 text-right font-mono ${numberColorNeg(t.qtyDeviasi)}`}>{fmtNum(t.qtyDeviasi)}</TableCell>
+                          {/* P23 C5: Dev/BOM was painted red UNCONDITIONALLY. Source check:
+                              item-history passes raw pctQtyDeviasiToBom, which is SIGNED
+                              (rules.yaml — negative for LOSS), so the ratio column gets
+                              sign-only coloring (minus-red, positive neutral) instead of
+                              always-bad magnitude painting. */}
+                          <TableCell className={`text-xs py-1.5 text-right font-mono ${numberColorNeg(t.devBom)}`}>{fmtPct(t.devBom)}</TableCell>
                           <TableCell className="text-xs py-1.5 text-right font-mono">{fmtIDR(t.nominalLossSurplus)}</TableCell>
                           <TableCell className={`text-xs py-1.5 text-center ${directionColor(t.direction)}`}>{t.direction === 'LOSS' ? 'L' : t.direction === 'SURPLUS' ? 'S' : '-'}</TableCell>
                           <TableCell className="text-xs py-1.5 text-right font-mono text-muted-foreground">{t.qtyWaste > 0 ? fmtNum(t.qtyWaste) : '—'}</TableCell>

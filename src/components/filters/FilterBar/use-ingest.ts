@@ -52,7 +52,8 @@ export function useIngest() {
         invalidateAllData(queryClient);
       } else {
         // UI-04 FIX: Show error to user instead of silent failure
-        setIngestMsg(`Error: ${d.error || 'Unknown server error'}`);
+        // P23 D5: 'Unknown server error' fallback → Indonesian.
+        setIngestMsg(`Gagal: ${d.error || 'Error server tidak diketahui'}`);
       }
     } catch (e: unknown) {
       // FIX (BUG-3-b B11): AbortError → friendly Indonesian message instead

@@ -8,12 +8,14 @@
 // ============================================================
 
 import { memo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
   ResponsiveContainer, Legend,
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, TrendingUp } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Loader2, RotateCcw, TrendingUp } from 'lucide-react';
 import { fmtDecimal } from '@/lib/format';
 import type { TrendResponse } from './types';
 
@@ -26,6 +28,15 @@ export const TrendChartCard = memo(function TrendChartCard({
   isLoading: boolean;
   error: Error | null;
 }) {
+  // P23 D6 (LEFTOVER #5): retry affordance — parity with the 13 error states
+  // that already offer "Coba Lagi" (peer-table-card, ChangeItemTable, …).
+  // The query lives in use-peer-queries (no refetch prop threaded down), so
+  // retry = invalidate the ['peer-comparison','trend'] cache — same wiring
+  // QuickSettings uses for the whole ['peer-comparison'] family.
+  const queryClient = useQueryClient();
+  const retry = () => {
+    void queryClient.invalidateQueries({ queryKey: ['peer-comparison', 'trend'] });
+  };
   const chartData = (data?.weeks || []).map(w => ({
     week: w.weekLabel,
     target: +(w.devBomTarget * 100).toFixed(2),
@@ -55,17 +66,24 @@ export const TrendChartCard = memo(function TrendChartCard({
             <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
           </div>
         ) : error ? (
-          <p className="text-center text-xs text-red-600 dark:text-red-400 py-6">
-            Error: {error.message || 'Unknown'}
-          </p>
+          // P23 D5: "Error: … || 'Unknown'" → Indonesian headline + fallback.
+          <div className="py-6 text-center space-y-2">
+            <p className="text-xs text-red-600 dark:text-red-400">Gagal memuat trend Dev/BOM — {error.message || 'Tidak diketahui'}</p>
+            <Button onClick={retry} variant="outline" size="sm">
+              <RotateCcw className="h-3.5 w-3.5" /> Coba Lagi
+            </Button>
+          </div>
         ) : !data ? (
           <p className="text-center text-xs text-muted-foreground py-6">
             Menunggu peer data...
           </p>
         ) : !data?.success ? (
-          <p className="text-center text-xs text-red-600 dark:text-red-400 py-6">
-            Error: {data?.error || 'Unknown'}
-          </p>
+          <div className="py-6 text-center space-y-2">
+            <p className="text-xs text-red-600 dark:text-red-400">Gagal memuat trend Dev/BOM — {data?.error || 'Tidak diketahui'}</p>
+            <Button onClick={retry} variant="outline" size="sm">
+              <RotateCcw className="h-3.5 w-3.5" /> Coba Lagi
+            </Button>
+          </div>
         ) : chartData.length === 0 ? (
           <p className="text-center text-xs text-muted-foreground py-6">
             Tidak ada data mingguan pada bulan ini.
