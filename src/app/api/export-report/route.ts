@@ -209,7 +209,14 @@ export async function GET(req: NextRequest) {
         // menampilkan Net besar seperti -41.335) + q-flip-rank limit
         // 10 → 200 (limit termasuk cache key — sv tetap 2, row shape
         // tak berubah). rv 13 → 14, both sides.
-        rv: '14',
+        // VAR12 (user: "Analisis Pola item masukin juga ke pdf terutama
+        // bagian anomali item"): section 6.3 "Analisis Pola Item (Massal /
+        // Regional / Lokal)" — queryItemConsistency rows (query dipanggil
+        // langsung, tanpa namespace q-* baru — preseden analysis pipeline;
+        // ReportData +itemConsistency). rv 14 → 15, both sides. (Penghapusan
+        // "Peluang Perbaikan (Rp)" + "Action Plan" adalah perubahan dashboard
+        // — bukan bagian cache PDF.)
+        rv: '15',
         // FIX (STALE-PDF, systematic hardening — same incident as the missing
         // PEERTOP rv bump): the SWR store serves EXPIRED rows unbounded (see
         // swr.ts 3b), so a forgotten `rv` bump means a pre-deploy PDF can be

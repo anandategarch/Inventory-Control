@@ -24,7 +24,7 @@ export function assembleReport(
 ): FetchedReport {
   const {
     month, prevWeek, prevMonth, historicalPeriods, varianceAnalysis,
-    topNominal, topDevBom, itemTrendMatrixRes, selfAnomalyRes, flipRankingRes,
+    topNominal, topDevBom, itemTrendMatrixRes, selfAnomalyRes, flipRankingRes, consistencyRows,
   } = ctx;
   const { week, area, kelompok, outletCode, itemName, pic, sections, startedAt } = ctx.params;
   const { topWaste, topSusut, topTrial, topLossSurplus, execSummary, trend, weeklyComposition } = derived;
@@ -55,6 +55,9 @@ export function assembleReport(
     // REFINE-3 — weekly composition rows for the trend section's
     // composition + accumulation charts ([] when the trend section is off).
     weeklyComposition,
+    // VAR12 — section 6.3 "Analisis Pola Item" (full pattern ranking; the
+    // PDF section slices its top rows — [] when the anomali section is off).
+    itemConsistency: consistencyRows,
     // REFINE-1 — section 'peer' (null when off / target unresolvable).
     peerComparison,
     // REFINE-1 — section 'flip' (null when off).

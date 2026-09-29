@@ -45,6 +45,10 @@ import type { FlipRankResult } from '@/lib/queries/items/flip-ranking';
 // section's weekly composition/accumulation charts.
 import type { SelfHistoryAnomalyRow } from '@/lib/queries/items/self-history-anomaly';
 import type { WeeklyCompositionRow } from '@/lib/queries/weekly-composition';
+// VAR12 — section 6.3 "Analisis Pola Item": per-item outlet-count pattern
+// rows (queryItemConsistency's return shape, named here because the query
+// returns an anonymous inline type).
+import type { queryItemConsistency } from '@/lib/queries';
 
 // PERF-CACHE-06: helper used to short-circuit the cache wrapper for early-return
 // error paths (404 No records found). Throwing this error propagates through
@@ -348,6 +352,11 @@ export interface ReportData {
   // (already sliced to weeks ≤ the exported week; [] when the trend
   // section is off).
   weeklyComposition: WeeklyCompositionRow[];
+  // VAR12 — section 6.3 "Analisis Pola Item (Massal / Regional / Lokal)":
+  // the dashboard's ItemConsistencyAnalysis widget ("Analisis Pola Item")
+  // carried into the PDF — per-item outlet counts split by direction +
+  // consistency tier ([] when the anomali section is off).
+  itemConsistency: Array<Awaited<ReturnType<typeof queryItemConsistency>>[number]>;
   // REFINE-1 — section 'peer' (null when off / no target resolvable).
   peerComparison: PeerComparisonData | null;
   // REFINE-1 — section 'flip' (null when off).

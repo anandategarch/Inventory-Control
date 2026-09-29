@@ -19,7 +19,9 @@
 import { useMemo } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { useRecommendations, type RestoRecommendation } from '@/hooks/useRecommendations';
-import type { BenchmarkOpportunityResponse } from '@/components/dashboard/peer-comparison/benchmark-opportunity-card';
+// VAR12: the type moved to peer-comparison/types.ts (the card file was
+// deleted — "hapus section 'Peluang Perbaikan (Rp)'").
+import type { BenchmarkOpportunityResponse } from '@/components/dashboard/peer-comparison/types';
 import type { ChangeAnalysisResponse, ChangeOutletStat } from '@/components/dashboard/narrative/ChangeItemTable';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import type { Lens } from './lens-model';

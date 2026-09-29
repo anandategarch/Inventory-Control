@@ -37,6 +37,8 @@ import type { queryVarianceAnalysis } from '@/lib/queries/health-ranking';
 import type { querySelfHistoryAnomaly } from '@/lib/queries/items/self-history-anomaly';
 import type { queryWeeklyComposition } from '@/lib/queries/weekly-composition';
 import type { queryFlipRanking } from '@/lib/queries/items/flip-ranking';
+// VAR12 — section 6.3 "Analisis Pola Item" (queryItemConsistency's rows).
+import type { queryItemConsistency } from '@/lib/queries';
 import type { ReportParams } from '../types';
 import type { SectionGates } from './section-gates';
 
@@ -131,6 +133,9 @@ export interface FetcherContext extends SetupFields {
   selfAnomalyRes: Awaited<ReturnType<typeof querySelfHistoryAnomaly>> | null;
   weeklyCompRes: Awaited<ReturnType<typeof queryWeeklyComposition>> | null;
   flipRankingRes: Awaited<ReturnType<typeof queryFlipRanking>> | null;
+  // VAR12 — section 6.3 "Analisis Pola Item" ([] when the anomali
+  // section is off).
+  consistencyRows: Awaited<ReturnType<typeof queryItemConsistency>>;
   areaCatAvgMap: Map<string, AreaCategoryAvg>;
 }
 
@@ -166,6 +171,7 @@ export function createFetcherContext(
     selfAnomalyRes: { rows: [], flipRows: [] },
     weeklyCompRes: { rows: [] },
     flipRankingRes: null,
+    consistencyRows: [],
     areaCatAvgMap: new Map<string, AreaCategoryAvg>(),
   };
 }

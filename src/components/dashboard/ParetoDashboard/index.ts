@@ -19,7 +19,6 @@ export { ParetoDashboard } from './ParetoDashboard';
 export { QuadrantCard } from './QuadrantCard';
 export { NestedItemToOutlet } from './NestedItemToOutlet';
 export { GeneralizedNested } from './GeneralizedNested';
-export { ActionPlanFooter } from './ActionPlanFooter';
 export { ConcentrationStrip } from './ConcentrationStrip';
 
 // Types

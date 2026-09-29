@@ -23,7 +23,9 @@ import { QuadrantCard } from './QuadrantCard';
 import { ConcentrationStrip } from './ConcentrationStrip';
 import { NestedItemToOutlet } from './NestedItemToOutlet';
 import { GeneralizedNested } from './GeneralizedNested';
-import { ActionPlanFooter } from './ActionPlanFooter';
+// VAR12: ActionPlanFooter removed by user request ("hapus juga: Action
+// Plan — Prioritas Investigasi") — component file deleted; render site
+// below gone.
 import type { ParetoData, ParetoDimension, ParetoResult } from './types';
 
 export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
@@ -270,9 +272,6 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
 
       {/* Gap Analysis: Rank BOM vs Rank Nasional — full width */}
       <GapAnalysisCard data={analysisData} />
-
-      {/* Insight Footer — Action Plan */}
-      <ActionPlanFooter paretoData={paretoData} />
     </div>
   );
 }

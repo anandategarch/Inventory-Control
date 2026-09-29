@@ -11,7 +11,9 @@
 import { fmtDecimal, fmtIDR, fmtNum, fmtPct } from '@/lib/format';
 import type { RestoRecommendation } from '@/hooks/useRecommendations';
 import type { OutletHealthRanking } from '@/hooks/useAnalysis';
-import type { BenchmarkOpportunityResponse } from '@/components/dashboard/peer-comparison/benchmark-opportunity-card';
+// VAR12: the type moved to peer-comparison/types.ts (the card file was
+// deleted — "hapus section 'Peluang Perbaikan (Rp)'").
+import type { BenchmarkOpportunityResponse } from '@/components/dashboard/peer-comparison/types';
 import type { ChangeAnalysisResponse, ChangeOutletStat } from '@/components/dashboard/narrative/ChangeItemTable';
 import { healthScoreBg, healthScoreColor } from '@/components/dashboard/advanced-analysis/health-badges';
 import { COMPACT_MAX, levelBarCls, levelValueCls, type CompactRow, type Lens } from './lens-model';

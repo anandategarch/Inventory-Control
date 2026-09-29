@@ -6,10 +6,13 @@
 //
 //  All 3 analysis queries fire on mount (main + items in
 //  parallel; trend waits for peerCodes from main — stable peer
-//  set across weeks), plus the network-wide benchmark
-//  opportunity query. Derived state (peer set split, peer
+//  set across weeks). Derived state (peer set split, peer
 //  averages, pre-computed card values) is memoized here so the
 //  thin orchestrator stays readable.
+//
+//  VAR12: the network-wide benchmark-opportunity query
+//  ("Peluang Perbaikan (Rp)") was REMOVED by user request —
+//  together with its card + fetch.
 //
 //  Hooks are unconditional — the original component called all
 //  of these BEFORE its `!activeOutlet` early return; the hook
@@ -19,7 +22,6 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import type { ItemComparisonResponse, TrendResponse, PeerAverages, PeerRow, PeerTopItemsResponse } from '@/components/dashboard/peer-comparison/types';
-import type { BenchmarkOpportunityResponse } from '@/components/dashboard/peer-comparison/benchmark-opportunity-card';
 import {
   computePeerEfficiencyScore,
   computePeerGapRows,
@@ -180,43 +182,11 @@ export function usePeerQueries({ activeOutlet, monthLabel, currentWeek, kelompok
     gcTime: 10 * 60_000,
   });
 
-  // Benchmark Opportunity query (ANA-1-E — "Peluang Perbaikan (Rp)").
-  // Network-wide per-area metric: does NOT depend on the target outlet or
-  // its peer set, so the queryKey omits activeOutlet (switching focus outlet
-  // re-uses the same cache entry — the number is identical by definition).
-  // Fires in parallel with main/items (independent inputs: month/week/kelompok).
-  const { data: opportunityData, isLoading: opportunityLoading, error: opportunityError, refetch: refetchOpportunity } = useQuery({
-    queryKey: ['peer-comparison', 'benchmark-opportunity', monthLabel, currentWeek, kelompok],
-    queryFn: async () => {
-      // Guard instead of non-null assertion — `enabled` guarantees both are
-      // defined by the time this runs, but the runtime check keeps TS strict
-      // happy without adding a new lint warning.
-      if (!monthLabel || !currentWeek) throw new Error('Periode belum dipilih');
-      const p = new URLSearchParams();
-      p.set('month', monthLabel);
-      if (currentWeek) p.set('week', currentWeek);
-      // Same kelompok scoping as the sibling peer modules.
-      if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
-      const res = await fetch(`/api/benchmark-opportunity?${p.toString()}`);
-      const ct = res.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) throw new Error('Server error');
-      // FIX (BUG-H cross-domain): see main query — JSON error body must not
-      // become query data.
-      if (!res.ok) {
-        const e = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(e?.error || `HTTP ${res.status}`);
-      }
-      return res.json() as Promise<BenchmarkOpportunityResponse>;
-    },
-    enabled: Boolean(monthLabel && currentWeek),
-    // PERF-FE (PAKET A): same staleTime/gcTime as the sibling peer queries —
-    // data only changes on ingest / manual refresh, not every 30s.
-    staleTime: 5 * 60_000,
-    gcTime: 10 * 60_000,
-    // keepPreviousData so month/week switches keep the old number visible
-    // while the new one loads (same as the main query).
-    placeholderData: keepPreviousData,
-  });
+  // Benchmark Opportunity query (ANA-1-E — "Peluang Perbaikan (Rp)") —
+  // REMOVED by user request (VAR12: "hapus section 'Peluang Perbaikan
+  // (Rp)'"). The card, its render sites (tab grid + no-outlet state) and
+  // this fetch are gone; /api/benchmark-opportunity remains a public API
+  // but no UI consumer calls it anymore.
 
   // Top Items query (PEERTOP-2) — "top item di tiap peer": each peer
   // outlet's own top-N items + the cross-peer union. Independent inputs
@@ -330,11 +300,6 @@ export function usePeerQueries({ activeOutlet, monthLabel, currentWeek, kelompok
     topItemsData,
     topItemsLoading,
     topItemsError,
-    // Benchmark opportunity query
-    opportunityData,
-    opportunityLoading,
-    opportunityError,
-    refetchOpportunity,
     // Pre-computed card values
     peerAverages,
     efficiencyScore,

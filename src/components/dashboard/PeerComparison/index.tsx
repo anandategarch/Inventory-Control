@@ -34,7 +34,6 @@ import {
   ScatterPlotCard,
   RankingSummaryCard,
 } from '@/components/dashboard/shared/peer-comparison-cards';
-import { BenchmarkOpportunityCard } from '@/components/dashboard/peer-comparison/benchmark-opportunity-card';
 import { ItemLevelComparison } from '@/components/dashboard/peer-comparison/items-table';
 import { TopItemsAcrossPeers } from '@/components/dashboard/peer-comparison/top-items-card';
 import { TrendChartCard } from '@/components/dashboard/peer-comparison/trend-chart';
@@ -70,19 +69,11 @@ export function PeerComparison() {
     itemsData, itemsLoading, itemsError,
     trendData, trendLoading, trendError,
     topItemsData, topItemsLoading, topItemsError,
-    opportunityData, opportunityLoading, opportunityError, refetchOpportunity,
     peerAverages, efficiencyScore, gapRows, scatterPoints, rankData,
   } = usePeerQueries({ activeOutlet, monthLabel, currentWeek, kelompok });
 
   if (!activeOutlet) {
-    return (
-      <NoOutletCard
-        opportunityData={opportunityData}
-        opportunityLoading={opportunityLoading}
-        opportunityError={opportunityError}
-        onRetryOpportunity={refetchOpportunity}
-      />
-    );
+    return <NoOutletCard />;
   }
 
   return (
@@ -163,17 +154,6 @@ export function PeerComparison() {
             ]}
           />
         )}
-        {/* ANA-1-E (Benchmark Opportunity): measured Rp gap vs area median.
-            Always rendered (self-managed loading/error/empty) — the metric
-            is network-wide, so it stays useful even when the target has no
-            peers and the four cards above are hidden. Also rendered in the
-            !activeOutlet early-return above (FIX BUG-2-a #10). */}
-        <BenchmarkOpportunityCard
-          data={opportunityData}
-          isLoading={opportunityLoading}
-          error={opportunityError}
-          onRetry={refetchOpportunity}
-        />
       </div>
 
       {/* ============ 6. PEER TABLE + ANOMALY FLAGS (Feature 5) ============ */}

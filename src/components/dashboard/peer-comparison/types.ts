@@ -139,3 +139,36 @@ export interface TrendResponse {
 
 /** Per-peer average object keyed by PeerRow field name. */
 export type PeerAverages = Record<string, number>;
+
+// ============================================================
+//  Benchmark Opportunity — /api/benchmark-opportunity types
+//  --------------------------------------------------------
+//  VAR12: moved from ./benchmark-opportunity-card.tsx (deleted by
+//  user request — "hapus section 'Peluang Perbaikan (Rp)'" —
+//  together with the card + the Peer tab's fetch). The API + these
+//  types stay: the narrative OutletPriorityPanel's "Peluang Rp"
+//  lens is another live consumer of the same endpoint.
+// ============================================================
+
+/** One outlet row of /api/benchmark-opportunity's topOutlets. */
+export interface BenchmarkOpportunityOutlet {
+  outletCode: string;
+  outletName: string;
+  area: string;
+  lossNominal: number;
+  areaMedianLoss: number;
+  opportunityRp: number;
+  devBom: number;
+}
+
+/** Response shape of `/api/benchmark-opportunity`. */
+export interface BenchmarkOpportunityResponse {
+  success: boolean;
+  error?: string;
+  period?: { month: string | null; week: string | null };
+  totalOpportunityRp: number;
+  areaCount: number;
+  topOutlets: BenchmarkOpportunityOutlet[];
+  cached?: boolean;
+  stale?: boolean;
+}

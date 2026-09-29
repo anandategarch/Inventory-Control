@@ -178,7 +178,12 @@ export function useDashboardActions({
       // "harusnya selisih dikit") + q-flip-rank limit 10→200 (limit is in
       // the cache key; sv stays 2). Keep in sync with the rv extra in
       // /api/export-report.
-      params.set('rv', '14');
+      // VAR12: rv 15 — section 6.3 "Analisis Pola Item (Massal / Regional /
+      // Lokal)" baru di PDF (user: "Analisis Pola item masukin juga ke pdf
+      // terutama bagian anomali item"; queryItemConsistency langsung — no
+      // new q-* namespace). Keep in sync with the rv extra in
+      // /api/export-report.
+      params.set('rv', '15');
 
       // FIX (BUG-3-b A3): AbortController + 120s timeout — a hung export no
       // longer spins forever; the fetch is aborted and the user gets a

@@ -23,6 +23,10 @@ import {
   // EXPORT-PDF: the item-trend matrix section query (re-exported via the
   // queries barrel).
   queryItemTrendMatrix,
+  // VAR12 — section 6.3 "Analisis Pola Item" (dashboard's
+  // ItemConsistencyAnalysis widget carried into the PDF; re-exported via
+  // the queries barrel).
+  queryItemConsistency,
 } from '@/lib/queries';
 // REFINE-1: section 8 flip items (renamed "Item yang Kemungkinan Plus Minus
 // antar Periode") — not in the queries barrel; direct module import.
@@ -79,6 +83,13 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
     // REFINE-1 — per-(item, area) category averages for the "Rata-rata
     // Area" column in 3.3-3.6 (empty Map when topItems is off).
     areaCatAvgMap,
+    // VAR12 — section 6.3 "Analisis Pola Item": per-item outlet-count
+    // pattern rows. Called DIRECTLY (uncached) — the exact precedent of
+    // the analysis pipeline (run-queries.ts runs queryItemConsistency
+    // uncached too: one light GROUP BY). No new q-* namespace → no
+    // invalidation-array coupling; the route-level rv-keyed PDF cache
+    // already dedupes repeat exports.
+    consistencyRows,
   ] = await Promise.all([
     // PERF (TAHAP-2 / P2-9): kpis + trendAgg + category tops use the shared
     // per-query cache (same queryIds as the analysis pipeline).
@@ -257,6 +268,11 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
       { month, week, filters: { area: filterOpts.area }, extra: {} },
       () => queryAreaCategoryAvg(week, month, filterOpts.area),
     ) : Promise.resolve(new Map<string, AreaCategoryAvg>()),
+    // VAR12 — section 6.3 "Analisis Pola Item": the full pattern ranking
+    // (ALL items with a deviation in the period — the query has no limit
+    // param; the PDF section slices its own top rows). Gated on the
+    // anomali section because 6.3 renders inside section 6.
+    needAnomali ? queryItemConsistency(week, month, filterOpts) : Promise.resolve([]),
   ]);
 
   ctx.kpis = kpis;
@@ -275,4 +291,5 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
   ctx.weeklyCompRes = weeklyCompRes;
   ctx.flipRankingRes = flipRankingRes;
   ctx.areaCatAvgMap = areaCatAvgMap;
+  ctx.consistencyRows = consistencyRows;
 }
