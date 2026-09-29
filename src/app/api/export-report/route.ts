@@ -196,7 +196,11 @@ export async function GET(req: NextRequest) {
         // cover) kini MAGNITUDE growth (calcGrowthAbs) — signed formula
         // + goodUp=false membalik warna di sisi loss (rasio memburuk
         // dicetak hijau ▼). Included in the same rv 12 bump.
-        rv: '12',
+        // VAR10 (user: "item memburuk dan membaik nya kasih menjadi 10
+        // item dari yang sebelumnya 5 item"): tabel 4.1 Memburuk & 4.2
+        // Membaik di laporan PDF kini menampilkan 10 item per sisi (was 5)
+        // — q-variance sv 2→3 + SQL/jS caps 5→10. rv 12 → 13, both sides.
+        rv: '13',
         // FIX (STALE-PDF, systematic hardening — same incident as the missing
         // PEERTOP rv bump): the SWR store serves EXPIRED rows unbounded (see
         // swr.ts 3b), so a forgotten `rv` bump means a pre-deploy PDF can be

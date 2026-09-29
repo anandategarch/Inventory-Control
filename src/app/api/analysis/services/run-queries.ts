@@ -155,7 +155,9 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
     // REFINE-2: sv forks a fresh cache namespace — the row shape gained
     // `satuan` (export tables 4.1/4.2 "Satuan" column). Bumped HERE TOO so
     // the analysis pipeline + export route share ONE cache namespace.
-    { month, week, compareWeek: prevWeek, compareMonth: prevMonth, filters: filterOpts, extra: { sv: 2 } },
+    // VAR10: sv 2 → 3 — top-10 + top-10 rows now (was 5+5); keep in sync
+    // with record-guard.ts in /api/export-report.
+    { month, week, compareWeek: prevWeek, compareMonth: prevMonth, filters: filterOpts, extra: { sv: 3 } },
     () => queryVarianceAnalysis(week, month, prevWeek, prevMonth, filterOpts),
   );
   const growthDriversPromise = queryGrowthDrivers(week, month, prevWeek, prevMonth, filterOpts);

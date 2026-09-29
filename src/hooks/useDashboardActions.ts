@@ -168,7 +168,10 @@ export function useDashboardActions({
       // 4.1/4.2 nominal columns, 6.1/6.2 signed columns, 8.2 QTY columns
       // (8.3 already was minus-red). The S7 trend table now agrees with
       // its own red diverging bars. Render-only — no data change.
-      params.set('rv', '12');
+      // VAR10: rv 13 — tabel 4.1 Memburuk & 4.2 Membaik kini 10 item per
+      // sisi (was 5; user request). Data + render change (q-variance sv
+      // 2→3). Keep in sync with the rv extra in /api/export-report.
+      params.set('rv', '13');
 
       // FIX (BUG-3-b A3): AbortController + 120s timeout — a hung export no
       // longer spins forever; the fetch is aborted and the user gets a

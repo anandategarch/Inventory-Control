@@ -1,5 +1,9 @@
 // ============================================================
 //  4 — PERUBAHAN ITEM (MEMBURUK / MEMBAIK)  (EXPORT-TRIM: was 8)
+//  VAR10 (user: "item memburuk dan membaik nya kasih menjadi 10 item
+//  dari yang sebelumnya 5 item"): queryVarianceAnalysis kini memasok
+//  top-10 + top-10 (was top-5 + top-5) — tabel 4.1/4.2 dan grafik batang
+//  otomatis mengikuti (chart memang sudah slice(0,10)).
 // ============================================================
 import { fmtIDR } from '../../format-helpers';
 import { hBarChart } from '../pdf-charts';

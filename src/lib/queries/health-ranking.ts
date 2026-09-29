@@ -15,8 +15,9 @@
 //    - JOIN current + prev per (outletId, itemId, akunPenyesuaian)
 //    - Computes selisih (signed delta), delta (abs delta), direction,
 //      varianceDirection
-//    - Returns ≤10 rows (top 5 worsened + top 5 improved via ROW_NUMBER
-//      windows — FIX AUDIT-PERF-4; was ~5K rows with JS sort+slice)
+//    - Returns ≤20 rows (top 10 worsened + top 10 improved via ROW_NUMBER
+//      windows — FIX AUDIT-PERF-4; VAR10 widened 5→10 per user request;
+//      was ~5K rows with JS sort+slice)
 //
 //  queryHistoricalCriticalItems:
 //    - Fetches per-record fields (itemName, outletCode, area,
@@ -99,13 +100,15 @@ export async function queryOutletHealthRanking(
 
 // ============================================================
 //  Variance Analysis — JOIN curr + prev per (outlet, item, akun)
-//  FIX (AUDIT-PERF-4): top-N pushdown — transfers 10 rows instead of
+//  FIX (AUDIT-PERF-4): top-N pushdown — transfers 20 rows instead of
 //  ~20-35K. The full joined row set was only ever used to sort + slice
-//  top 5 worsened + top 5 improved (verified consumers: assemble-response
+//  top 10 worsened + top 10 improved (verified consumers: assemble-response
 //  passes {topWorsened, topImproved} through verbatim; export-report's
 //  docx-builder reads va.topWorsened.slice(0,10)). The ROW_NUMBER windows
-//  (rw = worst-first, ri = improved-first) now enforce the same top-5 +
-//  top-5 cap in SQL; JS still sorts/slices the ≤10 returned rows.
+//  (rw = worst-first, ri = improved-first) now enforce the same top-10 +
+//  top-10 cap in SQL; JS still sorts/slices the ≤20 returned rows.
+//  VAR10 (user: "item memburuk dan membaik nya kasih menjadi 10 item dari
+//  yang sebelumnya 5 item"): caps widened 5→10 on both sides.
 // ============================================================
 export interface VarianceRow {
   itemName: string;
@@ -147,7 +150,7 @@ export async function queryVarianceAnalysis(
   // rw = ROW_NUMBER(ORDER BY delta DESC) and ri = ROW_NUMBER(ORDER BY delta ASC)
   // (both with "itemName"/"outletCode" tie-breaks so results are deterministic
   // across requests — the old JS sort kept DB order for ties, which was
-  // nondeterministic). Only rows in either top-5 leave the database.
+  // nondeterministic). Only rows in either top-10 leave the database.
   const rows = await withStatementTimeout((tx) => tx.$queryRaw<VarianceRow[]>`
     WITH variance AS (
     SELECT
@@ -204,7 +207,7 @@ export async function queryVarianceAnalysis(
       "itemName", "outletCode", "area", "satuan", "currentNominal", "previousNominal", "selisih",
       "currentAbsNominal", "previousAbsNominal", "delta", "direction", "varianceDirection"
     FROM ranked
-    WHERE rw <= 5 OR ri <= 5
+    WHERE rw <= 10 OR ri <= 10
     ORDER BY "delta" DESC, "itemName", "outletCode"
   `);
 
@@ -223,12 +226,13 @@ export async function queryVarianceAnalysis(
     varianceDirection: r.varianceDirection,
   }));
 
-  // Sort + slice — rows arrive pre-filtered to the union of both top-5s
-  // (≤10 rows), so this is now a cheap no-op-cost ordering over 10 rows.
+  // Sort + slice — rows arrive pre-filtered to the union of both top-10s
+  // (≤20 rows), so this is now a cheap no-op-cost ordering over 20 rows.
   // Matches existing computeVarianceAnalysis exactly: topWorsened = largest
   // positive delta (abs deviation grew), topImproved = most negative delta.
-  const topWorsened = [...typed].sort((a, b) => b.delta - a.delta).slice(0, 5);
-  const topImproved = [...typed].sort((a, b) => a.delta - b.delta).slice(0, 5);
+  // VAR10: 5 → 10 per side.
+  const topWorsened = [...typed].sort((a, b) => b.delta - a.delta).slice(0, 10);
+  const topImproved = [...typed].sort((a, b) => a.delta - b.delta).slice(0, 10);
   return { topWorsened, topImproved };
 }
 

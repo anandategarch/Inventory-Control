@@ -171,13 +171,14 @@ describe('queryVarianceAnalysis', () => {
     expect(r.topWorsened[0].itemName).toBe('Bahan A');
     // FIX (AUDIT-PERF-4): top-N pushdown — verify the new SQL shape. The original
     // SELECT lives in a `variance` CTE; `ranked` computes rw (delta DESC) + ri
-    // (delta ASC) with deterministic tie-breaks; only the top-5 union egresses.
+    // (delta ASC) with deterministic tie-breaks; only the top-10 union egresses
+    // (VAR10: caps widened 5→10 per user request — tables 4.1/4.2 Memburuk/Membaik).
     const call = mockQueryRaw.mock.calls[0][0];
     const sqlText = Array.isArray(call) ? call.join('$PARAM$') : String(call);
     expect(sqlText).toContain('WITH variance AS');
     expect(sqlText).toContain('ROW_NUMBER() OVER (ORDER BY v."delta" DESC, v."itemName", v."outletCode")');
     expect(sqlText).toContain('ROW_NUMBER() OVER (ORDER BY v."delta" ASC, v."itemName", v."outletCode")');
-    expect(sqlText).toContain('WHERE rw <= 5 OR ri <= 5');
+    expect(sqlText).toContain('WHERE rw <= 10 OR ri <= 10');
   });
 });
 

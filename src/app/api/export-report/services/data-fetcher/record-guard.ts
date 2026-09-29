@@ -37,7 +37,11 @@ export async function ensureRecordsExist(ctx: FetcherContext): Promise<void> {
           // REFINE-2: sv forks a fresh cache namespace — the row shape gained
           // `satuan` (tables 4.1/4.2's new "Satuan" column); cached rows from
           // the previous deploy lack it and would render '—' for a TTL cycle.
-          { month, week, compareWeek: prevWeek, compareMonth: prevMonth, filters: filterOpts, extra: { sv: 2 } },
+          // VAR10: sv 2 → 3 — the query now returns top-10 + top-10 (was
+          // top-5 + top-5); cached rows from the previous deploy hold only
+          // 5 rows per side and would keep rendering 5-item tables 4.1/4.2
+          // for a TTL cycle after the deploy.
+          { month, week, compareWeek: prevWeek, compareMonth: prevMonth, filters: filterOpts, extra: { sv: 3 } },
           () => queryVarianceAnalysis(week, month, prevWeek, prevMonth, filterOpts),
         )
       : Promise.resolve({ topWorsened: [], topImproved: [] }),
