@@ -165,6 +165,13 @@ export async function invalidateAnalysisCache(): Promise<void> {
     // \x1f sentinel right after 'q-peer-cmp' doesn't match the '-' in
     // 'q-peer-cmp-items', so it needs its own entry.)
     'q-flip-rank', 'q-peer-cmp', 'q-peer-cmp-items', 'q-area-catavg',
+    // DEEP-RESTO-1: the Resto tab's multi-month views — the monthly series
+    // reads per-(outlet, month) same-week aggregates + OutletPeriodSales,
+    // and the track-record ranks ALL outlets inside a dynamic ±10% sales
+    // band per month. Ingest/settings/pic/delete/migrate mutations affect
+    // both (new month rows, changed sales, changed deviation sums), so
+    // their 5-min TTL rows must die on every mutation like the siblings.
+    'outlet-monthly-series', 'peer-track-record',
     // REFINE-3: the export's own-history anomaly ranking + weekly category
     // composition — same rule: mutations must kill these rows or the export
     // serves pre-mutation data for up to 30 min.

@@ -25,6 +25,10 @@ export * from './outlets/resto-recommendations';
 // ANA-1-D: outlet recurrence/persistence history (additive `history` field
 // for /api/recommendations — no interaction with the existing queries).
 export * from './outlets/outlet-recurrence';
+// DEEP-RESTO-1: multi-month same-week series + dynamic peer-band rank
+// track-record for ONE outlet (Resto tab "Riwayat Multi-Bulan" section —
+// /api/outlet-monthly-series + /api/peer-track-record).
+export * from './outlets/outlet-monthly-series';
 export * from './areas';
 export * from './historical';
 // SQL-OPTIMIZE: pushed computeOutletHealthRanking + computeVarianceAnalysis +

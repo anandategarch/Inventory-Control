@@ -178,6 +178,27 @@ export const peerComparisonTrendQuerySchema = z.object({
   kelompok: kelompokSchema,
 });
 
+// /api/outlet-monthly-series?outletCode=&month=&week=
+// DEEP-RESTO-1: multi-month same-week series for ONE outlet (sales MoM,
+// dev/BOM, loss/surplus, net cost ratio, recurrence-style abnormal flag).
+// `month` resolves the running month (window upper bound, inclusive).
+export const outletMonthlySeriesQuerySchema = z.object({
+  outletCode: z.string().min(1).max(50),
+  month: monthLabelSchema,
+  week: weekLabelSchema,
+});
+
+// /api/peer-track-record?outletCode=&month=&week=&kelompok=
+// DEEP-RESTO-1: per-month rank of the outlet inside its dynamic ±10%
+// sales band (net deviation + total loss) over the same window.
+// kelompok scopes the PEER set only — the focus outlet is always included.
+export const peerTrackRecordQuerySchema = z.object({
+  outletCode: z.string().min(1).max(50),
+  month: monthLabelSchema,
+  week: weekLabelSchema,
+  kelompok: kelompokSchema,
+});
+
 // /api/peer-comparison/top-items?outletCode=&month=&week=&kelompok=
 // PEERTOP-1 — per-peer top-N items + cross-peer union. topN/limit/mode are
 // parsed + clamped manually in the route (same style as the items route's

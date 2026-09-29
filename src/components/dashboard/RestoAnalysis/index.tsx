@@ -18,7 +18,7 @@
 
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
-import { Gauge, Store } from 'lucide-react';
+import { Gauge, Store, History } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { PrioritySummaryCard } from '@/components/dashboard/PrioritySummaryCard';
@@ -40,6 +40,9 @@ import { NoOutletCard, NoPeriodCard, LoadingCard, ErrorCard } from './state-card
 import { OutletHeaderCard } from './outlet-header-card';
 import { ProfileCards } from './profile-cards';
 import { BahanAnalysisCard } from './bahan-analysis-card';
+// DEEP-RESTO-1: multi-month same-week views (self-fetching cards).
+import { MonthlySeriesCard } from '@/components/dashboard/resto-analysis/monthly-series-card';
+import { PeerTrackRecordCard } from '@/components/dashboard/resto-analysis/peer-track-record-card';
 
 // Backward-compat re-exports (no external file imports types from here today,
 // but keep them exported so future imports don't break).
@@ -236,6 +239,31 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
           notice takes their place instead of the old `as`-cast TypeError
           that killed the whole Resto tab. */}
       <ProfileCards profile={profile} allItems={data.allItems} />
+
+      {/* DEEP-RESTO-1: Riwayat Multi-Bulan — deret bulanan same-week +
+          track-record rank di band sales setara, maks 12 bulan terakhir
+          (termasuk bulan berjalan). Kedua card self-fetch — independen
+          dari payload outlet-items, jadi tetap render saat profil parsial. */}
+      <SectionHeader
+        icon={<History className="h-4 w-4 text-muted-foreground" />}
+        title="Riwayat Multi-Bulan"
+        description="Bagaimana pergerakan bulan-ke-bulan outlet terpilih (same-week) dan posisinya vs resto sales setara?"
+      />
+      {activeOutlet && (
+        <MonthlySeriesCard
+          outletCode={activeOutlet}
+          monthLabel={monthLabel || ''}
+          currentWeek={currentWeek || ''}
+        />
+      )}
+      {activeOutlet && (
+        <PeerTrackRecordCard
+          outletCode={activeOutlet}
+          monthLabel={monthLabel || ''}
+          currentWeek={currentWeek || ''}
+          kelompok={kelompok}
+        />
+      )}
 
       {/* Menu Analysis — Phase 3: Group by menu + outlier detection */}
       {activeOutlet && (
