@@ -200,7 +200,16 @@ export async function GET(req: NextRequest) {
         // item dari yang sebelumnya 5 item"): tabel 4.1 Memburuk & 4.2
         // Membaik di laporan PDF kini menampilkan 10 item per sisi (was 5)
         // — q-variance sv 2→3 + SQL/jS caps 5→10. rv 12 → 13, both sides.
-        rv: '13',
+        // VAR11 (user: "Akumulasi Mingguan — Total Deviasi apakah total
+        // abs? aku mau sum nilai asli / signed" + "section 9 selisihnya
+        // banyak, harusnya selisih dikit"): (a) chart Akumulasi Mingguan
+        // kini akumulasi SIGNED (nominalDeviasi, konvensi KPI — was
+        // absTotal magnitude); (b) section 9 Plus Minus kini re-ranked by
+        // pair BALANCE (disparityPct ASC — was riskScore order yang
+        // menampilkan Net besar seperti -41.335) + q-flip-rank limit
+        // 10 → 200 (limit termasuk cache key — sv tetap 2, row shape
+        // tak berubah). rv 13 → 14, both sides.
+        rv: '14',
         // FIX (STALE-PDF, systematic hardening — same incident as the missing
         // PEERTOP rv bump): the SWR store serves EXPIRED rows unbounded (see
         // swr.ts 3b), so a forgotten `rv` bump means a pre-deploy PDF can be

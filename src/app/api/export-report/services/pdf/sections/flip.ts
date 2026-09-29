@@ -8,6 +8,18 @@
 //  consecutive same-week periods (e.g. +100 in Jul W4 → -98 in Agu W4):
 //  QTY Deviasi positive = green (plus), negative = red (minus); Net near
 //  zero = the reversal is nearly symmetrical.
+//  VAR11 (user: "ini juga kok selisih nya banyak ya? harusnya selisih
+//  dikit"): the section's row order no longer follows the query's
+//  riskScore (volume-of-flips — an item with MANY badly-balanced parsial
+//  flips outranked an item with ONE nearly-perfect reversal, so the PDF
+//  showed huge Nets like -41.335 next to a "plus minus" title). The
+//  export now re-ranks the FULL candidate pool by BALANCE: the item's
+//  best pair (topFlips[0] — already lowest-disparity) sorted by
+//  disparityPct ASC, tie-broken by |Net| ASC — the displayed rows are
+//  the items whose reversal selisih is SMALLEST, which is the pattern
+//  the section exists to flag. queryFlipRanking itself (and the
+//  frontend's risk panel) still sorts by riskScore — only the PDF's
+//  presentation order changed (see query-batch.ts limit 10 → 200).
 //  REFINE-4 (user: "SATUAN PERIODE 1 QTY DEVIASI P1 PERIODE 2 QTY
 //  DEVIASI P2 gak perlu pakai P1 atau P2 langsung aja tampilkan periode
 //  nya di header sama seperti section lainnya"): the rows are GROUPED
@@ -25,7 +37,25 @@ export function drawFlipSection(env: SectionEnv): void {
   if (!hasSection('flip')) return;
   rpt.sectionHeader(9, 'Item yang Kemungkinan Plus Minus antar Periode');
   const fr = data.flipRanking;
-  const flipRows = (fr?.items ?? []).filter((it) => it.topFlips.length > 0).slice(0, 10);
+  // VAR11: rank by BALANCE, not risk volume. fr.items arrives sorted by
+  // riskScore DESC (the query's/frontend's convention — left untouched);
+  // re-sort a copy by the item's best pair: disparityPct ASC (most
+  // balanced reversal first), tie-break |net| ASC (smallest absolute
+  // selisih), then itemName for a deterministic order. Filtering out
+  // topFlips-less items first — they have nothing to display.
+  const flipRows = (fr?.items ?? [])
+    .filter((it) => it.topFlips.length > 0)
+    .slice()
+    .sort((a, b) => {
+      const fa = a.topFlips[0];
+      const fb = b.topFlips[0];
+      if (fa.disparityPct !== fb.disparityPct) return fa.disparityPct - fb.disparityPct;
+      const na = Math.abs(fa.net);
+      const nb = Math.abs(fb.net);
+      if (na !== nb) return na - nb;
+      return a.itemName.localeCompare(b.itemName);
+    })
+    .slice(0, 10);
   if (flipRows.length === 0) {
     rpt.noteBox('Tidak ada item dengan pola plus minus antar periode pada scope ini.');
     return;

@@ -171,7 +171,14 @@ export function useDashboardActions({
       // VAR10: rv 13 — tabel 4.1 Memburuk & 4.2 Membaik kini 10 item per
       // sisi (was 5; user request). Data + render change (q-variance sv
       // 2→3). Keep in sync with the rv extra in /api/export-report.
-      params.set('rv', '13');
+      // VAR11: rv 14 — (a) chart "Akumulasi Mingguan — Total Deviasi" kini
+      // akumulasi SIGNED nominalDeviasi (user: "aku mau sum nilai asli /
+      // signed" — was absTotal magnitude); (b) section 9 Plus Minus kini
+      // re-ranked by pair BALANCE (disparityPct ASC — Net kecil, user:
+      // "harusnya selisih dikit") + q-flip-rank limit 10→200 (limit is in
+      // the cache key; sv stays 2). Keep in sync with the rv extra in
+      // /api/export-report.
+      params.set('rv', '14');
 
       // FIX (BUG-3-b A3): AbortController + 120s timeout — a hung export no
       // longer spins forever; the fetch is aborted and the user gets a

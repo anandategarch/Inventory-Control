@@ -233,12 +233,20 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
     // Scoped to the exported week + month (flips involving the selected
     // month). Filters follow the dashboard scope (area/kelompok/outlet/pic);
     // itemName is ignored by the query itself (it scans all items).
+    // VAR11: limit 10 → 200 — the PDF section no longer displays the
+    // query's riskScore order (volume-of-flips surfaced badly-balanced
+    // pairs with huge Nets); it re-ranks by pair BALANCE (disparityPct
+    // ASC, see pdf/sections/flip.ts), which needs the FULL candidate
+    // pool (~all items — a top-10 risk slice could exclude an item with
+    // ONE nearly-perfect reversal because 10 noisier items outscored it).
+    // `limit` is part of the cache key (extra) → this forks a fresh
+    // q-flip-rank entry; sv stays 2 (row shape unchanged).
     needFlip ? cachedSharedQuery(
       'q-flip-rank',
       // REFINE-2: sv — row shape gained `satuan` (the flip section's "Satuan"
       // column); see the q-variance note in ./record-guard.ts.
-      { month, week, filters: filterOpts, extra: { limit: 10, weekLabel: week, sv: 2 } },
-      () => queryFlipRanking(filterOpts, week, month, 10),
+      { month, week, filters: filterOpts, extra: { limit: 200, weekLabel: week, sv: 2 } },
+      () => queryFlipRanking(filterOpts, week, month, 200),
     ) : Promise.resolve(null),
     // REFINE-1 — per-(item, area) category averages (current period).
     // Scoped by area ONLY: the benchmark is the whole area population

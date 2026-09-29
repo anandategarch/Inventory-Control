@@ -108,12 +108,22 @@ export function drawTrendSection(env: SectionEnv): void {
     rpt.y += 140 + 16;
 
     // REFINE-3 (user: "Tren akumulasi mingguan (Week 1+2+…)"): running
-    // total of the month's deviation magnitude — bar j is the cumulative
-    // absTotal of weeks 1..j ("W1+2+…"), so the last bar is the
-    // month-to-date total as of the exported week (highlighted by
-    // barChartV's default last-bar emphasis).
+    // total of the month's deviation — bar j is the cumulative total of
+    // weeks 1..j ("W1+2+…"), so the last bar is the month-to-date figure
+    // as of the exported week (highlighted by barChartV's default
+    // last-bar emphasis).
+    // VAR11 (user: "Total Deviasi apakah total abs? aku mau sum nilai
+    // asli / signed"): the accumulation now runs on nominalDeviasi — the
+    // SIGNED per-week net (the KPI "Nominal Deviasi" convention) — NOT
+    // absTotal. Bar j = cumulative SIGNED net of weeks 1..j; the last
+    // bar = month-to-date NET deviation. A loss-heavy month now visibly
+    // accumulates downward instead of hiding behind magnitude totals:
+    // barChartV's diverging axis renders a negative cumulative net as a
+    // danger-red bar BELOW the zero baseline (the same convention as the
+    // "Nominal Deviasi per Periode" chart above — table, charts, and KPI
+    // all tell one signed story).
     let acc = 0;
-    const cum = wc.map((r) => { acc += r.absTotal; return acc; });
+    const cum = wc.map((r) => { acc += r.nominalDeviasi; return acc; });
     const cumLabels = wc.map((_r, j) => 'W' + wc.slice(0, j + 1).map((r) => r.weekNo).join('+'));
     rpt.ensure(160);
     rpt.subhead('Akumulasi Mingguan — Total Deviasi (Rp)', { size: 8.5, gapAfter: 2 });
