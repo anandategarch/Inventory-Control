@@ -51,8 +51,10 @@ import { buildDisplayRows } from './build-display-rows';
 import { CompactRowView, PulseRow } from './compact-row';
 
 export const OutletPriorityPanel = memo(function OutletPriorityPanel({ data }: { data: AnalysisData }) {
-  const { outletCode, kelompok, monthLabel, currentWeek, setFocusOutlet } = useDashboard(useShallow((s) => ({
-    outletCode: s.outletCode,
+  // FILTERDROP-1 (opsi A): outletCode removed — the global outlet filter no
+  // longer exists; the Prioritas lens always uses the GLOBAL recommendations
+  // scope (useRecommendations(null)), same as ExecutiveStatus.
+  const { kelompok, monthLabel, currentWeek, setFocusOutlet } = useDashboard(useShallow((s) => ({
     kelompok: s.kelompok,
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
@@ -81,7 +83,7 @@ export const OutletPriorityPanel = memo(function OutletPriorityPanel({ data }: {
     healthRanking,
     oppResp, oppLoading, oppError, oppRefetch, opportunities,
     chgResp, chgLoading, chgError, chgRefetch, changeOutlets,
-  } = useLensData({ lens, data, outletCode, monthLabel, currentWeek, kelompok });
+  } = useLensData({ lens, data, monthLabel, currentWeek, kelompok });
 
   // ------------------------------------------------------------
   //  Display rows per lens + shared mini-bar scale.

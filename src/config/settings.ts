@@ -1,27 +1,10 @@
 // ============================================================
 //  CFG_STATUS_RECON — Status label configuration
 //  (Mirrors concept from Power Query design; kept for compatibility)
+//  FILTERDROP-1 dead-code audit: CFG_STATUS_LABELS REMOVED — zero
+//  consumers repo-wide (status labels are emitted by the SQL rule
+//  engine directly; flagged "delete" in FINAL-SECURITY-14, never done).
 // ============================================================
-export const CFG_STATUS_LABELS = {
-  // Direction labels
-  LOSS: 'LOSS',
-  SURPLUS: 'SURPLUS',
-  NEUTRAL: 'NEUTRAL',
-
-  // Severity labels
-  NORMAL: 'NORMAL',
-  WARNING: 'WARNING',
-  ABNORMAL: 'ABNORMAL',
-
-  // Status fallbacks
-  NO_RULE_STATUS: 'RULE TIDAK DITEMUKAN',
-  INSUFFICIENT_EVIDENCE: 'Insufficient evidence — further investigation required',
-
-  // Health labels
-  HEALTHY: 'HEALTHY',
-  NEEDS_ATTENTION: 'NEEDS ATTENTION',
-  CRITICAL: 'CRITICAL',
-} as const;
 
 // ============================================================
 //  CFG_RECON_SETTINGS — behavioral config

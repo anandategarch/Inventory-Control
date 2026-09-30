@@ -7,23 +7,21 @@
 // ============================================================
 
 export { EfficiencyScoreCard } from './efficiency-score-card';
-export type { EfficiencyScoreCardProps } from './efficiency-score-card';
 
 export { GapAnalysisCard } from './gap-analysis-card';
-export type { GapAnalysisCardProps } from './gap-analysis-card';
 
 export { ScatterPlotCard } from './scatter-plot-card';
-export type { ScatterPlotCardProps } from './scatter-plot-card';
 
 export { RankingSummaryCard } from './ranking-summary-card';
-export type { RankingSummaryCardProps } from './ranking-summary-card';
 
 export { AnomalyFlags, computeAnomalyFlags } from './anomaly-flags';
-export type { AnomalyFlagsProps, ComputeAnomalyFlagsOpts } from './anomaly-flags';
 
+// FILTERDROP-1 dead-code audit: the *Props type re-exports above and the
+// BasePeerRow/BasePeerAverages names were REMOVED — zero barrel-path
+// consumers (cards are imported by value; GapRow/RankItem/ScatterPoint/
+// AnomalyFlag types ARE imported via this barrel by card-compute.ts +
+// peer-computation.ts).
 export type {
-  BasePeerRow,
-  BasePeerAverages,
   AnomalyFlag,
   GapRow,
   ScatterPoint,

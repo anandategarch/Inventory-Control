@@ -7,11 +7,9 @@ import type { DQIssue } from '@prisma/client';
 import { CFG_RECON_SETTINGS } from '@/config/settings';
 import { toNum, type NumberLocale } from '@/engine/transform';
 
-export interface DQResult {
-  issues: DQIssueRow[];
-  severityCounts: { ERROR: number; WARNING: number; INFO: number };
-  status: 'OK' | 'WARNING' | 'ERROR';
-}
+// FILTERDROP-1 dead-code audit: DQResult REMOVED — zero consumers
+// repo-wide (the validator emits DQIssueRow lists + summary counts,
+// never this aggregate).
 
 export interface DQIssueRow {
   severity: 'ERROR' | 'WARNING' | 'INFO';

@@ -4,24 +4,9 @@
 //  Supports dark mode via CSS variable overrides in globals.css.
 // ============================================================
 
-// Access CSS variables — falls back to hex if not set (for SSR/tests)
-function cssVar(name: string, fallback: string): string {
-  if (typeof window === 'undefined') return fallback;
-  const val = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return val || fallback;
-}
-
-// Semantic chart colors — used by all chart components
-export const CHART_COLORS = {
-  loss: () => cssVar('--chart-loss', '#dc2626'),
-  surplus: () => cssVar('--chart-surplus', '#10b981'),
-  waste: () => cssVar('--chart-waste', '#f59e0b'),
-  susut: () => cssVar('--chart-susut', '#7c3aed'),
-  trial: () => cssVar('--chart-trial', '#65a30d'),
-  residual: () => cssVar('--chart-residual', '#71717a'),
-  neutral: () => cssVar('--chart-neutral', '#64748b'),
-  warning: () => cssVar('--chart-warning', '#eab308'),
-};
+// FILTERDROP-1 dead-code audit: CHART_COLORS (the cssVar()-backed dynamic
+// variant) REMOVED — zero consumers repo-wide; every chart imports the
+// static COLORS / getTooltipStyle below (Recharts needs plain hex values).
 
 // Static versions for Recharts (which needs actual hex values, not functions)
 // These are evaluated at render time and will pick up dark mode if class is set

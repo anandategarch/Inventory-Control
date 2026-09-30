@@ -6,7 +6,6 @@
 //  FlipRanking table and the FlipDrillPanel drill-down:
 //    - riskBadge        → risk level badge (class + label)
 //    - categoryBadge    → flip category badge (emoji + class)
-//    - directionBadgeClass → LOSS/SURPLUS badge class
 //    - drillKey         → drill-down expand/collapse state key
 //    - monthPrefix      → short month extraction from period label
 //  Plus the shared `FlipPair` response type (used by both the
@@ -88,13 +87,5 @@ export function monthPrefix(periodLabel: string): string {
   return idx > 0 ? periodLabel.slice(0, idx) : periodLabel;
 }
 
-export function directionBadgeClass(direction: string): string {
-  switch (direction) {
-    case 'LOSS':
-      return 'text-red-700 bg-red-100 border-red-300 dark:bg-red-950/60 dark:border-red-800 dark:text-red-400';
-    case 'SURPLUS':
-      return 'text-emerald-700 bg-emerald-100 border-emerald-300 dark:bg-emerald-950/60 dark:border-emerald-800 dark:text-emerald-400';
-    default:
-      return 'text-muted-foreground bg-muted/50 border-border';
-  }
-}
+// FILTERDROP-1 dead-code audit: directionBadgeClass() REMOVED — zero callers
+// repo-wide (noted "memang DEAD CODE di HEAD" in the REFACTOR-1-b audit).

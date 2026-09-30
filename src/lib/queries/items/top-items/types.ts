@@ -7,12 +7,8 @@
 //  `@/lib/queries/items/top-items` imports keep working unchanged.
 // ============================================================
 
-export interface TopItemRow {
-  itemName: string;
-  outletCode: string;
-  absNominal: number;
-  direction: string;
-}
+// FILTERDROP-1 dead-code audit: TopItemRow REMOVED — zero consumers
+// repo-wide (queries emit their own row types).
 
 // ============================================================
 //  Pareto Dev/BOM — driver/outlet row types

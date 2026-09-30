@@ -187,21 +187,5 @@ export function calcZScoreFromStats(
  * mean/stddev computed across weekly observations, NOT raw rows.
  * Sample variance (N-1, Bessel's correction).
  */
-export const HISTORICAL_STATS_SQL = `
-  WITH weekly_dev AS (
-    SELECT ir."outletId", ir."itemId", ir."monthLabel", ir."weekLabel",
-      CASE WHEN SUM(ABS(ir."qtyBom")) > 0
-        THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
-        ELSE NULL END as "weeklyDevBom"
-    FROM "InventoryRecord" ir
-    WHERE ({periodFilter})
-    GROUP BY ir."outletId", ir."itemId", ir."monthLabel", ir."weekLabel"
-  )
-  SELECT "outletId", "itemId",
-    AVG("weeklyDevBom") as mean,
-    SUM("weeklyDevBom" * "weeklyDevBom") as "sumSq",
-    CAST(COUNT(*) AS INTEGER) as n
-  FROM weekly_dev
-  WHERE "weeklyDevBom" IS NOT NULL
-  GROUP BY "outletId", "itemId"
-`;
+// FILTERDROP-1 dead-code audit: HISTORICAL_STATS_SQL (REFERENCE-ONLY doc const)
+// REMOVED — zero consumers repo-wide (BUG DB-26 note: "NOT used").

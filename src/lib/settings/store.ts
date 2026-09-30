@@ -112,25 +112,10 @@ export async function getAllSettings(forceRefresh = false): Promise<Map<string, 
   return merged;
 }
 
-// Get a single setting as string
-export async function getSetting(key: string): Promise<string | null> {
-  const all = await getAllSettings();
-  return all.get(key) ?? null;
-}
-
-// Get setting as number
-export async function getSettingNumber(key: string): Promise<number | null> {
-  const v = await getSetting(key);
-  if (v == null) return null;
-  const n = Number(v);
-  return isNaN(n) ? null : n;
-}
-
-// Get setting as boolean
-export async function getSettingBool(key: string): Promise<boolean> {
-  const v = await getSetting(key);
-  return v === 'true' || v === '1' || v === 'yes';
-}
+// FILTERDROP-1 dead-code audit: getSetting / getSettingNumber /
+// getSettingBool REMOVED — zero callers repo-wide (callers use
+// getAllSettings() / getRuntimeThresholds(); the trio's only references
+// were this file + the barrel re-export).
 
 // Invalidate cache (call after update)
 export function invalidateSettingsCache(): void {

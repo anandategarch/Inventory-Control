@@ -14,12 +14,13 @@
 //    and the whole src/engine/rules/ JS evaluator subtree.
 //    src/config/rules.yaml remains as the declarative rule SPEC only.
 // ============================================================
+// FILTERDROP-1 dead-code audit: trimmed to the names actually imported via
+// the barrel path (post-process-*.ts): detectPatterns, AnalysisOutlet,
+// AnalysisArea. AnalysisData/AnalysisItem/PatternDetection re-exports and the
+// RecWithRels re-export had zero barrel-path consumers (PatternDetection is
+// imported directly from ./patternEngine by useAnalysis/types.ts).
 export {
   detectPatterns,
-  type AnalysisData,
   type AnalysisArea,
-  type AnalysisItem,
   type AnalysisOutlet,
-  type PatternDetection,
 } from './patternEngine';
-export type { RecWithRels } from './types';

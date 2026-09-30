@@ -34,13 +34,15 @@ import { WasteAnomalyCard } from './anomaly-card';
 import type { WasteSeriesResponse } from './types';
 
 export const WasteTab = memo(function WasteTab() {
-  const { monthLabel, currentWeek, area, kelompok, pic, outletCode } = useDashboard(useShallow((s) => ({
+  // FILTERDROP-1 (opsi A): outletCode removed — the global outlet filter no
+  // longer exists; the Waste tab always analyzes the full population
+  // (network/area/kelompok/pic scoped).
+  const { monthLabel, currentWeek, area, kelompok, pic } = useDashboard(useShallow((s) => ({
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
     area: s.area,
     kelompok: s.kelompok,
     pic: s.pic,
-    outletCode: s.outletCode,
   })));
 
   // Normalize 'all' → null ONCE (same convention as the routes — raw 'all'
@@ -48,10 +50,9 @@ export const WasteTab = memo(function WasteTab() {
   const areaParam = area && area !== 'all' ? area : null;
   const kelompokParam = kelompok && kelompok !== 'all' ? kelompok : null;
   const picParam = pic && pic !== 'all' ? pic : null;
-  const outletParam = outletCode && outletCode !== 'all' ? outletCode : null;
 
   const { data, isLoading, error } = useQuery<WasteSeriesResponse>({
-    queryKey: ['waste-series', monthLabel, currentWeek, areaParam, kelompokParam, picParam, outletParam],
+    queryKey: ['waste-series', monthLabel, currentWeek, areaParam, kelompokParam, picParam],
     queryFn: async () => {
       const p = new URLSearchParams();
       // enabled guards null/empty — the '' fallbacks below never reach the wire.
@@ -60,7 +61,6 @@ export const WasteTab = memo(function WasteTab() {
       if (areaParam) p.set('area', areaParam);
       if (kelompokParam) p.set('kelompok', kelompokParam);
       if (picParam) p.set('pic', picParam);
-      if (outletParam) p.set('outletCode', outletParam);
       const res = await fetch(`/api/waste-series?${p.toString()}`);
       const contentType = res.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
@@ -126,7 +126,6 @@ export const WasteTab = memo(function WasteTab() {
         area={areaParam}
         kelompok={kelompokParam}
         pic={picParam}
-        outletCode={outletParam}
       />
       <WasteAnomalyCard outlets={outlets} monthly={monthly} />
     </div>

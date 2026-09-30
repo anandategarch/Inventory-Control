@@ -88,7 +88,6 @@ function ItemPeerComparisonImpl({
   itemName,
   month,
   week,
-  targetOutletCode,
   area,
   kelompok,
   pic,
@@ -100,14 +99,12 @@ function ItemPeerComparisonImpl({
       itemName,
       month,
       week,
-      targetOutletCode,
       area,
       kelompok,
       pic,
     ],
     queryFn: async () => {
       const p = new URLSearchParams({ item: itemName, month, week });
-      if (targetOutletCode) p.set('outletCode', targetOutletCode);
       if (area && area !== 'all') p.set('area', area);
       if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
       if (pic) p.set('pic', pic);

@@ -48,15 +48,17 @@ export type {
 } from '@/components/dashboard/peer-comparison/types';
 
 export function PeerComparison() {
-  const { focusOutlet, outletCode, monthLabel, currentWeek, setFocusOutlet, kelompok } = useDashboard(useShallow((s) => ({
+  // FILTERDROP-1 (opsi A): outletCode removed — the global FilterBar outlet
+  // filter no longer exists; the peer target comes ONLY from focusOutlet
+  // (the Resto tab's picker / cross-tab focus links).
+  const { focusOutlet, monthLabel, currentWeek, setFocusOutlet, kelompok } = useDashboard(useShallow((s) => ({
     focusOutlet: s.focusOutlet,
-    outletCode: s.outletCode,
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
     setFocusOutlet: s.setFocusOutlet,
     kelompok: s.kelompok,
   })));
-  const activeOutlet = focusOutlet || outletCode;
+  const activeOutlet = focusOutlet;
 
   // ============================================================
   //  P1 PARALLEL QUERIES + derived state — see ./use-peer-queries

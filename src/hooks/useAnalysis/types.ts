@@ -418,6 +418,10 @@ export interface DeviationDriverCategory {
 //  PERF-OPT: analysis query params shape (shared by useAnalysis +
 //  prefetchAnalysis). Keeping this in one place guarantees the query
 //  key matches exactly between the live hook and the prefetch helper.
+//  FILTERDROP-1 (opsi A): the `outlet` field was removed together with the
+//  global FilterBar outlet filter — /api/analysis is now never outlet-scoped
+//  from the dashboard (the Resto tab's focusOutlet uses its own dedicated
+//  endpoints, not /api/analysis).
 // ============================================================
 export interface AnalysisParams {
   month: string | null;
@@ -426,7 +430,6 @@ export interface AnalysisParams {
   compareMonth?: string | null;
   area: string | null;
   kelompok?: string | null;
-  outlet: string | null;
   item: string | null;
   pic?: string | null;
 }

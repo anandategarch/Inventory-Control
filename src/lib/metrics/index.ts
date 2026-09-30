@@ -35,7 +35,6 @@ export {
 export {
   computeSalesModePerOutlet,
   computeTotalSales,
-  SALES_MODE_SQL_CTE,
 } from './sales';
 
 // Historical metrics (Z-Score, trend, benchmark flag from historical)
@@ -43,7 +42,6 @@ export {
   computeZScore,
   computeDeterioration,
   calcZScoreFromStats,
-  HISTORICAL_STATS_SQL,
   type HistoricalStats,
   type HistoricalInput,
   type HistoricalResult,
@@ -52,7 +50,6 @@ export {
 // Benchmark metrics (Area/Network comparison)
 export {
   computeBenchmark,
-  BENCHMARK_SQL,
   type BenchmarkInput,
   type BenchmarkResult,
 } from './benchmark';

@@ -62,30 +62,12 @@ import { TrendDataView } from './components/TrendDataView';
 
 // Re-export sub-components + types so callers importing from
 // '@/components/dashboard/tabs/ItemTrendTab' can access them.
-export { ItemTrendSearchBar } from './ItemTrendSearchBar';
-export { ItemTrendTable } from './ItemTrendTable';
-export { ItemPeerComparison } from './ItemPeerComparison';
-export { ItemTrendRankChart } from './ItemTrendRankChart';
-export { FlipMatrix } from './FlipMatrix';
-export { FlipRanking } from './FlipRanking';
-export { zScoreColor, zScoreStatus } from './zScoreHelpers';
-export { periodSortKey, periodShortLabel } from './periodHelpers';
-// Phase A+B (FLIP-FE) — flip detection re-exports.
-export {
-  computeFlipAnalyses,
-  computeItemFlipScore,
-  getFlipForPeriod,
-  getFlipsForPeriod,
-  groupPeriodsByWeek,
-  formatDisparity,
-  flipBadge,
-  periodKey as flipPeriodKey,
-} from './flipHelpers';
-export type { MetricOption, AutocompleteResult, SortKey, SortDir, FlipAnalysis, ItemFlipScore } from './types';
-export type { ItemPeerComparisonProps, ItemPeerRow, ItemPeerAverages, ItemPeerComparisonResponse } from './ItemPeerComparison';
-export type { ItemTrendRankChartProps } from './ItemTrendRankChart';
-export type { FlipMatrixProps } from './FlipMatrix';
-export { METRICS } from './types';
+// FILTERDROP-1 dead-code audit: the ~20-line re-export block that used to
+// live here (search bar, table, peer comparison, rank chart, flip matrix,
+// flip ranking, z-score/period helpers, flip helpers, METRICS, all the
+// Props types) was REMOVED — the sole external import from this barrel is
+// { ItemTrendTab } (ItemTab.tsx); submodules are consumed via direct
+// relative imports.
 
 // ============================================================
 //  ItemTrendTab — main component (orchestrator)
@@ -102,14 +84,16 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
   // Pull dashboard filters (month/week + filter context) so the trend
   // respects the user's current selection. The trend API takes month+week
   // purely for cache-key context (the response covers ALL periods), and
-  // area/kelompok/outlet/pic to scope the records.
+  // area/kelompok/pic to scope the records.
+  // FILTERDROP-1 (opsi A): outletCode removed — the global outlet filter no
+  // longer exists.
   //
   // Phase 1 — Navigation Bridge: also pull `trendSelectedItem` +
   // `setTrendSelectedItem` + `setFocusOutlet` from the store so external
   // components can pre-select an item (RankingNasionalCard) and so the
   // peer table rows can navigate to the Resto Analysis tab.
   const {
-    monthLabel, currentWeek, area, kelompok, outletCode, pic,
+    monthLabel, currentWeek, area, kelompok, pic,
     trendSelectedItem: selectedItem, setTrendSelectedItem: setSelectedItem,
     setFocusOutlet,
   } = useDashboard(useShallow((s) => ({
@@ -117,7 +101,6 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
     currentWeek: s.currentWeek,
     area: s.area,
     kelompok: s.kelompok,
-    outletCode: s.outletCode,
     pic: s.pic,
     trendSelectedItem: s.trendSelectedItem,
     setTrendSelectedItem: s.setTrendSelectedItem,
@@ -138,7 +121,6 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
     week: currentWeek,
     area,
     kelompok,
-    outletCode,
     pic,
   });
 
@@ -148,7 +130,6 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
     currentWeek,
     area,
     kelompok,
-    outletCode,
     pic,
   });
 
@@ -224,7 +205,6 @@ function ItemTrendTabImpl({ analysisData }: ItemTrendTabProps) {
             drillPeriod={drillPeriod}
             setDrillPeriod={setDrillPeriod}
             onPeriodDrill={handlePeriodDrill}
-            outletCode={outletCode}
             area={area}
             kelompok={kelompok}
             pic={pic}

@@ -67,9 +67,9 @@ export interface ItemPeerComparisonProps {
   itemName: string;
   month: string;
   week: string;
-  /** From FilterBar outletCode — if set, the API uses this outlet as
-   *  the target. If omitted, the API auto-selects the worst outlet. */
-  targetOutletCode?: string | null;
+  // FILTERDROP-1 (opsi A): targetOutletCode ("From FilterBar outletCode")
+  // removed — the global outlet filter no longer exists; the API
+  // auto-selects the target outlet (worst |deviation|).
   area?: string | null;
   kelompok?: string | null;
   pic?: string | null;

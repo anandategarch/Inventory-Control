@@ -30,7 +30,6 @@ export type PeriodSelectsProps = Pick<
   | 'allComparePeriods'
   | 'area'
   | 'kelompok'
-  | 'outletCode'
   | 'itemName'
   | 'pic'
   | 'handleMonthChange'
@@ -50,7 +49,6 @@ export function PeriodSelects(props: PeriodSelectsProps) {
     allComparePeriods,
     area,
     kelompok,
-    outletCode,
     itemName,
     pic,
     handleMonthChange,
@@ -94,7 +92,6 @@ export function PeriodSelects(props: PeriodSelectsProps) {
                   compareMonth: compare?.monthLabel ?? null,
                   area,
                   kelompok,
-                  outlet: outletCode,
                   item: itemName,
                   pic,
                 });
@@ -134,7 +131,6 @@ export function PeriodSelects(props: PeriodSelectsProps) {
                   compareMonth: compare?.monthLabel ?? null,
                   area,
                   kelompok,
-                  outlet: outletCode,
                   item: itemName,
                   pic,
                 });

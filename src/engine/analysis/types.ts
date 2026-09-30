@@ -8,13 +8,11 @@
 //  Field list verified by grepping every `curr.*` / `prev.*` / `rec.*`
 //  access in patternEngine.ts plus fetch-records.ts's select shape.
 // ============================================================
-import type { InventoryRecord, Outlet, Item, Week } from '@prisma/client';
+// FILTERDROP-1 dead-code audit: the @prisma/client type import was removed with
+// RecWithRelsFull (the slim RecWithRels below is fully self-declared).
 
-/**
- * Full record shape (still used by callers that do `include: { outlet, item, week }`
- * — e.g. export-report route, which needs all columns for the Word export).
- */
-export type RecWithRelsFull = InventoryRecord & { outlet: Outlet; item: Item; week: Week };
+// FILTERDROP-1 dead-code audit: RecWithRelsFull REMOVED — zero consumers
+// repo-wide (the slim RecWithRels below is the one every caller uses).
 
 /**
  * Slim record shape — only fields patternEngine + downstream

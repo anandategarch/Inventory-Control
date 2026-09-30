@@ -39,19 +39,17 @@ export const WasteParetoCard = memo(function WasteParetoCard({
   area,
   kelompok,
   pic,
-  outletCode,
 }: {
   monthLabel: string;
   currentWeek: string;
   area: string | null;
   kelompok: string | null;
   pic: string | null;
-  outletCode: string | null;
 }) {
   const [expandedItem, setExpandedItem] = useState<number | null>(null);
 
   const { data, isLoading, error } = useQuery<WasteTopItemsResponse>({
-    queryKey: ['waste-top-items', monthLabel, currentWeek, area, kelompok, pic, outletCode],
+    queryKey: ['waste-top-items', monthLabel, currentWeek, area, kelompok, pic],
     queryFn: async () => {
       const p = new URLSearchParams();
       p.set('month', monthLabel);
@@ -59,7 +57,6 @@ export const WasteParetoCard = memo(function WasteParetoCard({
       if (area) p.set('area', area);
       if (kelompok) p.set('kelompok', kelompok);
       if (pic) p.set('pic', pic);
-      if (outletCode) p.set('outletCode', outletCode);
       const res = await fetch(`/api/waste-top-items?${p.toString()}`);
       const contentType = res.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {

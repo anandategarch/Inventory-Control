@@ -13,40 +13,9 @@ import { scheduleBackground } from '../background-scheduler';
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-/**
- * Try to read a cached result from the DB.
- * Returns parsed JSON if cache hit (and not expired), null otherwise.
- * On expiry, the stale row is deleted (fire-and-forget) so the table
- * doesn't accumulate dead entries between cleanup cycles.
- */
-export async function getCached<T>(cacheKey: string, ttlMs: number = DEFAULT_TTL_MS): Promise<T | null> {
-  try {
-    const row = await db.aggregationCache.findUnique({ where: { cacheKey } });
-    if (!row) return null;
-    const ageMs = Date.now() - row.computedAt.getTime();
-    if (ageMs > ttlMs) {
-      // Expired — delete stale entry (fire-and-forget so the table
-      // doesn't accumulate dead entries between cleanup cycles).
-      // FIX (BUG-3-c SEDANG-5): scheduled via after() — a plain floating
-      // promise was frozen by Vercel right after the response, so the
-      // delete never landed and dead rows survived until the 90-min
-      // bulk cleanup. scheduleBackground keeps it alive past response
-      // completion (and falls back to fire-and-forget outside requests).
-      scheduleBackground(
-        db.aggregationCache.delete({ where: { cacheKey } }).catch((e) => {
-          logger.error('[cache] expired entry delete failed', { error: e instanceof Error ? e.message : String(e) });
-        }),
-      );
-      return null;
-    }
-    return JSON.parse(row.payload) as T;
-  } catch (e) {
-    // Non-blocking: if cache read fails (DB error, JSON parse error),
-    // just return null and let the caller compute fresh.
-    logger.error('[cache] getCached error (non-blocking)', { error: e instanceof Error ? e.message : String(e) });
-    return null;
-  }
-}
+// FILTERDROP-1 dead-code audit: getCached() REMOVED — zero call-sites
+// repo-wide (all routes use getCachedWithMeta via withCacheAndDedup for the
+// SWR pattern; this plain variant was only re-exported, never called).
 
 // ============================================================
 //  PERF-CACHE-09: getCachedWithMeta — returns the cached payload

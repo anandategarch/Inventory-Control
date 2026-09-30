@@ -92,19 +92,5 @@ export function computeTotalSales<T extends SalesRecord>(records: T[]): number {
  *   )
  *   ... use sales_mode in main query ...
  */
-export const SALES_MODE_SQL_CTE = `
-  WITH sales_counts AS (
-    SELECT ir."outletId", ir."nominalSales", COUNT(*) as cnt
-    FROM "InventoryRecord" ir
-    WHERE ir."nominalSales" IS NOT NULL AND ir."nominalSales" > 0
-    GROUP BY ir."outletId", ir."nominalSales"
-  ),
-  ranked_sales AS (
-    SELECT "outletId", "nominalSales",
-      ROW_NUMBER() OVER (PARTITION BY "outletId" ORDER BY cnt DESC, "nominalSales" ASC) as rn
-    FROM sales_counts
-  ),
-  sales_mode AS (
-    SELECT "outletId", "nominalSales" as sales FROM ranked_sales WHERE rn = 1
-  )
-`;
+// FILTERDROP-1 dead-code audit: SALES_MODE_SQL_CTE (REFERENCE-ONLY doc const)
+// REMOVED — zero consumers repo-wide (BUG DB-26 note: "NOT used").

@@ -56,18 +56,19 @@ export interface FlipDrillPanelProps {
   flip: FlipPair;
   area: string | null;
   kelompok: string | null;
-  outletCode: string | null;
+  // FILTERDROP-1 (opsi A): outletCode removed — the global outlet filter
+  // no longer exists; the drill-down always covers the full population.
   pic: string | null;
 }
 
-export function FlipDrillPanel({ item, flip, area, kelompok, outletCode, pic }: FlipDrillPanelProps) {
+export function FlipDrillPanel({ item, flip, area, kelompok, pic }: FlipDrillPanelProps) {
   // Pull the month prefix from each short label. The drill-down API uses
   // ILIKE prefix matching so "Jul" matches "Juli 2026".
   const month1 = monthPrefix(flip.period1Label);
   const month2 = monthPrefix(flip.period2Label);
 
   const { data, isLoading, error } = useQuery<FlipDrilldownResponse>({
-    queryKey: ['flip-drilldown', item, flip.weekLabel, month1, month2, area, kelompok, outletCode, pic],
+    queryKey: ['flip-drilldown', item, flip.weekLabel, month1, month2, area, kelompok, pic],
     queryFn: async () => {
       const p = new URLSearchParams();
       p.set('item', item);
@@ -76,7 +77,6 @@ export function FlipDrillPanel({ item, flip, area, kelompok, outletCode, pic }: 
       p.set('month2', month2);
       if (area && area !== 'all') p.set('area', area);
       if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
-      if (outletCode) p.set('outlet', outletCode);
       if (pic) p.set('pic', pic);
       const res = await fetch(`/api/flip-ranking/drilldown?${p.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

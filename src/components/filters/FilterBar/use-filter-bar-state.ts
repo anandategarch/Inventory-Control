@@ -14,7 +14,7 @@
 //  signatures that could drift from the store.
 // ============================================================
 
-import { useEffect, useMemo } from 'react';
+import { useEffect } from 'react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { useStatus } from '@/hooks/useAnalysis';
@@ -34,21 +34,19 @@ export function useFilterBarState() {
   // Select handlers — period changes are now ATOMIC (one store update, one
   // queryKey change, one /api/analysis fetch). setCompareWeek stays for the
   // compare Select (single-field change is already atomic).
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, setPeriod, setCompareWeek, setArea, setKelompok, setOutlet, setPic, reset } = useDashboard(useShallow((s) => ({
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, itemName, pic, setPeriod, setCompareWeek, setArea, setKelompok, setPic, reset } = useDashboard(useShallow((s) => ({
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
     comparisonWeek: s.comparisonWeek,
     comparisonMonth: s.comparisonMonth,
     area: s.area,
     kelompok: s.kelompok,
-    outletCode: s.outletCode,
     itemName: s.itemName,
     pic: s.pic,
     setPeriod: s.setPeriod,
     setCompareWeek: s.setCompareWeek,
     setArea: s.setArea,
     setKelompok: s.setKelompok,
-    setOutlet: s.setOutlet,
     setPic: s.setPic,
     reset: s.reset,
   })));
@@ -60,6 +58,8 @@ export function useFilterBarState() {
   // show the old kelompok as selected but the option would be gone — user can't
   // deselect via dropdown, only via Reset. This effect clears kelompok (and
   // other filter state) if they're no longer valid in the new status data.
+  // FILTERDROP-1: the outletCode cleanup block was removed together with the
+  // global outlet filter (no longer exists in the store).
   useEffect(() => {
     if (!status) return;
     const kelompokOpts = status.kelompokOptions || [];
@@ -72,10 +72,7 @@ export function useFilterBarState() {
     if (pic && status.pics.length > 0 && !status.pics.includes(pic)) {
       setPic(null);
     }
-    if (outletCode && status.outlets.length > 0 && !status.outlets.some((o) => o.code === outletCode)) {
-      setOutlet(null);
-    }
-  }, [status, kelompok, area, pic, outletCode, setKelompok, setArea, setPic, setOutlet]);
+  }, [status, kelompok, area, pic, setKelompok, setArea, setPic]);
 
   const months = status?.months || [];
   const weeks = (monthLabel && status?.weeksByMonth) ? Object.entries(status.weeksByMonth).find(([k]) => {
@@ -84,24 +81,10 @@ export function useFilterBarState() {
   })?.[1] || [] : [];
   const pics = status?.pics || [];
   const kelompokOptions = status?.kelompokOptions || [];
-  // Filter outlets by area AND pic AND kelompok
-  // FIX (BUG-FE-2): previously only filtered by area + pic — user could select
-  // an outlet outside the selected kelompok → backend returns 0 rows → misleading
-  // "no data" error. Now filters by kelompok too, so the dropdown only shows
-  // outlets consistent with the active kelompok filter.
-  // PERF-05: useMemo outlets filter — was recomputed on every render (e.g., when
-  // ingestMsg state changes). Now only recomputes when status/area/pic/kelompok change.
-  const outlets = useMemo(() => (status?.outlets || []).filter((o) => {
-    if (area && o.area !== area) return false;
-    if (pic && o.pic !== pic) return false;
-    if (kelompok) {
-      // Same extraction as backend: last dot-segment, first 3 chars, uppercase
-      const segs = o.code.split('.');
-      const oKelompok = (segs[segs.length - 1] || '').substring(0, 3).toUpperCase();
-      if (oKelompok !== kelompok.toUpperCase()) return false;
-    }
-    return true;
-  }), [status?.outlets, area, pic, kelompok]);
+  // FILTERDROP-1: the `outlets` derived list (area/pic/kelompok-filtered copy of
+  // status.outlets) was removed — its ONLY consumer was the global Outlet
+  // combobox in OrgSelects, which is gone. The Resto tab's in-tab picker builds
+  // its own list from the same useStatus cache (RestoAnalysis/index.tsx).
   const areas = status?.areas || [];
 
   const allComparePeriods: ComparePeriodOption[] = [];
@@ -132,11 +115,12 @@ export function useFilterBarState() {
   const compareValue = comparisonWeek
     ? `${comparisonWeek}|||${comparisonMonth || monthLabel}`
     : 'auto';
-  // VH-3 (spec §4 L1 / D7): "Filter (n)" badge — counts the 5 dashboard
-  // filters (area, kelompok, outlet, PIC, item) that are non-null. The
-  // FilterBar has no collapse mechanism on desktop, so the badge rides the
+  // VH-3 (spec §4 L1 / D7): "Filter (n)" badge — counts the 4 dashboard
+  // filters (area, kelompok, PIC, item) that are non-null. FILTERDROP-1:
+  // outlet dropped from the count — the global outlet filter no longer exists.
+  // The FilterBar has no collapse mechanism on desktop, so the badge rides the
   // existing filter-controls row (no new collapse system); hidden when n=0.
-  const activeFilterCount = [area, kelompok, outletCode, pic, itemName].filter(Boolean).length;
+  const activeFilterCount = [area, kelompok, pic, itemName].filter(Boolean).length;
   // Item counts as an active filter too — keeps the Reset button consistent
   // with the badge (the insight actions set `item` as a transient filter).
   const hasActiveFilter = activeFilterCount > 0;
@@ -190,14 +174,12 @@ export function useFilterBarState() {
     comparisonMonth,
     area,
     kelompok,
-    outletCode,
     itemName,
     pic,
     setPeriod,
     setCompareWeek,
     setArea,
     setKelompok,
-    setOutlet,
     setPic,
     reset,
     // Status query
@@ -207,7 +189,6 @@ export function useFilterBarState() {
     months,
     weeks,
     pics,
-    outlets,
     areas,
     kelompokOptions,
     allComparePeriods,

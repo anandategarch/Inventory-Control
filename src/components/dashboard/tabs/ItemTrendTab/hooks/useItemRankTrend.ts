@@ -37,7 +37,6 @@ export interface UseItemRankTrendParams {
   currentWeek: string | null;
   area: string | null;
   kelompok: string | null;
-  outletCode: string | null;
   pic: string | null;
 }
 
@@ -46,7 +45,6 @@ export function useItemRankTrend({
   currentWeek,
   area,
   kelompok,
-  outletCode,
   pic,
 }: UseItemRankTrendParams) {
   const { data: rankData, isFetching: rankFetching } = useQuery({
@@ -54,7 +52,7 @@ export function useItemRankTrend({
     // ignores month (returns ALL months for the selected week). Including
     // month would cause unnecessary refetch + duplicate cache entries
     // when the user changes month.
-    queryKey: ['item-trend-rank', selectedItem, currentWeek, area, kelompok, outletCode, pic],
+    queryKey: ['item-trend-rank', selectedItem, currentWeek, area, kelompok, pic],
     queryFn: async () => {
       // Guard: enabled=Boolean(selectedItem) guarantees selectedItem is
       // non-null here, but TypeScript can't infer that across the closure.
@@ -65,7 +63,6 @@ export function useItemRankTrend({
       if (currentWeek) p.set('week', currentWeek);
       if (area && area !== 'all') p.set('area', area);
       if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
-      if (outletCode) p.set('outlet', outletCode);
       if (pic) p.set('pic', pic);
       const res = await fetch(`/api/item-trend-rank?${p.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

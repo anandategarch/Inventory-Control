@@ -56,7 +56,9 @@ type ItemTrendDeepDiveResponse = {
 //  Modal detail item (terbuka ketika deepDiveItem.itemName di-set)
 // ============================================================
 export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: AnalysisData | undefined }) {
-  const { deepDiveItem, setDeepDiveItem, setDrilldown, monthLabel, currentWeek, area, kelompok, outletCode, pic } = useDashboard(useShallow((s) => ({
+  // FILTERDROP-1 (opsi A): outletCode removed — the global outlet filter no
+  // longer exists; the modal's outlet scope comes ONLY from deepDiveItem.
+  const { deepDiveItem, setDeepDiveItem, setDrilldown, monthLabel, currentWeek, area, kelompok, pic } = useDashboard(useShallow((s) => ({
     deepDiveItem: s.deepDiveItem,
     setDeepDiveItem: s.setDeepDiveItem,
     setDrilldown: s.setDrilldown,
@@ -64,7 +66,6 @@ export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: Analysi
     currentWeek: s.currentWeek,
     area: s.area,
     kelompok: s.kelompok,
-    outletCode: s.outletCode,
     pic: s.pic,
   })));
   const open = Boolean(deepDiveItem?.itemName);
@@ -93,8 +94,8 @@ export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: Analysi
   // timeline instead: /api/item-trend returns ALL periods for the item
   // (exact-name match, SUM(ABS()) aggregates per period), scoped by the
   // dashboard's area/kelompok/pic filters. The modal's own outlet
-  // (deepDiveItem.outletCode) takes precedence over the global outlet filter.
-  const trendOutlet = deepDiveItem?.outletCode ?? outletCode;
+  // (deepDiveItem.outletCode) is the only outlet scope (FILTERDROP-1).
+  const trendOutlet = deepDiveItem?.outletCode ?? null;
   const { data: itemTrendData } = useQuery({
     queryKey: ['item-trend-deepdive', itemName, monthLabel, trendOutlet, area, kelompok, pic],
     queryFn: async () => {

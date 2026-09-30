@@ -49,7 +49,8 @@ export function priceEffectKey(scope: {
   comparisonWeek: string | null;
   area: string | null;
   kelompok: string | null;
-  outletCode: string | null;
+  // FILTERDROP-1 (opsi A): outletCode removed — the global outlet filter no
+  // longer exists; price-effect is never outlet-scoped from the dashboard.
   pic: string | null;
 }): unknown[] {
   return [
@@ -60,25 +61,24 @@ export function priceEffectKey(scope: {
     scope.comparisonWeek ?? null,
     scope.area ?? null,
     scope.kelompok ?? null,
-    scope.outletCode ?? null,
     scope.pic ?? null,
   ];
 }
 
 export function usePriceEffect() {
-  const { monthLabel, currentWeek, comparisonMonth, comparisonWeek, area, kelompok, outletCode, pic } = useDashboard(useShallow((s) => ({
+  // FILTERDROP-1 (opsi A): outletCode removed from the store subscription.
+  const { monthLabel, currentWeek, comparisonMonth, comparisonWeek, area, kelompok, pic } = useDashboard(useShallow((s) => ({
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
     comparisonMonth: s.comparisonMonth,
     comparisonWeek: s.comparisonWeek,
     area: s.area,
     kelompok: s.kelompok,
-    outletCode: s.outletCode,
     pic: s.pic,
   })));
 
   return useQuery<PriceEffectResponse>({
-    queryKey: priceEffectKey({ monthLabel, currentWeek, comparisonMonth, comparisonWeek, area, kelompok, outletCode, pic }),
+    queryKey: priceEffectKey({ monthLabel, currentWeek, comparisonMonth, comparisonWeek, area, kelompok, pic }),
     queryFn: async () => {
       const month = monthLabel ?? '';
       const week = currentWeek ?? '';
@@ -92,7 +92,6 @@ export function usePriceEffect() {
       }
       if (area && area !== 'all') p.set('area', area);
       if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
-      if (outletCode && outletCode !== 'all') p.set('outlet', outletCode);
       if (pic && pic !== 'all') p.set('pic', pic);
       const res = await fetch(`/api/price-effect?${p.toString()}`);
       if (!res.ok) throw new Error('Gagal memuat data efek harga');

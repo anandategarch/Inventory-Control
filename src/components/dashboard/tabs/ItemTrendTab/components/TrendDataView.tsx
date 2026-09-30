@@ -60,8 +60,9 @@ interface TrendDataViewProps {
   setDrillPeriod: (p: DrillPeriod | null) => void;
   /** Phase 2 drill callback — chart dot click + table row click. */
   onPeriodDrill: (p: ItemTrendPeriod) => void;
-  /** Dashboard filters — scope the ItemPeerComparison panel. */
-  outletCode: string | null;
+  /** Dashboard filters — scope the ItemPeerComparison panel.
+   *  FILTERDROP-1 (opsi A): outletCode removed — the global outlet filter
+   *  no longer exists; the peer target is auto-selected by the API. */
   area: string | null;
   kelompok: string | null;
   pic: string | null;
@@ -84,7 +85,6 @@ export function TrendDataView({
   drillPeriod,
   setDrillPeriod,
   onPeriodDrill,
-  outletCode,
   area,
   kelompok,
   pic,
@@ -183,7 +183,6 @@ export function TrendDataView({
             itemName={selectedItem}
             month={drillPeriod.month}
             week={drillPeriod.week}
-            targetOutletCode={outletCode}
             area={area}
             kelompok={kelompok}
             pic={pic}

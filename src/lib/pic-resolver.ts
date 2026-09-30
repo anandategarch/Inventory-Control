@@ -40,26 +40,6 @@ export async function resolvePICOutletCodes(
  * Build filterOpts object with PIC outlet codes resolved.
  * Convenience wrapper for routes that need the full filterOpts shape.
  */
-export async function resolveFilterOptsWithPIC(
-  area: string | null,
-  outletCode: string | null,
-  itemName: string | null,
-  pic: string | null,
-): Promise<{
-  area: string | null;
-  outletCode: string | null;
-  itemName: string | null;
-  picOutletCodes: string[] | null;
-  picHasNoOutlets: boolean; // true if PIC exists but has 0 outlets
-}> {
-  if (!pic) {
-    return { area, outletCode, itemName, picOutletCodes: null, picHasNoOutlets: false };
-  }
-
-  const picOutletCodes = await resolvePICOutletCodes(pic);
-  if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
-    return { area, outletCode, itemName, picOutletCodes: ['__NO_MATCH__'], picHasNoOutlets: true };
-  }
-
-  return { area, outletCode, itemName, picOutletCodes, picHasNoOutlets: false };
-}
+// FILTERDROP-1 dead-code audit: resolveFilterOptsWithPIC() REMOVED — zero
+// callers repo-wide (routes resolve PIC outlet codes via resolvePICOutletCodes
+// directly; flagged "exported but never used" in a prior audit note).

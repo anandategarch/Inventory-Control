@@ -81,14 +81,8 @@ export const C = {
   cardBg: '#FAFAF9',
   white: '#FFFFFF',
 } as const;
-// Amber accents kept for API compatibility — the report no longer uses
-// them (DESAIN-SIMPEL).
-export const ACCENT_LEGACY = {
-  accent: '#D97706',
-  accentDark: '#92400E',
-  accentLight: '#FEF3C7',
-  accentFaint: '#FFFBEB',
-} as const;
+// FILTERDROP-1 dead-code audit: ACCENT_LEGACY REMOVED — zero consumers
+// repo-wide (the report stopped using amber accents in DESAIN-SIMPEL).
 
 // ------------------------------------------------------------
 //  Text sanitization — WinAnsi-safe output for standard fonts

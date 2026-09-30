@@ -29,7 +29,6 @@ export function prefetchHeatmap(
     /** Dashboard filters — normalized identically to AreaItemHeatmap's params. */
     area?: string | null;
     kelompok?: string | null;
-    outletCode?: string | null;
     pic?: string | null;
   },
 ): void {
@@ -45,7 +44,6 @@ export function prefetchHeatmap(
   // divergence here desyncs the prefetch from the card's query.
   if (params.area && params.area !== 'all') p.set('area', params.area);
   if (params.kelompok && params.kelompok !== 'all') p.set('kelompok', params.kelompok);
-  if (params.outletCode && params.outletCode !== 'all') p.set('outlet', params.outletCode);
   if (params.pic && params.pic !== 'all') p.set('pic', params.pic);
   void queryClient.prefetchQuery({
     queryKey: ['area-item-heatmap', p.toString()],

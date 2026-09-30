@@ -18,9 +18,6 @@ export { SETTING_DEFINITIONS } from './definitions';
 export {
   ensureDefaultSettings,
   getAllSettings,
-  getSetting,
-  getSettingNumber,
-  getSettingBool,
   invalidateSettingsCache,
 } from './store';
 

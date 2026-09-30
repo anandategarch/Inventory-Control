@@ -63,9 +63,11 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
   // UX-RESTOFILTER-1 (user request 2025-12): area/kelompok/pic ARE back for
   // the in-tab Filter Resto outlet list consistency filter, plus
   // setFocusOutlet for the picker itself.
-  const { focusOutlet, outletCode, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, pic, setFocusOutlet } = useDashboard(useShallow((s) => ({
+  // FILTERDROP-1 (opsi A): outletCode removed — the global FilterBar outlet
+  // filter no longer exists; this tab's outlet comes ONLY from the in-tab
+  // picker / cross-tab focus links (focusOutlet).
+  const { focusOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, pic, setFocusOutlet } = useDashboard(useShallow((s) => ({
     focusOutlet: s.focusOutlet,
-    outletCode: s.outletCode,
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
     comparisonWeek: s.comparisonWeek,
@@ -75,8 +77,9 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
     pic: s.pic,
     setFocusOutlet: s.setFocusOutlet,
   })));
-  // Use focusOutlet (from table click) OR outletCode (from FilterBar dropdown)
-  const activeOutlet = focusOutlet || outletCode;
+  // The in-tab picker's selection (focusOutlet from the picker itself or a
+  // cross-tab table-row click — setFocusOutlet).
+  const activeOutlet = focusOutlet;
   const [rankingTab, setRankingTab] = useState('financial');
   const [selectedItem, setSelectedItem] = useState<{ outletCode: string; itemName: string } | null>(null);
 

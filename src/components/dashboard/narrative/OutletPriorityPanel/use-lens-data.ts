@@ -29,19 +29,21 @@ import type { Lens } from './lens-model';
 export interface UseLensDataParams {
   lens: Lens;
   data: AnalysisData;
-  outletCode: string | null;
   monthLabel: string | null;
   currentWeek: string | null;
   kelompok: string | null;
 }
 
-export function useLensData({ lens, data, outletCode, monthLabel, currentWeek, kelompok }: UseLensDataParams) {
+export function useLensData({ lens, data, monthLabel, currentWeek, kelompok }: UseLensDataParams) {
   // ------------------------------------------------------------
   //  Lens 1 — Prioritas (shared recommendations fetch; same queryKey
-  //  + outletCode scoping as the old RestoRecommendationCard, so it
-  //  dedupes with ExecutiveStatus + the Resto tab's scoped query).
+  //  as the old RestoRecommendationCard, so it dedupes with
+  //  ExecutiveStatus + the Resto tab's scoped query).
+  //  FILTERDROP-1 (opsi A): the outletCode scoping param was removed with
+  //  the global FilterBar outlet filter — this panel now always uses the
+  //  GLOBAL scope (null), deduping with ExecutiveStatus's fetch.
   // ------------------------------------------------------------
-  const { data: resp, isLoading: recLoading, error: recError, refetch: recRefetch } = useRecommendations(outletCode);
+  const { data: resp, isLoading: recLoading, error: recError, refetch: recRefetch } = useRecommendations(null);
   // P3-HYG-7a: pin list identities so the memos below are stable.
   const recommendations = useMemo<RestoRecommendation[]>(() => resp?.recommendations ?? [], [resp?.recommendations]);
 

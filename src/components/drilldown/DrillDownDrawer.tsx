@@ -18,7 +18,10 @@ import { useRef, useState, useEffect, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 export function DrillDownDrawer() {
-  const { drilldown, setDrilldown, monthLabel, currentWeek, setSourceModal, area, kelompok, outletCode: filterOutlet, pic } = useDashboard(useShallow((s) => ({
+  // FILTERDROP-1 (opsi A): outletCode (aliased `filterOutlet`) removed from
+  // the subscription — it was destructured but NEVER used in this file
+  // (pre-existing dead code found during the removal audit).
+  const { drilldown, setDrilldown, monthLabel, currentWeek, setSourceModal, area, kelompok, pic } = useDashboard(useShallow((s) => ({
     drilldown: s.drilldown,
     setDrilldown: s.setDrilldown,
     monthLabel: s.monthLabel,
@@ -26,7 +29,6 @@ export function DrillDownDrawer() {
     setSourceModal: s.setSourceModal,
     area: s.area,
     kelompok: s.kelompok,
-    outletCode: s.outletCode,
     pic: s.pic,
   })));
   const open = Boolean(drilldown.outletCode || drilldown.itemName);

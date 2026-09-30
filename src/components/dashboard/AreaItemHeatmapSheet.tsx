@@ -52,7 +52,8 @@ export interface CellDetailRow {
 export interface HeatmapCellFilters {
   area?: string | null;
   kelompok?: string | null;
-  outletCode?: string | null;
+  // FILTERDROP-1 (opsi A): outletCode removed — the global outlet filter no
+  // longer exists, so the sheet's cell-detail query is never outlet-scoped.
   pic?: string | null;
 }
 
@@ -80,7 +81,6 @@ export default function AreaItemHeatmapSheet({
     p.set('area', areaName);
     p.set('item', itemName);
     if (filters.kelompok && filters.kelompok !== 'all') p.set('kelompok', filters.kelompok);
-    if (filters.outletCode && filters.outletCode !== 'all') p.set('outlet', filters.outletCode);
     if (filters.pic && filters.pic !== 'all') p.set('pic', filters.pic);
     return p;
   }, [monthLabel, currentWeek, areaName, itemName, filters]);

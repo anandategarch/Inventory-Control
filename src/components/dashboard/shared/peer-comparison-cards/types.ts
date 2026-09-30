@@ -17,33 +17,14 @@
  * (they take pre-computed values). Callers may use this as a structural
  * reference for the field overlap.
  */
-export interface BasePeerRow {
-  outletCode: string;
-  outletName: string;
-  area: string;
-  pic: string | null;
-  qtyBom: number;
-  qtyDeviasi: number;
-  qtyWaste: number;
-  qtySusut: number;
-  nominalDeviasi: number;
-  devBom: number | null;
-  direction: string;
-  isTarget: boolean;
-}
-
 /**
  * Generic peer averages — callers compute from their own row type.
  * Documented for clarity; the shared cards take pre-computed values
  * directly rather than this aggregate.
  */
-export interface BasePeerAverages {
-  devBom: number;
-  nominalDeviasi: number;
-  qtyDeviasi: number;
-  lossOutlets: number;
-  surplusOutlets: number;
-}
+// FILTERDROP-1 dead-code audit: BasePeerRow + BasePeerAverages REMOVED —
+// zero consumers repo-wide (the shared cards take pre-computed values; the
+// file's own docstring said the cards "do NOT consume this directly").
 
 // ------------------------------------------------------------
 //  Pre-computed value shapes consumed by the shared cards

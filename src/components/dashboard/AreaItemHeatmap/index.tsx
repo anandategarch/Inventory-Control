@@ -58,13 +58,15 @@ const AreaItemHeatmapSheet = dynamic(
 );
 
 function AreaItemHeatmapInner() {
-  const { monthLabel, currentWeek, area, kelompok, outletCode, pic } = useDashboard(
+  // FILTERDROP-1 (opsi A): outletCode removed — the global outlet filter no
+  // longer exists; the heatmap always covers the full population
+  // (area/kelompok/pic scoped).
+  const { monthLabel, currentWeek, area, kelompok, pic } = useDashboard(
     useShallow((s) => ({
       monthLabel: s.monthLabel,
       currentWeek: s.currentWeek,
       area: s.area,
       kelompok: s.kelompok,
-      outletCode: s.outletCode,
       pic: s.pic,
     })),
   );
@@ -105,10 +107,9 @@ function AreaItemHeatmapInner() {
     p.set('mode', mode);
     if (area && area !== 'all') p.set('area', area);
     if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
-    if (outletCode && outletCode !== 'all') p.set('outlet', outletCode);
     if (pic && pic !== 'all') p.set('pic', pic);
     return p;
-  }, [monthLabel, currentWeek, metric, itemLimit, mode, area, kelompok, outletCode, pic]);
+  }, [monthLabel, currentWeek, metric, itemLimit, mode, area, kelompok, pic]);
 
   const { data, isLoading, isError, isFetching, refetch } = useQuery<HeatmapResponse>({
     queryKey: ['area-item-heatmap', params.toString()],
@@ -161,8 +162,8 @@ function AreaItemHeatmapInner() {
   // re-renders — the Sheet's internal `useMemo(() => params, [filters])` will
   // only recompute when one of the underlying filter values actually changes.
   const sheetFilters = useMemo(
-    () => ({ area, kelompok, outletCode, pic }),
-    [area, kelompok, outletCode, pic],
+    () => ({ area, kelompok, pic }),
+    [area, kelompok, pic],
   );
 
   if (!monthLabel || !currentWeek) {
@@ -326,10 +327,11 @@ export {
   getTextColor,
 } from './heatmapHelpers';
 export { METRIC_CONFIG } from './metricConfig';
+// FILTERDROP-1 dead-code audit: ParetoInfo removed from the type re-export —
+// zero external consumers (it's used internally inside ./types only).
 export type {
   HeatmapCell,
   HeatmapMetric,
   HeatmapResponse,
   ItemSelectMode,
-  ParetoInfo,
 } from './types';

@@ -9,12 +9,14 @@
 
 import { useState, useEffect, memo } from 'react';
 export { LayerHeader } from './LayerHeader';
-export type { LayerHeaderProps } from './LayerHeader';
+// FILTERDROP-1 dead-code audit: the LayerHeaderProps type re-export was REMOVED
+// (zero consumers — LayerHeader callers pass props inline).
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 // QW hygiene: Button import removed — every CTA here is a raw <button>
 // (custom amber styling), the shadcn Button was never referenced.
-import { Badge } from '@/components/ui/badge';
+// FILTERDROP-1 dead-code audit: the Badge import was removed with
+// SectionHeader's dead `badge` prop (no other usage in this file).
 import { Loader2, Calendar, ShieldAlert, Upload, RefreshCw, ArrowUp, Boxes, CloudDownload, Sparkles } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -231,7 +233,7 @@ export function ErrorState({ message }: { message: string }) {
 // action slot (right-aligned controls, e.g. Pareto dimension selectors).
 // Behavior-compatible with existing call sites: both props optional;
 // mb-3/border rhythm preserved.
-export function SectionHeader({ icon, title, badge, description, action }: { icon: React.ReactNode; title: string; badge?: string; description?: string; action?: React.ReactNode }) {
+export function SectionHeader({ icon, title, description, action }: { icon: React.ReactNode; title: string; description?: string; action?: React.ReactNode }) {
   return (
     <div className="w-full mb-3 pt-4 border-t border-border/40 first:border-t-0 first:pt-0">
       {/* FIX (BUG-HUNT B2): flex-wrap restored (lost in the VH-7 header swap).
@@ -243,11 +245,8 @@ export function SectionHeader({ icon, title, badge, description, action }: { ico
           {icon}
         </span>
         <h2 className="text-base font-semibold tracking-tight min-w-0">{title}</h2>
-        {badge && (
-          <Badge variant="outline" className="text-[10px] font-medium text-muted-foreground/80 h-5">
-            {badge}
-          </Badge>
-        )}
+        {/* FILTERDROP-1 dead-code audit: the `badge` prop + its render block
+            were REMOVED — zero callers ever passed it (verified by grep). */}
         {action && <div className="ml-auto min-w-0 flex items-center gap-2">{action}</div>}
       </div>
       {description && (

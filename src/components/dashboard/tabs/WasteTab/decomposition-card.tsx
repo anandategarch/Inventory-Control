@@ -9,8 +9,8 @@
 //  "Dekomposisi Loss" sheet + stacked chart. Answers: "berapa
 //  besar loss yang benar-benar terjelaskan peluruhan vs
 //  selisih tak terjelaskan?"
-//  Recharts + CHART_COLORS (same conventions as the Charts/
-//  family; animations disabled — tab re-mounts).
+//  Recharts + COLORS from chart-constants (same conventions as the
+//  Charts/ family; animations disabled — tab re-mounts).
 // ============================================================
 
 import { memo, useMemo, useState } from 'react';

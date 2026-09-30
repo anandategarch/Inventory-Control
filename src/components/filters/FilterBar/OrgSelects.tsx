@@ -1,13 +1,18 @@
 'use client';
 
 // ============================================================
-//  OrgSelects — the 4 org-filter SearchableComboBoxes (PIC, Area,
-//  Kelompok, Outlet). Moved verbatim from FilterBar.tsx's
+//  OrgSelects — the 3 org-filter SearchableComboBoxes (PIC, Area,
+//  Kelompok). Moved verbatim from FilterBar.tsx's
 //  `orgSelects()` render helper (SPLIT-C pure code motion — zero
 //  behavior change). Props are typed with Pick<FilterBarState, ...>
 //  so the value/setter signatures cannot drift from the store.
-//  SPEC-1 (§16.1): shared filter fields — the 4 org comboboxes bind
+//  SPEC-1 (§16.1): shared filter fields — the org comboboxes bind
 //  to the SAME zustand state + handlers as the pre-split helper.
+//  FILTERDROP-1 (opsi A, user request): the 4th combobox (Outlet)
+//  was REMOVED — the global outlet filter that refiltered the whole
+//  dashboard is gone; the ONLY outlet scoping left is the Resto
+//  tab's in-tab "Filter Resto" picker (focusOutlet), which scopes
+//  just that tab (and the PDF export follows it).
 // ============================================================
 
 import { SearchableComboBox } from '@/components/filters/SearchableComboBox';
@@ -18,15 +23,12 @@ export type OrgSelectsProps = Pick<
   | 'pics'
   | 'areas'
   | 'kelompokOptions'
-  | 'outlets'
   | 'pic'
   | 'area'
   | 'kelompok'
-  | 'outletCode'
   | 'setPic'
   | 'setArea'
   | 'setKelompok'
-  | 'setOutlet'
 >;
 
 export function OrgSelects(props: OrgSelectsProps) {
@@ -34,15 +36,12 @@ export function OrgSelects(props: OrgSelectsProps) {
     pics,
     areas,
     kelompokOptions,
-    outlets,
     pic,
     area,
     kelompok,
-    outletCode,
     setPic,
     setArea,
     setKelompok,
-    setOutlet,
   } = props;
 
   return (
@@ -85,18 +84,6 @@ export function OrgSelects(props: OrgSelectsProps) {
         allOptionLabel={`Semua Kelompok (${kelompokOptions.length})`}
         buttonClassName="min-w-[120px]"
         ariaLabel="Filter Kelompok"
-      />
-
-      <SearchableComboBox
-        options={outlets.map((o) => ({ value: o.code, label: `${o.code} · ${o.name}`, description: o.area }))}
-        value={outletCode}
-        onValueChange={setOutlet}
-        placeholder="Semua Outlet"
-        searchPlaceholder="Cari outlet (kode/nama)..."
-        emptyText="Outlet tidak ditemukan."
-        allOptionLabel={`Semua Outlet (${outlets.length})`}
-        buttonClassName="min-w-[150px]"
-        ariaLabel="Filter Outlet"
       />
     </>
   );

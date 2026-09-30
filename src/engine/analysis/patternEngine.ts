@@ -131,8 +131,9 @@ export interface PatternDetection {
 }
 
 // ============================================================
-//  Tunable thresholds (kept module-local for now — promote to
-//  src/config/thresholds.ts if they need runtime tuning)
+//  Tunable thresholds (kept module-local — the old placeholder
+//  src/config/thresholds.ts was removed in the FILTERDROP-1
+//  dead-code audit: never imported by anything)
 // ============================================================
 const SYSTEMIC_ITEM_RATIO_THRESHOLD = 0.30; // 30%+ outlets deviating
 const SYSTEMIC_ITEM_CRITICAL_RATIO = 0.50;  // 50%+ outlets → CRITICAL

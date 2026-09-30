@@ -117,14 +117,15 @@ export default function DashboardPage() {
   // EXPORT-PDF: + focusOutlet — passed to useDashboardActions so the export
   // follows the Resto Analysis tab's active outlet (user request: filter
   // resto export dari Filter resto analisis).
-  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, itemName, pic, focusOutlet, setPeriod, activeTab, visitedTabs, setActiveTab, setDrilldown, setSourceModal, setDeepDiveItem } = useDashboard(useShallow((s) => ({
+  // FILTERDROP-1: outletCode (global FilterBar outlet) removed from the
+  // selector — the field no longer exists in the store.
+  const { monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, itemName, pic, focusOutlet, setPeriod, activeTab, visitedTabs, setActiveTab, setDrilldown, setSourceModal, setDeepDiveItem } = useDashboard(useShallow((s) => ({
     monthLabel: s.monthLabel,
     currentWeek: s.currentWeek,
     comparisonWeek: s.comparisonWeek,
     comparisonMonth: s.comparisonMonth,
     area: s.area,
     kelompok: s.kelompok,
-    outletCode: s.outletCode,
     itemName: s.itemName,
     pic: s.pic,
     focusOutlet: s.focusOutlet,
@@ -154,7 +155,6 @@ export default function DashboardPage() {
     comparisonMonth,
     area,
     kelompok,
-    outletCode,
     pic,
     setPeriod,
     queryClient,
@@ -167,7 +167,6 @@ export default function DashboardPage() {
     compareMonth: comparisonMonth,
     area,
     kelompok,
-    outlet: outletCode,
     item: itemName,
     pic,
   });
@@ -227,7 +226,6 @@ export default function DashboardPage() {
     comparisonMonth,
     area,
     kelompok,
-    outletCode,
     focusOutlet,
     itemName,
     pic,

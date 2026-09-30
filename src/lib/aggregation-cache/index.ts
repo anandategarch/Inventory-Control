@@ -5,9 +5,8 @@
 //  src/lib/aggregation-cache.ts monolith into:
 //    ./key-builder.ts  — buildCacheKey (pure)
 //    ./generation.ts   — getCacheGeneration
-//    ./store.ts        — getCached / getCachedWithMeta /
-//                        getCachedRawWithMeta / setCached / setCachedRaw /
-//                        cleanupExpiredCache
+//    ./store.ts        — getCachedWithMeta / getCachedRawWithMeta /
+//                        setCached / setCachedRaw / cleanupExpiredCache
 //    ./inflight.ts     — getInflight / setInflight
 //    ./swr.ts          — withCacheAndDedup
 //    ./invalidate.ts    — invalidateCache / invalidateAnalysisCache
@@ -38,7 +37,7 @@
 // ============================================================
 export { buildCacheKey } from './key-builder';
 export { getCacheGeneration } from './generation';
-export { getCached, getCachedWithMeta, getCachedRawWithMeta, setCached, setCachedRaw, cleanupExpiredCache } from './store';
+export { getCachedWithMeta, getCachedRawWithMeta, setCached, setCachedRaw, cleanupExpiredCache } from './store';
 export { getInflight, setInflight } from './inflight';
 export { withCacheAndDedup } from './swr';
 export { invalidateCache, invalidateAnalysisCache } from './invalidate';

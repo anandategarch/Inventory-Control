@@ -88,15 +88,5 @@ export function computeBenchmark(input: BenchmarkInput): BenchmarkResult {
  * Network benchmark:
  *   SUM(ABS(qtyDeviasi)) / SUM(ABS(qtyBom)) — all outlets
  */
-export const BENCHMARK_SQL = `
-  -- Area aggregate Dev/BOM (SUM/SUM, not AVG)
-  SELECT
-    SUM(ABS(ir."qtyDeviasi")) as totalDeviasi,
-    SUM(ABS(ir."qtyBom")) as totalBom,
-    CASE WHEN SUM(ABS(ir."qtyBom")) > 0
-      THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
-      ELSE 0 END as devBom
-  FROM "InventoryRecord" ir
-  WHERE ir."monthLabel" = {month} AND ir."weekLabel" = {week}
-    {areaFilter}
-`;
+// FILTERDROP-1 dead-code audit: BENCHMARK_SQL (REFERENCE-ONLY doc const)
+// REMOVED — zero consumers repo-wide (BUG DB-26 note: "NOT used").

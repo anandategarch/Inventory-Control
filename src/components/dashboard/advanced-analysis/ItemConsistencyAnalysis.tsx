@@ -29,12 +29,13 @@ export const ItemConsistencyAnalysis = memo(function ItemConsistencyAnalysis({ d
   // Pull month/week/filters + setFocusOutlet from the dashboard store so the
   // expansion panel can fetch the per-outlet anomali list + navigate to the
   // Resto Analysis tab on click.
+  // FILTERDROP-1 (opsi A): outletCode removed — the global outlet filter no
+  // longer exists.
   const {
     monthLabel,
     currentWeek,
     area,
     kelompok,
-    outletCode,
     pic,
     setFocusOutlet,
   } = useDashboard(
@@ -43,7 +44,6 @@ export const ItemConsistencyAnalysis = memo(function ItemConsistencyAnalysis({ d
       currentWeek: s.currentWeek,
       area: s.area,
       kelompok: s.kelompok,
-      outletCode: s.outletCode,
       pic: s.pic,
       setFocusOutlet: s.setFocusOutlet,
     })),
@@ -212,7 +212,6 @@ export const ItemConsistencyAnalysis = memo(function ItemConsistencyAnalysis({ d
                         currentWeek={currentWeek}
                         area={area}
                         kelompok={kelompok}
-                        outletCode={outletCode}
                         pic={pic}
                         setFocusOutlet={setFocusOutlet}
                       />

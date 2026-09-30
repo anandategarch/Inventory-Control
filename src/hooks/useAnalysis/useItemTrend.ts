@@ -72,7 +72,8 @@ export interface ItemTrendParams {
   metric?: ItemTrendMetric;
   area?: string | null;
   kelompok?: string | null;
-  outletCode?: string | null;
+  // FILTERDROP-1 (opsi A): outletCode removed — the global outlet filter no
+  // longer exists; the trend is never outlet-scoped from the dashboard.
   pic?: string | null;
   /** Optional month/week context — included in cache key (server-side)
    *  so trend fetches scoped to a "current period" share entries. */
@@ -89,11 +90,10 @@ export function useItemTrend(params: ItemTrendParams) {
   if (params.week) p.set('week', params.week);
   if (params.area && params.area !== 'all') p.set('area', params.area);
   if (params.kelompok && params.kelompok !== 'all') p.set('kelompok', params.kelompok);
-  if (params.outletCode && params.outletCode !== 'all') p.set('outlet', params.outletCode);
   if (params.pic) p.set('pic', params.pic);
 
   return useQuery({
-    queryKey: ['item-trend', params.itemName, metric, params.area, params.kelompok, params.outletCode, params.pic, params.month, params.week],
+    queryKey: ['item-trend', params.itemName, metric, params.area, params.kelompok, params.pic, params.month, params.week],
     queryFn: async () => {
       const res = await fetch(`/api/item-trend?${p.toString()}`);
       const contentType = res.headers.get('content-type') || '';

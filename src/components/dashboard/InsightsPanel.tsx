@@ -34,7 +34,7 @@ interface Insight {
   title: string;
   body: string;
   action?: string;
-  actionTarget?: { type: 'area' | 'outlet' | 'item'; value: string };
+  actionTarget?: { type: 'area' | 'item'; value: string };
 }
 
 // SPEC-1 (§6.1): hover explanations for each certainty level.
@@ -276,8 +276,13 @@ function buildInsights(data: AnalysisData): Insight[] {
 // ============================================================
 export const InsightsPanel = memo(function InsightsPanel({ data }: { data: AnalysisData }) {
   const setArea = useDashboard((s) => s.setArea);
-  const setOutlet = useDashboard((s) => s.setOutlet);
-  const setScorecardOutlet = useDashboard((s) => s.setScorecardOutlet);
+  // FILTERDROP-1 + dead-code audit: `setOutlet` AND `setScorecardOutlet`
+  // subscriptions REMOVED — their ONLY usage was the `type === 'outlet'`
+  // action branch below, which was already dead BEFORE the filter removal
+  // (no insight in buildInsights ever emits actionTarget type 'outlet' —
+  // verified by grep), and the global outlet filter it targeted no longer
+  // exists. Outlet navigation now goes through setDrilldown /
+  // setDeepDiveItem / setFocusOutlet only.
   const setItem = useDashboard((s) => s.setItem);
   const setDrilldown = useDashboard((s) => s.setDrilldown);
   const setDeepDiveItem = useDashboard((s) => s.setDeepDiveItem);
@@ -300,10 +305,6 @@ export const InsightsPanel = memo(function InsightsPanel({ data }: { data: Analy
     const { type, value } = insight.actionTarget;
     if (type === 'area') {
       setArea(value);
-    } else if (type === 'outlet') {
-      setOutlet(value);
-      setScorecardOutlet(value);
-      setDrilldown({ outletCode: value, itemName: null });
     } else if (type === 'item') {
       setItem(value);
       setDeepDiveItem({ itemName: value, outletCode: null });

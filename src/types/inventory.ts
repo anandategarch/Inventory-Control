@@ -1,14 +1,14 @@
 // ============================================================
 //  TYPES — Inventory Control Intelligence Platform
+//  FILTERDROP-1 dead-code audit: RawInventoryRow, GrowthMetrics,
+//  HistoricalStats, BenchmarkResult, PriorityScore were REMOVED —
+//  zero importers repo-wide (name-collisions with the LIVE types in
+//  src/lib/metrics/* masked them in earlier audits; confirmed by grep).
 // ============================================================
 
 export type Direction = 'LOSS' | 'SURPLUS' | 'NEUTRAL';
 export type Severity = 'NORMAL' | 'WARNING' | 'ABNORMAL';
 export type DQSeverity = 'ERROR' | 'WARNING' | 'INFO';
-
-export interface RawInventoryRow {
-  [key: string]: unknown;
-}
 
 export interface NormalizedRecord {
   akunPenyesuaian: string | null;
@@ -67,33 +67,6 @@ export interface DerivedRecord extends NormalizedRecord {
   periodEnd: number;
 }
 
-export interface GrowthMetrics {
-  salesGrowth: number | null;
-  bomGrowth: number | null;
-  qtyDeviasiGrowth: number | null;
-  nominalDeviasiGrowth: number | null;
-  deviationToSalesRatio: number | null;
-  deviationToBomRatio: number | null;
-}
-
-export interface HistoricalStats {
-  avgDevBom: number | null;
-  stdDev: number | null;
-  zScore: number | null;
-  sampleSize: number;
-}
-
-export interface BenchmarkResult {
-  outletDevBom: number | null;
-  areaAvgDevBom: number | null;
-  networkAvgDevBom: number | null;
-  // FIX: benchmarkFlag values are HISTORICAL_HIGH/HISTORICAL_WARNING (renamed from
-  // ABOVE_AREA_AVG/ABOVE_NETWORK_AVG in audit fix — zScore is historical comparison)
-  benchmarkFlag: 'HISTORICAL_HIGH' | 'HISTORICAL_WARNING' | 'NORMAL' | null;
-  ratioVsArea: number | null;
-  ratioVsNetwork: number | null;
-}
-
 export interface RuleEvidence {
   [key: string]: unknown;
 }
@@ -106,20 +79,6 @@ export interface AnomalyFlagResult {
   priority: number;
   evidence: RuleEvidence;
   narrative: string;
-}
-
-export interface PriorityScore {
-  itemId: number;
-  itemName: string;
-  outletId: number;
-  outletCode: string;
-  outletName: string;
-  area: string;
-  financialScore: number;
-  operationalScore: number;
-  financialRank: number | null;
-  operationalRank: number | null;
-  topAnomaly: AnomalyFlagResult | null;
 }
 
 export interface ExecutiveSummary {

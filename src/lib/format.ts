@@ -336,18 +336,6 @@ export function isValidPreset(preset: string): boolean {
  * @example
  * getPresetsByCategory('idr') → ['idr0', 'idr1', 'idr2', 'idr0k', ...]
  */
-export function getPresetsByCategory(prefix?: string): string[] {
-  const all = Object.keys(FORMAT_PRESETS);
-  if (!prefix) return all;
-  // FIX (BUG-LIB-02): filter 'pct' was returning 'pctNabs' too.
-  // Now: 'pct' returns only pct0-pct3. 'pctabs' returns pctNabs.
-  // 'pct' should NOT match 'pct0abs' etc. Use strict prefix match
-  // where the char after prefix is a digit (not a letter).
-  return all.filter((p) => {
-    if (!p.startsWith(prefix)) return false;
-    // If next char after prefix is a letter (not digit), it's a different category.
-    const nextChar = p.slice(prefix.length, prefix.length + 1);
-    return nextChar === '' || /\d/.test(nextChar);
-  });
-}
+// FILTERDROP-1 dead-code audit: getPresetsByCategory() REMOVED — zero callers
+// repo-wide (only its own doc comments referenced it).
 

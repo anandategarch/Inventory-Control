@@ -40,21 +40,18 @@ export function FilterBar() {
     currentWeek,
     area,
     kelompok,
-    outletCode,
     itemName,
     pic,
     setCompareWeek,
     setPic,
     setArea,
     setKelompok,
-    setOutlet,
     reset,
     status,
     isLoading,
     months,
     weeks,
     pics,
-    outlets,
     areas,
     kelompokOptions,
     allComparePeriods,
@@ -115,7 +112,6 @@ export function FilterBar() {
             allComparePeriods={allComparePeriods}
             area={area}
             kelompok={kelompok}
-            outletCode={outletCode}
             itemName={itemName}
             pic={pic}
             handleMonthChange={handleMonthChange}
@@ -127,15 +123,12 @@ export function FilterBar() {
             pics={pics}
             areas={areas}
             kelompokOptions={kelompokOptions}
-            outlets={outlets}
             pic={pic}
             area={area}
             kelompok={kelompok}
-            outletCode={outletCode}
             setPic={setPic}
             setArea={setArea}
             setKelompok={setKelompok}
-            setOutlet={setOutlet}
           />
 
           {hasActiveFilter && (

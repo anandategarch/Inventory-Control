@@ -31,10 +31,11 @@ interface FlipRankingRowProps {
   expandedFlip: string | null;
   onToggleDrill: (key: string) => void;
   onSelectItem: (itemName: string) => void;
-  /** Dashboard filters — scope the FlipDrillPanel fetch. */
+  /** Dashboard filters — scope the FlipDrillPanel fetch.
+   *  FILTERDROP-1 (opsi A): outletCode removed — the global outlet filter
+   *  no longer exists. */
   area: string | null;
   kelompok: string | null;
-  outletCode: string | null;
   pic: string | null;
 }
 
@@ -47,7 +48,6 @@ export function FlipRankingRow({
   onSelectItem,
   area,
   kelompok,
-  outletCode,
   pic,
 }: FlipRankingRowProps) {
   const topFlip = item.topFlips[0];
@@ -196,7 +196,6 @@ export function FlipRankingRow({
               flip={topFlip}
               area={area}
               kelompok={kelompok}
-              outletCode={outletCode}
               pic={pic}
             />
           </TableCell>

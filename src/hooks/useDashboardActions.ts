@@ -40,11 +40,11 @@ export interface UseDashboardActionsParams {
   comparisonMonth: string | null;
   area: string | null;
   kelompok: string | null;
-  outletCode: string | null;
   // EXPORT-PDF: the Resto Analysis tab's active outlet (focusOutlet from a
-  // table row click || outletCode from the FilterBar dropdown) — the export
+  // table row click or the in-tab "Filter Resto" picker) — the export
   // follows the SAME outlet the user sees in Resto Analysis (user request:
-  // "filter resto nya dari Filter resto analisis").
+  // "filter resto nya dari Filter resto analisis"). FILTERDROP-1: the
+  // `outletCode` param (global FilterBar outlet) was removed with the filter.
   focusOutlet: string | null;
   itemName: string | null;
   pic: string | null;
@@ -77,7 +77,6 @@ export function useDashboardActions({
   comparisonMonth,
   area,
   kelompok,
-  outletCode,
   focusOutlet,
   itemName,
   pic,
@@ -106,15 +105,15 @@ export function useDashboardActions({
   // toast (dismissed on completion) so the user knows the wait is normal.
   // EXPORT-PDF: output switched .docx → .pdf (server returns
   // application/pdf from pdf-builder). The outlet follows the Resto Analysis
-  // filter (focusOutlet || outletCode — same activeOutlet the Resto
-  // Analysis tab renders), so "what I see in Resto Analysis" == "what the
-  // report contains" (user request: filter resto dari Filter resto analisis).
+  // filter (focusOutlet — the in-tab picker / table row click), so "what I
+  // see in Resto Analysis" == "what the report contains" (user request:
+  // filter resto dari Filter resto analisis).
   const handleExport = useCallback(async (selectedSections: string[]) => {
     if (!analysisData) return;
-    // Resto Analysis convention (RestoAnalysis.tsx: activeOutlet =
-    // focusOutlet || outletCode) — focusOutlet wins while set; the FilterBar
-    // dropdown's setOutlet clears it (useDashboard.ts), so both paths agree.
-    const activeOutlet = focusOutlet || outletCode;
+    // Resto Analysis convention (RestoAnalysis.tsx): activeOutlet =
+    // focusOutlet — the in-tab picker's selection (FILTERDROP-1: the global
+    // FilterBar outlet no longer exists).
+    const activeOutlet = focusOutlet;
     setExportDialogOpen(false);
     setIsExporting(true);
     // FIX (BUG-3-b A2): in-progress feedback — the dialog closes immediately
@@ -247,7 +246,7 @@ export function useDashboardActions({
     } finally {
       setIsExporting(false);
     }
-  }, [analysisData, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, outletCode, focusOutlet, itemName, pic, toast, status, setExportDialogOpen]);
+  }, [analysisData, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, focusOutlet, itemName, pic, toast, status, setExportDialogOpen]);
 
   // UX-ENHANCE + FIX (TASK H-3): Refresh handler — clears the SERVER-side
   // AggregationCache FIRST, then invalidates ALL client query caches.

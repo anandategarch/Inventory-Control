@@ -38,7 +38,6 @@ function buildAnalysisSearchParams(params: AnalysisParams): URLSearchParams {
   }
   if (params.area) p.set('area', params.area);
   if (params.kelompok) p.set('kelompok', params.kelompok);
-  if (params.outlet) p.set('outlet', params.outlet);
   if (params.item) p.set('item', params.item);
   if (params.pic) p.set('pic', params.pic);
   return p;

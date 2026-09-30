@@ -70,7 +70,6 @@ export interface UseDashboardEffectsParams {
   // key must be built from the same state the live query will use).
   area: string | null;
   kelompok: string | null;
-  outletCode: string | null;
   pic: string | null;
   // FIX (PERF-1 / AUDIT-FE): the hook now needs ONLY the atomic period setter.
   // Replaces the old setMonth/setWeek/setCompareWeek props whose three separate
@@ -87,7 +86,6 @@ export function useDashboardEffects({
   comparisonMonth,
   area,
   kelompok,
-  outletCode,
   pic,
   setPeriod,
   queryClient,
@@ -201,7 +199,6 @@ export function useDashboardEffects({
       compareMonth: compare?.monthLabel ?? null,
       area: null,
       kelompok: null,
-      outlet: null,
       item: null,
       pic: null,
     };
@@ -212,8 +209,8 @@ export function useDashboardEffects({
     // like the heatmap card) so the warmed key matches the card's live key
     // by construction — previously it omitted them, so the prefetch was a
     // wasted fetch whenever a filter was active.
-    prefetchHeatmap(queryClient, { month: params.month, week: params.week, area, kelompok, outletCode, pic });
+    prefetchHeatmap(queryClient, { month: params.month, week: params.week, area, kelompok, pic });
     // Filters participate in the effect deps so a filter change re-syncs
     // the warming state (belt-and-braces for the key-parity invariant).
-  }, [status, queryClient, monthLabel, currentWeek, area, kelompok, outletCode, pic]);
+  }, [status, queryClient, monthLabel, currentWeek, area, kelompok, pic]);
 }

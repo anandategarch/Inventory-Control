@@ -31,34 +31,6 @@ export function parseOutletCode(raw: string): ParsedOutletCode | null {
   };
 }
 
-// Parse period code like "191.JULI 26" → { monthNum, yearShort, periodCode }
-export function parsePeriodCode(bulan: string, bulan2?: string | null): {
-  periodCode: string;
-  monthLabel: string;
-  monthName: string;
-  yearShort: string | null;
-} | null {
-  // bulan: "191.JULI 26"  →  191=code, JULI 26 = July 2026
-  // bulan2: "19.JULI"     →  19=code, JULI = July
-  const m = (bulan || '').match(/^(\d+)\.([A-Z]+)\s*(\d*)$/i);
-  if (m) {
-    return {
-      periodCode: m[1],
-      monthLabel: `${m[2]} ${m[3] || ''}`.trim(),
-      monthName: m[2].toUpperCase(),
-      yearShort: m[3] || null,
-    };
-  }
-  if (bulan2) {
-    const m2 = bulan2.match(/^(\d+)\.([A-Z]+)$/i);
-    if (m2) {
-      return {
-        periodCode: m2[1],
-        monthLabel: m2[2],
-        monthName: m2[2].toUpperCase(),
-        yearShort: null,
-      };
-    }
-  }
-  return null;
-}
+// FILTERDROP-1 dead-code audit: parsePeriodCode() REMOVED — zero callers
+// repo-wide (parseOutletCode above is the used one).
+

@@ -54,13 +54,15 @@ import { FlipRankingRow } from './FlipRankingRow';
 import type { FlipRankingResponse, FlipRankingSummary, FlipSortKey, FlipSortDir } from './types';
 
 export const FlipRanking = memo(function FlipRanking() {
-  const { monthLabel, currentWeek, area, kelompok, outletCode, pic, trendSelectedItem, setTrendSelectedItem } = useDashboard(
+  // FILTERDROP-1 (opsi A): outletCode removed — the global outlet filter no
+  // longer exists; the flip ranking always covers the full population
+  // (area/kelompok/pic scoped).
+  const { monthLabel, currentWeek, area, kelompok, pic, trendSelectedItem, setTrendSelectedItem } = useDashboard(
     useShallow((s) => ({
       monthLabel: s.monthLabel,
       currentWeek: s.currentWeek,
       area: s.area,
       kelompok: s.kelompok,
-      outletCode: s.outletCode,
       pic: s.pic,
       trendSelectedItem: s.trendSelectedItem,
       setTrendSelectedItem: s.setTrendSelectedItem,
@@ -77,14 +79,13 @@ export const FlipRanking = memo(function FlipRanking() {
     // FIX (USER-REQ): include monthLabel in queryKey so ranking respects
     // dashboard month filter. When month is set, only flip pairs involving
     // that month are counted (backend filters P1 or P2 monthLabel match).
-    queryKey: ['flip-ranking', monthLabel, currentWeek, area, kelompok, outletCode, pic],
+    queryKey: ['flip-ranking', monthLabel, currentWeek, area, kelompok, pic],
     queryFn: async () => {
       const p = new URLSearchParams();
       if (monthLabel) p.set('month', monthLabel);
       if (currentWeek) p.set('week', currentWeek);
       if (area && area !== 'all') p.set('area', area);
       if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
-      if (outletCode) p.set('outlet', outletCode);
       if (pic) p.set('pic', pic);
       const res = await fetch(`/api/flip-ranking?${p.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -176,7 +177,6 @@ export const FlipRanking = memo(function FlipRanking() {
                     onSelectItem={setTrendSelectedItem}
                     area={area}
                     kelompok={kelompok}
-                    outletCode={outletCode}
                     pic={pic}
                   />
                 ))}

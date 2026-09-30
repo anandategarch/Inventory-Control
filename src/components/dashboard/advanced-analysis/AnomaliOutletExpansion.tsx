@@ -48,7 +48,8 @@ interface AnomaliOutletExpansionProps {
   currentWeek: string | null;
   area: string | null;
   kelompok: string | null;
-  outletCode: string | null;
+  // FILTERDROP-1 (opsi A): outletCode removed — the global outlet filter no
+  // longer exists; the anomali expansion always covers the full population.
   pic: string | null;
   setFocusOutlet: (code: string | null) => void;
 }
@@ -60,14 +61,13 @@ export function AnomaliOutletExpansion({
   currentWeek,
   area,
   kelompok,
-  outletCode,
   pic,
   setFocusOutlet,
 }: AnomaliOutletExpansionProps) {
   const { data, isLoading, error } = useQuery<ItemAnomaliOutletsResponse>({
     queryKey: [
       'item-anomali-outlets', itemName, direction,
-      monthLabel, currentWeek, area, kelompok, outletCode, pic,
+      monthLabel, currentWeek, area, kelompok, pic,
     ],
     queryFn: async () => {
       const p = new URLSearchParams({
@@ -78,7 +78,6 @@ export function AnomaliOutletExpansion({
       });
       if (area && area !== 'all') p.set('area', area);
       if (kelompok && kelompok !== 'all') p.set('kelompok', kelompok);
-      if (outletCode) p.set('outlet', outletCode);
       if (pic) p.set('pic', pic);
       const res = await fetch(`/api/item-anomali-outlets?${p.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
