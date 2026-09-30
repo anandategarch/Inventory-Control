@@ -11,6 +11,12 @@
 > analisa dashboard (struktur L0-L7, token, aturan interaksi, peta migrasi modul).
 > WAJIB dibaca sebelum tugas UI/appearance apa pun.
 >
+> **Last updated (DEEP-WASTE-1, commit f5c58d3 + 4bb2ace):** Fase 1+2 Deep Waste Analysis LIVE — tab "Waste" ke-8 (6 kartu: KPI strip + profil rank waste/sales + matriks outlet×bulan 5 metrik + dekomposisi loss + Pareto sistematik + anomali ber-severity) + card "Profil Waste" di tab Resto (z-score band ±10% lintas bulan) + 3 API baru (waste-series / waste-top-items / waste-peer-zscore) + 4 rule engine (19 → 23: WASTE_ZERO_BIG_LOSS / WASTE_SALES_UNDER_RECORD / WASTE_RESIDUAL_DOMINANT / WASTE_SPIKE_2SIGMA; DEEP-WASTE-1-B: prioritas 2 rule dibump agar tidak ter-shadow subset). Fase 3 (PDF section "Analisis Waste" + input alasan residual) DITUNDA menunggu GO. Routes 37 → 40 · cache prefix 49 → 53 · tests 524 → 559 · LOC 70.630 → 73.616.
+>
+> **Last updated (DEEP-WASTE-1, commit f5c58d3 + 4bb2ace):** Fase 1+2 Deep Waste Analysis LIVE — tab "Waste" ke-8 (6 kartu: KPI strip + profil rank waste/sales + matriks outlet×bulan 5 metrik + dekomposisi loss + Pareto sistematik + anomali ber-severity) + card "Profil Waste" di tab Resto (z-score band ±10% lintas bulan) + 3 API baru (waste-series / waste-top-items / waste-peer-zscore) + 4 rule engine (19 → 23: WASTE_ZERO_BIG_LOSS / WASTE_SALES_UNDER_RECORD / WASTE_RESIDUAL_DOMINANT / WASTE_SPIKE_2SIGMA; DEEP-WASTE-1-B: prioritas 2 rule dibump agar tidak ter-shadow subset). Fase 3 (PDF section "Analisis Waste" + input alasan residual) DITUNDA menunggu GO. Routes 37 → 40 · cache prefix 49 → 53 · tests 524 → 559 · LOC 70.630 → 73.616.
+>
+> **Last updated (DEEP-WASTE-1, commit f5c58d3 + 4bb2ace):** Fase 1+2 Deep Waste Analysis LIVE — tab "Waste" ke-8 (6 kartu: KPI strip + profil rank waste/sales + matriks outlet×bulan 5 metrik + dekomposisi loss + Pareto sistematik + anomali ber-severity) + card "Profil Waste" di tab Resto (z-score band ±10% lintas bulan) + 3 API baru (waste-series / waste-top-items / waste-peer-zscore) + 4 rule engine (19 → 23: WASTE_ZERO_BIG_LOSS / WASTE_SALES_UNDER_RECORD / WASTE_RESIDUAL_DOMINANT / WASTE_SPIKE_2SIGMA; DEEP-WASTE-1-B: prioritas 2 rule dibump agar tidak ter-shadow subset ketat). Fase 3 (PDF section "Analisis Waste" + input alasan residual) DITUNDA menunggu GO. Routes 37 → 40 · cache prefix 49 → 53 · tests 524 → 559 · LOC 70.630 → 73.616.
+>
 > **Last updated:** Session AUDIT-INTENSIF (Full code audit → AUDIT-REPORT.md + 6 paket perbaikan: PAKET UPLOAD/DELETE (upload 3× lebih cepat + chunk paralel + delete TRUNCATE atomik), PAKET A (interaksi FE: tab keep-alive `forceMount` + refetch storm dibunuh + debounce autocomplete + dashboard tidak terkunci saat refresh), PAKET B (backend scan-merge: 4 KPI 1-scan, kategori 1 query, import 3-pass bulk ±446→±4-8 round-trip), PAKET C (deploy: Fluid Compute + vercel.json bersih + bun.lock satu-satunya lockfile), PAKET E (tab **Kepatuhan** — 11 lensa kontrol dari 2 scan: 9 lensa period + 2 lensa month-grain; route `/api/compliance` + `/api/chronic-outlets`), PAKET F (P3 hygiene: cache hit analysis zero-parse via raw-JSON passthrough, 3 route peer-comparison kini di-cache, docx cache base64, index `[direction]` dead dihapus, TrendChart mati dihapus, 3 render pipeline di-memo); BUG-3/4/5 ingest integrity + purge git-history password; LOC 52,661 → 57,861; cached routes 14 → 20; routes 27 → 35; tests 435 → 438)
 >
 > **UPDATE (session VERIFY-MASTER):** audit seluruh perhitungan vs master context — 5 domain paralel (19 rule anomali, metrik inti, flip, analytics, kepatuhan): rumus inti 100% MATCH dengan 2 bug perhitungan nyata diperbaiki (Ø per-resto heatmap cell-detail salah denominator; flip-sort nulls-bottom jatuh di DESC) + paritas isOverExplained item-history ke helper kanonik; tab Kepatuhan PAKET E terkonfirmasi SUDAH DIHAPUS user (b37cc40) — doc ini disegarkan (seksi Kepatuhan → catatan penghapusan; export .docx → .pdf; zScore kini SQL push-down; tests 512; laporan audit di agent-ctx/VERIFY-*.md)
@@ -131,8 +137,17 @@ Deviation is decomposed into 4 categories for root cause identification:
 | `/api/settings` | ❌ | ✅ | ✅ | Protected |
 | `/api/setup` | ❌ | ✅ | ✅ | Protected |
 | `/api/status` | ❌ (in-memory) | ✅ | ❌ | Public GET |
+| `/api/waste-series` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (DEEP-WASTE-1 — deret outlet×bulan same-week + 4 detektor jaringan) |
+| `/api/waste-top-items` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (DEEP-WASTE-1 — Pareto item waste + kolom sistematik + breakdown per outlet) |
+| `/api/waste-peer-zscore` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (DEEP-WASTE-1/2 — z-score waste/sales vs band ±10% per bulan) |
+| `/api/waste-series` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (DEEP-WASTE-1 — deret outlet×bulan same-week + 4 detektor jaringan) |
+| `/api/waste-top-items` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (DEEP-WASTE-1 — Pareto item waste + kolom sistematik + breakdown per outlet) |
+| `/api/waste-peer-zscore` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (DEEP-WASTE-1/2 — z-score waste/sales vs band ±10% per bulan) |
+| `/api/waste-series` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (DEEP-WASTE-1 — deret outlet×bulan same-week + 4 detektor jaringan) |
+| `/api/waste-top-items` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (DEEP-WASTE-1 — Pareto item waste + kolom sistematik + breakdown per outlet) |
+| `/api/waste-peer-zscore` | ✅ DB 5min (SWR) | ✅ | ✅ | Public GET (DEEP-WASTE-1/2 — z-score waste/sales vs band ±10% per bulan) |
 
-**Totals (update DOCSYNC-1 pasca-DEEPRESTO-1):** 37 main routes use Zod validation (incl. `/api/item-search` + `/api/peer-comparison/top-items`; only `/api/status` skips Zod) · **26 route-level prefixes + 23 `q-*` shared-query prefixes (= 49 total) invalidated by `invalidateAnalysisCache()` on ANY mutation** (route-level: analysis, pareto, recommendations, export-report, outlet-items, item-history, drilldown, area-item-heatmap, item-trend, item-peer-comparison, item-trend-rank, flip-ranking, flip-ranking-drilldown, item-anomali-outlets, peer-comparison ×4, price-effect, item-search, heatmap-cell-detail, benchmark-opportunity, change-analysis ×2, **outlet-monthly-series + peer-track-record [DEEPRESTO-1]**) · All protected routes use `ADMIN_TOKEN` middleware · 32 routes export `maxDuration` (10–300s, single source of truth since PAKET C dropped the no-op vercel.json functions block).
+**Totals (update DEEP-WASTE-1 pasca-DEEPRESTO-1):** 40 main routes use Zod validation (incl. `/api/item-search` + `/api/peer-comparison/top-items` + 3 waste routes; only `/api/status` skips Zod; 41 route.ts di disk termasuk sub-route) · **29 route-level prefixes + 24 `q-*` shared-query prefixes (= 53 total) invalidated by `invalidateAnalysisCache()` on ANY mutation** (route-level: analysis, pareto, recommendations, export-report, outlet-items, item-history, drilldown, area-item-heatmap, item-trend, item-peer-comparison, item-trend-rank, flip-ranking, flip-ranking-drilldown, item-anomali-outlets, peer-comparison ×4, price-effect, item-search, heatmap-cell-detail, benchmark-opportunity, change-analysis ×2, **outlet-monthly-series + peer-track-record [DEEPRESTO-1]**, **waste-series + waste-top-items + waste-peer-zscore [DEEP-WASTE-1]**; q-* baru: **`q-waste-rules` [DEEP-WASTE-1]**) · All protected routes use `ADMIN_TOKEN` middleware · 32 routes export `maxDuration` (10–300s, single source of truth since PAKET C dropped the no-op vercel.json functions block).
 
 **REMOVED (H-10 dead-code cleanup):** `/api/resto-bahan-matrix` route (330 LOC — zero frontend consumers since H-8) + root `/api/route.ts` health stub ("Hello, world!") — both deleted; `invalidateAnalysisCache()` route list updated. (Earlier removals: `/api/audit-log` + `AuditLog` model, DEL-AUDIT; `/api/compliance` + `/api/chronic-outlets`, H-2b Kepatuhan-tab deletion.)
 
@@ -174,6 +189,9 @@ Deviation is decomposed into 4 categories for root cause identification:
 20. `/api/outlet-monthly-series` (DEEPRESTO-1 — deret bulanan same-week per outlet; SWR 5 mnt + dedup)
 21. `/api/peer-track-record` (DEEPRESTO-1 — rank peer lintas bulan band ±10%; SWR 5 mnt + dedup)
 22. H-10 note: `/api/item-search` + `/api/area-item-heatmap/cell-detail` pakai cache 60 dtk (bukan SWR 5 mnt)
+23. `/api/waste-series` (DEEP-WASTE-1 — deret waste/susut/trial/residual/loss outlet×bulan same-week cap 12 bulan + 4 detektor jaringan: spike 2σ STDDEV_SAMP, zeroWasteBigLoss, underRecording <0,1%, residualDominant >80%+waste<10%; SWR 5 mnt + dedup)
+24. `/api/waste-top-items` (DEEP-WASTE-1 — Pareto item by ΣABS nominalWaste + share/kumulatif + kolom sistematik #outlet/#bulan + trend last/prev + breakdown Item×Outlet top-8; SWR 5 mnt + dedup)
+25. `/api/waste-peer-zscore` (DEEP-WASTE-1 Fase 2 — z-score waste/sales satu outlet vs band dinamis ±10% per bulan + rank + flag paradox; SWR 5 mnt + dedup)
 
 > `/api/area-item-heatmap/cell-detail` is NOT cached (direct query — small result set, low latency, user-initiated drill-down).
 >
@@ -181,7 +199,7 @@ Deviation is decomposed into 4 categories for root cause identification:
 
 ## 5. Components (35+)
 
-### Dashboard (`src/components/dashboard/` — 23 components + `tabs/` folder + `shared/` barrel)
+### Dashboard (`src/components/dashboard/` — 24 components + `tabs/` folder + `shared/` barrel)
 - `ExecutiveSummary` — KPI cards (sales, deviation, abnormal count)
 - `TopItems` — Top items by deviation
 - `TopOutlets` — REMOVED (H-11 #4a): duplikat Pareto tab byOutlet quadrant card (metrik sama ABS(SUM nominalDeviasi), 2 scan backend). Outlet 80/20 → tab Pareto; prioritas outlet Dashboard → Resto Prioritas Analisa + Ranking Kondisi Resto.
@@ -194,18 +212,19 @@ Deviation is decomposed into 4 categories for root cause identification:
 - `ItemDeepDive` — Item-level deep dive
 - `ParetoDashboard` — Pareto 80/20 analysis
 - `PeerComparison` — Outlet vs ±10% sales peers
-- `RestoAnalysis` — Restaurant analysis panel. **DEEPRESTO-1**: section baru "Riwayat Multi-Bulan" setelah Profil Outlet (band 05 DEEP ANALYSIS) — `resto-analysis/monthly-series-card.tsx` (tabel deret 10 kolom + baris TOTAL + badge Abnormal + legend threshold) + `resto-analysis/peer-track-record-card.tsx` (tabel rank x/n + gap vs median + chip ringkasan avg rank / Nx terburuk / bulan terakhir); keduanya memo + self-fetch useQuery staleTime 5 mnt + keepPreviousData
+- `RestoAnalysis` — Restaurant analysis panel. **DEEPRESTO-1**: section baru "Riwayat Multi-Bulan" setelah Profil Outlet (band 05 DEEP ANALYSIS) — `resto-analysis/monthly-series-card.tsx` (tabel deret 10 kolom + baris TOTAL + badge Abnormal + legend threshold) + `resto-analysis/peer-track-record-card.tsx` (tabel rank x/n + gap vs median + chip ringkasan avg rank / Nx terburuk / bulan terakhir); keduanya memo + self-fetch useQuery staleTime 5 mnt + keepPreviousData. **DEEP-WASTE-1 (Fase 2)**: section baru "Profil Waste" setelah Riwayat Multi-Bulan — `resto-analysis/waste-profile-card.tsx` (deret waste per bulan: sales/waste/susut/trial/residual/total loss/waste-sales % + rank band ±10% + z-score + flag paradox; self-fetch `/api/waste-series?outletCode=` + `/api/waste-peer-zscore`)
 - `AreaItemHeatmap` — Area × Item heatmap with Pareto 80/20 mode + dual display (Total + Ø per resto) + drill-down Sheet (lazy-loaded)
 - `AreaItemHeatmapSheet` — Drill-down Sheet (right-side) showing per-outlet detail for a clicked cell — lazy-loaded via `next/dynamic` (PERF-FE-01)
 - `DashboardHeader` — Sticky 2-tier header (logo + actions + FilterBar); extracted from `page.tsx` split
 - `DashboardFooter` — Sticky bottom footer (brand + stats + last-analysis perf); extracted from `page.tsx` split
 
-#### `tabs/` folder (5 tab modules + wrapper — extracted from `page.tsx` split; ComplianceTab dihapus b37cc40)
+#### `tabs/` folder (8 tab modules + wrapper — extracted from `page.tsx` split; ComplianceTab dihapus b37cc40; **WasteTab baru DEEP-WASTE-1**)
 - `DashboardTab.tsx` — Main overview tab (11 sections: Exec Summary, Resto Rec, Insights, Health+Growth, Multi-Period, Top Items+Outlets, Area+Ranking, Item Consistency [Massal/Regional/Lokal], Z-Score+BOM Correlation, Loss/Surplus, Heatmap). Owns 7 `next/dynamic` lazy imports for heavy chart components. **PAKET A**: semua `TabsContent` memakai `forceMount` + `data-[state=inactive]:hidden` (keep-alive — pindah tab tidak remount subtree; state lokal + scroll position bertahan).
 - `RestoTab.tsx` — Wraps lazy `RestoAnalysis` in `FetchAware` + `ErrorBoundary`
 - `PeerTab.tsx` — Wraps lazy `PeerComparison` in `FetchAware` + `ErrorBoundary`
 - `ParetoTab.tsx` — Wraps static `ParetoDashboard` in `FetchAware` + `ErrorBoundary`
 - `ItemTrendTab.tsx` — Trend Item tab (5th tab) — item search autocomplete + metric selector (QTY Deviasi/Waste/Susut/Trial) + sortable table + Z-Score coloring (signed: positive=red/worse, negative=green/better) + Rank Badge header + Period drill-down + Rank Trend chart + Peer Comparison panel. See `tabs/ItemTrendTab/` folder above for the 8-module breakdown.
+- `WasteTab.tsx` — **NEW DEEP-WASTE-1 (tab ke-8, ikon Trash2)**: 6 kartu self-fetch useQuery (`tabs/WasteTab/` folder 8 modul: index + types + kpi-strip + profile-table + matrix-card + decomposition-card + pareto-card + anomaly-card) — KPI strip same-week multi-bulan + chips severity · tabel profil outlet rank waste/sales · matriks outlet×bulan color-scale 5 metrik switch · dekomposisi loss stacked (recharts) · Pareto item 80/20 + sistematik + expandable breakdown per outlet · daftar anomali ber-severity (KRITIS/TINGGI/SEDANG). Backed by `/api/waste-series` + `/api/waste-top-items`.
 - `ItemTrendLineChart.tsx` — Recharts LineChart (lazy-loaded) — dual Y-axis (QTY left, Z-Score right), historical mean baseline (dashed), color-coded Z-Score dots, ReferenceLines at z=±2,±3
 
 #### `tabs/ItemTrendTab/` folder (NEW Phase 1+2+3 + Phase A+B+C — kini ~25 modul pasca SPLIT-B barrel/folder pattern, split dari monolithic `ItemTrendTab.tsx`)
@@ -283,12 +302,12 @@ Deviation is decomposed into 4 categories for root cause identification:
 ## 6. Key Features
 
 ### Anomaly Engine
-- **19-rule engine** (15 original + 4 BOM correlation; spec deklaratif di `rules.yaml`, eksekusi SQL push-down)
+- **23-rule engine** (15 original + 4 BOM correlation + 4 waste [DEEP-WASTE-1]; spec deklaratif di `rules.yaml`, eksekusi SQL push-down)
 - Rules defined in `src/config/rules.yaml` (sole source of truth — `src/config/rules.ts` was deleted as dead code in FIX-DOCS)
-- Evaluator: SQL push-down in `src/lib/queries/rule-evaluation.ts` — 16 rule period + 3 rule zScore (HISTORICAL_ABNORMAL, HISTORICAL_ABNORMAL_SURPLUS, HISTORICAL_WARNING) via `evaluateHistoricalRulesSql` (zScore SQL push-down sejak commit cb7f9cd "perf(H-9)"; dulu JS post-process). The former `BENCHMARK_ABOVE_AREA` + `BENCHMARK_ABOVE_NETWORK` rules were deleted in FIX-RULE-CONFIG (CONFIG-05) as duplicates of HISTORICAL_WARNING / HISTORICAL_ABNORMAL.
+- Evaluator: SQL push-down in `src/lib/queries/rule-evaluation.ts` — 19 rule period (16 lama + **3 waste record-grain DEEP-WASTE-1**: WASTE_ZERO_BIG_LOSS [ABNORMAL/81 — DEEP-WASTE-1-B bump dari 79 agar tidak ter-shadow HIGH_LOSS_NOMINAL 80], WASTE_SALES_UNDER_RECORD [WARNING/57], WASTE_RESIDUAL_DOMINANT [ABNORMAL/76 — DEEP-WASTE-1-B bump dari 59/WARNING agar tidak ter-shadow RESIDUAL_LOSS_HIGH 75 tanpa menurunkan total severity]) + 3 rule zScore (HISTORICAL_ABNORMAL, HISTORICAL_ABNORMAL_SURPLUS, HISTORICAL_WARNING) via `evaluateHistoricalRulesSql` + 1 rule waste zScore (WASTE_SPIKE_2SIGMA [ABNORMAL/74] via `evaluateWasteRulesSql` DEEP-WASTE-1 — z vs riwayat rasio waste/BOM sendiri, diwiring ke run-queries `q-waste-rules` + post-process merge) (zScore SQL push-down sejak commit cb7f9cd "perf(H-9)"; dulu JS post-process). The former `BENCHMARK_ABOVE_AREA` + `BENCHMARK_ABOVE_NETWORK` rules were deleted in FIX-RULE-CONFIG (CONFIG-05) as duplicates of HISTORICAL_WARNING / HISTORICAL_ABNORMAL.
 - Analysis module: `patternEngine` (cross-outlet pattern detection). `rootCauseEngine` + `ruleService` dihapus sebagai dead code (Task W) — seluruh evaluasi rule berjalan via SQL di `rule-evaluation.ts`; teks rekomendasi yang hidup ada di InsightsPanel + resto-recommendations.
 
-### 19 Anomaly Rules
+### 23 Anomaly Rules
 
 | # | Code | Category | Severity | Priority | Trigger |
 |---|------|----------|----------|----------|---------|
@@ -311,6 +330,10 @@ Deviation is decomposed into 4 categories for root cause identification:
 | 17 | `HISTORICAL_ABNORMAL` | HISTORICAL | ABNORMAL | 78 | zScore > `historicalZscoreHigh` AND LOSS |
 | 18 | `HISTORICAL_ABNORMAL_SURPLUS` | HISTORICAL | ABNORMAL | 77 | zScore > `historicalZscoreHigh` AND SURPLUS |
 | 19 | `HISTORICAL_WARNING` | HISTORICAL | WARNING | 58 | warn < zScore ≤ high |
+| 20 | `WASTE_ZERO_BIG_LOSS` | WASTE | ABNORMAL | 81 | \|waste\| ≤ 1 AND loss < −`highLossNominalThreshold` (DEEP-WASTE-1; prioritas 79→81 di DEEP-WASTE-1-B agar tidak ter-shadow HIGH_LOSS_NOMINAL) |
+| 21 | `WASTE_SALES_UNDER_RECORD` | WASTE | WARNING | 57 | sales > 0 AND \|waste\| < 0,1% sales AND LOSS (DEEP-WASTE-1) |
+| 22 | `WASTE_RESIDUAL_DOMINANT` | WASTE | ABNORMAL | 76 | LOSS AND residual > `residualLossHighPct` AND \|waste\| < 10% loss (DEEP-WASTE-1; 59/WARNING→76/ABNORMAL di DEEP-WASTE-1-B agar tidak ter-shadow RESIDUAL_LOSS_HIGH) |
+| 23 | `WASTE_SPIKE_2SIGMA` | WASTE | ABNORMAL | 74 | z-score rasio waste/BOM > 2σ vs riwayat sendiri, n ≥ 4 (DEEP-WASTE-1, via `evaluateWasteRulesSql`) |
 
 > **Removed (FIX-RULE-CONFIG CONFIG-05):** `BENCHMARK_ABOVE_AREA` (was P50, WARNING) + `BENCHMARK_ABOVE_NETWORK` (was P72, ABNORMAL) — duplicates of `HISTORICAL_WARNING` / `HISTORICAL_ABNORMAL` (same zScore condition, different name). True area/network comparison lives in `computeBenchmark()` and surfaces as `ABOVE_AREA` / `ABOVE_NETWORK` flags on the Resto Profile, not as rules.
 
@@ -331,6 +354,7 @@ Deviation is decomposed into 4 categories for root cause identification:
 - **Peer comparison** (outlet vs ±10% sales peers)
 - **Outlet health ranking** (3D: Financial + Operational + Unexplained)
 - **Deep Analysis Resto — Riwayat Multi-Bulan** (NEW DEEPRESTO-1, tab Resto): 2 card self-fetch — (1) `MonthlySeriesCard`: deret bulanan per outlet basis same-week (Sales, MoM %, QTY BOM, Nominal Deviasi signed, Dev/BOM %, Loss, Surplus, Net Cost Ratio, flag Abnormal definisi rekurensi, baris TOTAL, jendela ≤12 bulan inklusif); (2) `PeerTrackRecordCard`: rank lintas bulan di band sales setara ±10% dinamis per bulan (rank net dev 1=terburuk, rank loss 1=terbesar, bandSize, median loss, ringkasan avg rank / Nx terburuk / bulan terakhir). Backed by `/api/outlet-monthly-series` + `/api/peer-track-record`. Test: `tests/queries/outlet-monthly-series.test.ts` (16 test — MoM, netRatio, abnormal boundary, bigint coercion, SQL shape same-week, kelompok scoped/unscoped).
+- **Deep Waste Analysis — Tab "Waste" + Profil Waste per Resto** (NEW DEEP-WASTE-1 Fase 1+2, laporan Analisa-Deep-Waste-Area-1 → fitur live 344 outlet): tab ke-8 dengan 6 kartu self-fetch (KPI strip same-week + chips severity · profil outlet rank waste/sales · matriks outlet×bulan color-scale 5 metrik switch · dekomposisi loss stacked terjelaskan vs residual · Pareto item 80/20 + kolom sistematik #outlet/#bulan + breakdown Item×Outlet top-8 · daftar anomali ber-severity KRITIS/TINGGI/SEDANG dari 4 detektor jaringan di `queryWasteNetwork`) + card "Profil Waste" di tab Resto setelah Riwayat Multi-Bulan (`queryWastePeerZScore` — z-score waste/sales vs band ±10% dinamis per bulan + rank + flag paradox). Backed by 3 API baru (`/api/waste-series` + `/api/waste-top-items` + `/api/waste-peer-zscore`). Test: `tests/queries/waste-series.test.ts` + `tests/queries/waste-top-items.test.ts` (35 test — detektor boundary, bigint coercion, SQL shape same-week + cap 12 bulan, pareto share/kumulatif, sistematik, z-score band). Fase 3 (PDF section "Analisis Waste" + input alasan residual) ditunda menunggu GO.
 
 ### Trend Item Tab Expansion (NEW Phase 1+2+3)
 6 new modules in the Trend Item Tab (`/components/dashboard/tabs/ItemTrendTab/`):
@@ -399,7 +423,7 @@ Detects **suspicious reversal patterns** — an item whose deviation flips sign 
 ### Caching
 - **DB-level `AggregationCache`** (TTL: 5 mnt default; `/api/analysis` 30 mnt via `ANALYSIS_CACHE_TTL_MINUTES` — data immutabel antar mutasi, mutasi selalu invalidate; `awaitWrite` pattern)
   - API: `getCached()`, `setCached()` (MUST be `await`-ed with `awaitWrite=true`), `invalidateAll()`, `getCachedWithMeta()` (returns `{ data, stale }` without deleting expired row, for SWR pattern), `getCachedRawWithMeta()` (NEW P3-HYG-1 — returns `{ raw, stale }` RAW JSON string tanpa parse, untuk raw passthrough)
-  - **26 route-level cached prefixes + 23 `q-*` shared-query prefixes (= 49 total, update DOCSYNC-1)**: route-level — `analysis`, `pareto`, `recommendations`, `export-report`, `outlet-items`, `item-history`, `drilldown`, `area-item-heatmap`, `item-trend`, `item-peer-comparison`, `item-trend-rank`, `flip-ranking`, `flip-ranking-drilldown`, `item-anomali-outlets`, `peer-comparison`, `peer-comparison-items`, `peer-comparison-trend` (P3-HYG-3), `peer-comparison-top-items` (PEERTOP), `price-effect` (Task W), `item-search` + `heatmap-cell-detail` (H-8 QW6, TTL 5 mnt sejak a70d1c8), `benchmark-opportunity` (ANA-E), `change-analysis` + `change-analysis-items` (CHANGE-1), `outlet-monthly-series` + `peer-track-record` (DEEPRESTO-1) — plus **23 `q-*` shared-query prefixes** (P2-9 ×6 + `q-outlet-agg` H-10 + H-11 #3 ×7 + `q-item-trend-matrix` EXPORT-PDF + `q-flip-rank`/`q-peer-cmp`/`q-peer-cmp-items`/`q-area-catavg` REFINE-1 + `q-self-anom`/`q-week-comp` REFINE-3 + `q-peer-topitems`/`q-peer-autotarget` PERF-AUDIT-1 — SEMUA query berat yang dihitung pipeline analysis + export-report kini di-share; helper key `histPeriodsKeyParts` + `histCriticalKeysHash` + wrapper Map-safe `cachedSharedQueryMap` di `src/lib/queries/query-cache.ts`)
+  - **29 route-level cached prefixes + 24 `q-*` shared-query prefixes (= 53 total, update DEEP-WASTE-1)**: route-level — `analysis`, `pareto`, `recommendations`, `export-report`, `outlet-items`, `item-history`, `drilldown`, `area-item-heatmap`, `item-trend`, `item-peer-comparison`, `item-trend-rank`, `flip-ranking`, `flip-ranking-drilldown`, `item-anomali-outlets`, `peer-comparison`, `peer-comparison-items`, `peer-comparison-trend` (P3-HYG-3), `peer-comparison-top-items` (PEERTOP), `price-effect` (Task W), `item-search` + `heatmap-cell-detail` (H-8 QW6, TTL 5 mnt sejak a70d1c8), `benchmark-opportunity` (ANA-E), `change-analysis` + `change-analysis-items` (CHANGE-1), `outlet-monthly-series` + `peer-track-record` (DEEPRESTO-1), `waste-series` + `waste-top-items` + `waste-peer-zscore` (DEEP-WASTE-1) — plus **24 `q-*` shared-query prefixes** (P2-9 ×6 + `q-outlet-agg` H-10 + H-11 #3 ×7 + `q-item-trend-matrix` EXPORT-PDF + `q-flip-rank`/`q-peer-cmp`/`q-peer-cmp-items`/`q-area-catavg` REFINE-1 + `q-self-anom`/`q-week-comp` REFINE-3 + `q-peer-topitems`/`q-peer-autotarget` PERF-AUDIT-1 + `q-waste-rules` DEEP-WASTE-1 — SEMUA query berat yang dihitung pipeline analysis + export-report kini di-share; helper key `histPeriodsKeyParts` + `histCriticalKeysHash` + wrapper Map-safe `cachedSharedQueryMap` di `src/lib/queries/query-cache.ts`)
   - `invalidateAnalysisCache()` clears ALL of those prefixes on any mutation (ingest, settings, pic, data delete, migrate-direction, import-drive)
 - **Stale-While-Revalidate (SWR)** (PERF-CACHE-09 + CACHE-01 + AUDIT-PERF-5): `withCacheAndDedup()` implements SWR on top of `getCachedWithMeta`:
   - Fresh hit → return immediately
@@ -495,13 +519,13 @@ Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgft
 
 | Metric | Value |
 |--------|-------|
-| Lines of code in `src/` | 70,630 (update DOCSYNC-1 pasca-DEEPRESTO-1; sebelumnya 67,236 — Task W cleanup + price-effect + PDF export builder + SPLIT-1/2) |
-| Test files | 32 |
-| Test cases | 523 (507 baseline + 16 DEEPRESTO-1) |
-| Git commits | 601 |
+| Lines of code in `src/` | 73,616 (update DEEP-WASTE-1 pasca-DEEPRESTO-1; sebelumnya 70,630 DOCSYNC-1 — Task W cleanup + price-effect + PDF export builder + SPLIT-1/2) |
+| Test files | 34 (32 + 2 DEEP-WASTE-1: waste-series + waste-top-items) |
+| Test cases | 559 (524 baseline DOCSYNC-1 + 35 DEEP-WASTE-1) |
+| Git commits | 603 (601 DOCSYNC-1 + f5c58d3 DEEP-WASTE-1 + 4bb2ace DEEP-WASTE-1-B) |
 | npm dependencies | 31 |
-| API routes (main) | 37 route dirs (38 route.ts di disk termasuk sub-route; DEEPRESTO-1 +2: `/api/outlet-monthly-series` + `/api/peer-track-record`) |
-| Cached routes | 26 route-level prefix + 23 `q-*` shared = 49 prefix di-invalidate tiap mutasi (update DOCSYNC-1, diverifikasi dari invalidate.ts) |
+| API routes (main) | 40 route dirs (41 route.ts di disk termasuk sub-route; DEEPRESTO-1 +2: `/api/outlet-monthly-series` + `/api/peer-track-record`; DEEP-WASTE-1 +3: `/api/waste-series` + `/api/waste-top-items` + `/api/waste-peer-zscore`) |
+| Cached routes | 29 route-level prefix + 24 `q-*` shared = 53 prefix di-invalidate tiap mutasi (update DEEP-WASTE-1, diverifikasi dari invalidate.ts) |
 | Dashboard components | 24 + `tabs/ItemTrendTab/` folder (~25 modul pasca SPLIT-B: hooks/ + components/ + 3 subfolder modul) + `AreaItemHeatmapSheet` + `DashboardHeader` + `DashboardFooter` + `shared/peer-comparison-cards/` (7 files) + `shared/` dashboard components (5 TREMOR) |
 | UI components | 30 (29 shadcn + Callout) |
 | Dashboard component patterns | 9 total (3 evidence-dev + 6 tremor) |
@@ -516,6 +540,7 @@ Measured against Supabase Singapore (`ap-southeast-1`, DB host `proosjqivxadwgft
 | Removed features | Audit Log (~565 LOC); `TrendChart` (dead export, P3-HYG-5); `package-lock.json` stale (PAKET C — bun.lock satu-satunya); **tab Kepatuhan + route pair `/api/compliance`+`/api/chronic-outlets` (~2.268 LOC, b37cc40 — atas permintaan user)** |
 | Git identity | `anandategarch <anandategarch@users.noreply.github.com>` (author + committer) |
 | Deep resto | Riwayat Multi-Bulan (MonthlySeriesCard + PeerTrackRecordCard + 2 API) — DEEPRESTO-1 commit 58561d4; client-side invalidation keys ditambahkan DOCSYNC-1-B |
+| Deep waste | Tab "Waste" (6 kartu) + Profil Waste Resto + 3 API + 4 rule engine (23 total) — DEEP-WASTE-1 commit f5c58d3 + patch prioritas 4bb2ace (DEEP-WASTE-1-B) |
 
 ---
 
@@ -572,16 +597,16 @@ src/
 │   ├── useAnalysis/               # NEW (SPLIT Batch 2): 8-file folder + barrel — index.ts + types.ts + fetchAnalysis.ts + prefetchHeatmap.ts + useAnalysis.ts + useStatus.ts + useDrilldown.ts + useItemTrend.ts
 │   ├── useDashboard.ts             # Zustand store (filters + UI state + trendSelectedItem + setFocusOutlet [NEW Phase 1+2])
 │   ├── useDashboardEffects.ts      # NEW (SPLIT-PAGE): 2 useEffects (auto-select atomic + cache warm). H-12: menerima area/kelompok/outlet/pic untuk key-parity prefetchHeatmap
-│   ├── useDashboardActions.ts      # NEW (SPLIT-PAGE): export/refresh handlers + keyboard shortcuts. handleRefresh → invalidateAllData (query-invalidation.ts, 21 root key — DOCSYNC-1-B menambah outlet-monthly-series + peer-track-record; dipakai bersama 7 handler mutasi lain)
+│   ├── useDashboardActions.ts      # NEW (SPLIT-PAGE): export/refresh handlers + keyboard shortcuts. handleRefresh → invalidateAllData (query-invalidation.ts, 24 root key — DOCSYNC-1-B menambah outlet-monthly-series + peer-track-record; DEEP-WASTE-1 menambah waste-series + waste-top-items + waste-peer-zscore; dipakai bersama 7 handler mutasi lain)
 │   └── use-toast.ts                # shadcn toast hook (use-mobile.ts DELETED di H-10 — zero importers)
 ├── lib/
-│   ├── queries/                    # 16+ query modules (SQL push-down, incl. heatmap.ts + item-trend.ts + item-trend-rank.ts + item-peer-comparison.ts + flip-ranking.ts + flip-drilldown.ts + shared.ts buildSqlFilters + items/item-outlet-breakdown.ts [NEW H-12: core SQL per-item per-outlet GROUP BY dipakai bersama anomali-outlets + heatmap cell detail + flip drilldown ×2] + outlets/outlet-monthly-series.ts [DEEPRESTO-1: queryOutletMonthlySeries + queryPeerTrackRecord + helper murni]; compliance.ts + chronic-outlets.ts DIHAPUS b37cc40)
+│   ├── queries/                    # 16+ query modules (SQL push-down, incl. heatmap.ts + item-trend.ts + item-trend-rank.ts + item-peer-comparison.ts + flip-ranking.ts + flip-drilldown.ts + shared.ts buildSqlFilters + items/item-outlet-breakdown.ts [NEW H-12: core SQL per-item per-outlet GROUP BY dipakai bersama anomali-outlets + heatmap cell detail + flip drilldown ×2] + outlets/outlet-monthly-series.ts [DEEPRESTO-1: queryOutletMonthlySeries + queryPeerTrackRecord + helper murni] + waste/waste-series.ts [DEEP-WASTE-1: queryWasteNetwork deret + 4 detektor + queryWastePeerZScore] + waste/waste-top-items.ts [DEEP-WASTE-1: queryWasteTopItems Pareto sistematik]; compliance.ts + chronic-outlets.ts DIHAPUS b37cc40)
 │   ├── metrics/                    # 8 metric functions (deviation, benchmark, historical, growth)
 │   ├── cache-headers.ts            # HTTP Cache-Control presets
 │   ├── early-http-response.ts      # NEW (H-12): EarlyHttpResponse — 1 definisi bersama (dulu 3×: export-report + outlet-items services + item-history) — abort signal untuk computeFn dalam withCacheAndDedup (404 tidak mengisi cache)
 │   ├── outlet-code-filters.ts     # NEW (H-12): resolveOutletCodeFilters(kelompok, pic) — 1 definisi bersama (dulu copy-paste 6×: item-peer-comparison, item-trend-rank, item-anomali-outlets, flip-ranking, flip-ranking/drilldown, price-effect)
 │   ├── error-response.ts           # Sanitized error helper
-│   ├── aggregation-cache/          # DB-level cache folder (index.ts + generation.ts + invalidate.ts — getCached/setCached/getCachedWithMeta/getCachedRawWithMeta/withCacheAndDedup/invalidateAnalysisCache; 49 prefix di-invalidate: 26 route-level + 23 q-*)
+│   ├── aggregation-cache/          # DB-level cache folder (index.ts + generation.ts + invalidate.ts — getCached/setCached/getCachedWithMeta/getCachedRawWithMeta/withCacheAndDedup/invalidateAnalysisCache; 53 prefix di-invalidate: 29 route-level + 24 q-*)
 │   ├── zScoreHelpers.ts            # zScoreColor + zScoreStatus
 │   ├── format.ts                   # fmtGrowth + growthColor + fmtFullSigned + FORMAT_PRESETS (33 presets)
 │   ├── colorScale.ts               # createDivergingScale + createLinearScale + palettes
@@ -590,9 +615,9 @@ src/
 │   └── settings.ts                 # Configurable thresholds (incl. BOM_DISPROPORTIONATE_FACTOR default 1.5)
 ├── engine/
 │   └── analysis/                   # patternEngine + shared types (ruleService/rootCause/engine-rules dihapus Task W — dead code)
-├── lib/queries/rule-evaluation.ts  # 19-rule SQL push-down evaluator (16 SQL + 3 JS post-process)
+├── lib/queries/rule-evaluation.ts  # 23-rule SQL push-down evaluator (19 SQL flags + 3 zScore hist + 1 waste zScore — DEEP-WASTE-1)
 ├── config/
-│   └── rules.yaml                  # 19 anomaly rules — SPEC deklaratif (eksekusi = rule-evaluation.ts)
+│   └── rules.yaml                  # 23 anomaly rules — SPEC deklaratif (eksekusi = rule-evaluation.ts; 4 rule waste baru DEEP-WASTE-1)
 └── middleware.ts                   # Auth (ADMIN_TOKEN, PROTECTED_PATHS)
 
 .githooks/
