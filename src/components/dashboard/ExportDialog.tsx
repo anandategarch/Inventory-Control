@@ -100,7 +100,10 @@ export function ExportDialog({ open, onOpenChange, onExport, isExporting }: Expo
             Export ke PDF (.pdf)
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Pilih section yang ingin di-export. Laporan PDF dengan desain penuh dan grafik. Filter resto mengikuti Filter Resto di tab Resto Analysis (atau filter resto global).
+            {/* FIX (BUGHUNT-R2 / pasca-FILTERDROP-1): dropped "(atau filter resto
+                global)" — the global resto filter no longer exists; export scope
+                comes only from the Resto tab's "Filter Resto" picker (focusOutlet). */}
+            Pilih section yang ingin di-export. Laporan PDF dengan desain penuh dan grafik. Filter resto mengikuti Filter Resto di tab Resto Analysis.
           </DialogDescription>
         </DialogHeader>
 

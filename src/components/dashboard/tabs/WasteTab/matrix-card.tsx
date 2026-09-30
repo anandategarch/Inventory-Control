@@ -118,7 +118,10 @@ export const WasteMatrixCard = memo(function WasteMatrixCard({
           <div className="p-6 text-center text-sm text-muted-foreground">Tidak ada data untuk matriks pada scope ini.</div>
         ) : (
           <>
-            <div className="max-h-96 overflow-auto waste-scroll">
+            {/* FIX (BUGHUNT-R2): dropped dead `waste-scroll` class — defined
+                in no stylesheet (grep: 0 CSS hits); max-h-96/overflow-auto
+                wrapper kept. */}
+            <div className="max-h-96 overflow-auto">
               <table className="w-full border-collapse text-xs min-w-[860px]">
                 <thead className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm z-10">
                   <tr>
@@ -127,7 +130,10 @@ export const WasteMatrixCard = memo(function WasteMatrixCard({
                     </th>
                     {months.map((m) => (
                       <th key={m.monthKey} className="text-center font-semibold text-[10px] h-8 px-1 whitespace-nowrap" title={m.dqError ? `DQ error: ${m.dqErrorCount} isu` : undefined}>
-                        {m.monthLabel.replace(' 2026', '')}{m.dqError ? ' ⚠' : ''}
+                        {/* FIX (BUGHUNT-R2): strip the trailing year generically —
+                            the old replace(' 2026', '') hardcoded the dataset's
+                            year and would break crossing into 2027. */}
+                        {m.monthLabel.replace(/\s\d{4}$/, '')}{m.dqError ? ' ⚠' : ''}
                       </th>
                     ))}
                   </tr>

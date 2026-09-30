@@ -26,7 +26,10 @@ export function NoOutletCard() {
           </div>
           <p className="text-sm font-medium text-muted-foreground">Pilih outlet untuk melihat Peer Comparison</p>
           <p className="text-xs text-muted-foreground/60 mt-1">Sistem akan mencari resto dengan sales ±10% sebagai peer group</p>
-          <p className="text-xs text-muted-foreground/60 mt-1">Pilih lewat filter Outlet di bilah atas, atau klik baris outlet di tab Resto / Area.</p>
+          {/* FIX (BUGHUNT-R2 / pasca-FILTERDROP-1): the global "filter Outlet di
+              bilah atas" no longer exists — outlet scoping now comes from the
+              Resto tab's in-tab "Filter Resto" picker (focusOutlet). */}
+          <p className="text-xs text-muted-foreground/60 mt-1">Pilih outlet lewat picker &apos;Filter Resto&apos; di tab Resto, atau klik baris outlet di tab Resto / Area.</p>
         </div>
       </CardContent>
     </Card>

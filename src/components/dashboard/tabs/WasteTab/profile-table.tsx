@@ -8,7 +8,9 @@
 //  susut, trial, residual, loss, waste/sales + the 4 network
 //  detector badges. The in-app version of the offline report's
 //  "Profil Waste Outlet" sheet.
-//  Long list handling: max-h-96 + custom scrollbar (convention).
+//  Long list handling: max-h-96 + overflow-auto (convention).
+//  (BUGHUNT-R2: the old comment promised a "custom scrollbar" via the
+//  `waste-scroll` class — dead: defined in no stylesheet, removed.)
 // ============================================================
 
 import { memo, useState } from 'react';
@@ -49,7 +51,10 @@ export const WasteProfileTable = memo(function WasteProfileTable({
           <div className="p-6 text-center text-sm text-muted-foreground">Tidak ada data waste pada scope ini.</div>
         ) : (
           <>
-            <div className="max-h-96 overflow-auto waste-scroll">
+            {/* FIX (BUGHUNT-R2): dropped dead `waste-scroll` class — defined
+                in no stylesheet (grep: 0 CSS hits); max-h-96/overflow-auto
+                wrapper kept. */}
+            <div className="max-h-96 overflow-auto">
               <Table className="min-w-[1050px]">
                 <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                   <TableRow className="border-b hover:bg-transparent">

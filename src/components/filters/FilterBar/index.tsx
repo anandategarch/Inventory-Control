@@ -2,7 +2,7 @@
 
 // ============================================================
 //  FilterBar — the dashboard filter toolbar (3 period Selects +
-//  4 org SearchableComboBoxes + action cluster + the hosted
+//  3 org SearchableComboBoxes + action cluster + the hosted
 //  Settings/Data/PIC management dialogs). Split from the former
 //  617-line FilterBar.tsx (SPLIT-C pure code motion — zero
 //  behavior change). Public surface unchanged: named export
@@ -16,7 +16,8 @@
 //                              atomic period handlers
 //    use-ingest.ts           — "Sinkron File" action state
 //    PeriodSelects.tsx       — 3 period dropdowns (hover-prefetch)
-//    OrgSelects.tsx          — 4 org dropdowns
+//    OrgSelects.tsx          — 3 org dropdowns (was 4 — Outlet removed
+//                              by FILTERDROP-1; BUGHUNT-R2 comment sync)
 //    FilterActions.tsx       — action buttons cluster
 //    lazy-dialogs.tsx        — dynamic() management dialogs
 //                              (PERF-FASE1-FE01)
@@ -88,7 +89,9 @@ export function FilterBar() {
         {/* Filter dropdowns (no labels; placeholder in dropdown is clear enough) */}
         <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
           {/* D7: active-filter count badge — at-a-glance signal of how many
-              of the 5 filters are constraining the data (amber = watch). */}
+              of the 4 filters are constraining the data (amber = watch).
+              (BUGHUNT-R2 comment sync: was "5 filters" — outlet was dropped
+              from the count by FILTERDROP-1, see use-filter-bar-state.ts.) */}
           {activeFilterCount > 0 && (
             <Badge
               variant="outline"

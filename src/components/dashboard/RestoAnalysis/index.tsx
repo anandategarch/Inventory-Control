@@ -166,6 +166,29 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
       ? recoData.recommendations[0]
       : null);
 
+  // UX-RESTOFILTER-1 (user request 2025-12): Filter Resto — in-tab outlet
+  // picker. Switching outlets here scopes ONLY this tab (focusOutlet),
+  // unlike the global FilterBar outlet which refilters the dashboard.
+  // FIX (BUGHUNT-R2): hoisted into a variable so the outlet-items ERROR
+  // branch below can render it too — a failed /api/outlet-items request
+  // must not take the tab's outlet switcher down with it.
+  const filterRestoCard = (
+    <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
+      <CardContent className="py-2.5">
+        <div className="flex flex-row items-center gap-3">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
+            <Store className="h-3.5 w-3.5" />
+          </span>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-medium">Filter Resto</p>
+            <p className="text-[11px] text-muted-foreground">Pilih outlet untuk dianalisis — periode mengikuti Bulan/Minggu aktif.</p>
+          </div>
+          <div className="w-80">{restoPicker('w-full')}</div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+
   if (!activeOutlet) {
     return <NoOutletCard>{restoPicker('w-full')}</NoOutletCard>;
   }
@@ -183,7 +206,48 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
     // P23 D5: 'Unknown' fallback → 'Tidak diketahui'; P23 D6 (LEFTOVER #5):
     // wire the outlet-items query's refetch into ErrorCard's "Coba Lagi"
     // button (same wiring as peer-table-card's onRetryMain).
-    return <ErrorCard message={error?.message || data?.error || 'Tidak diketahui'} onRetry={() => { void refetch(); }} />;
+    // FIX (BUGHUNT-R2): a transient /api/outlet-items 500 used to blank the
+    // WHOLE tab via this early return — including the self-fetching cards
+    // below, which consume NOTHING from this payload (their own comment:
+    // "self-fetch — independen dari payload outlet-items"). The ErrorCard
+    // now replaces only the data-consuming sections (outlet header,
+    // prioritas, Profil Outlet, Menu/Bahan/Ranking Nasional); the Filter
+    // Resto picker, the Riwayat Multi-Bulan section + Profil Waste card
+    // keep rendering underneath it.
+    return (
+      <div className="space-y-4">
+        {filterRestoCard}
+        <ErrorCard message={error?.message || data?.error || 'Tidak diketahui'} onRetry={() => { void refetch(); }} />
+        <SectionHeader
+          icon={<History className="h-4 w-4 text-muted-foreground" />}
+          title="Riwayat Multi-Bulan"
+          description="Bagaimana pergerakan bulan-ke-bulan outlet terpilih (same-week) dan posisinya vs resto sales setara?"
+        />
+        {activeOutlet && (
+          <MonthlySeriesCard
+            outletCode={activeOutlet}
+            monthLabel={monthLabel || ''}
+            currentWeek={currentWeek || ''}
+          />
+        )}
+        {activeOutlet && (
+          <PeerTrackRecordCard
+            outletCode={activeOutlet}
+            monthLabel={monthLabel || ''}
+            currentWeek={currentWeek || ''}
+            kelompok={kelompok}
+          />
+        )}
+        {activeOutlet && (
+          <WasteProfileCard
+            outletCode={activeOutlet}
+            monthLabel={monthLabel || ''}
+            currentWeek={currentWeek || ''}
+            kelompok={kelompok}
+          />
+        )}
+      </div>
+    );
   }
 
   // CRITICAL null guards: server occasionally returns partial payloads (e.g. during
@@ -206,21 +270,10 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
     <div className="space-y-4">
       {/* UX-RESTOFILTER-1 (user request 2025-12): Filter Resto — in-tab outlet
           picker. Switching outlets here scopes ONLY this tab (focusOutlet),
-          unlike the global FilterBar outlet which refilters the dashboard. */}
-      <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
-        <CardContent className="py-2.5">
-          <div className="flex flex-row items-center gap-3">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg border bg-muted/50 dark:bg-zinc-800/50 text-muted-foreground shrink-0">
-              <Store className="h-3.5 w-3.5" />
-            </span>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium">Filter Resto</p>
-              <p className="text-[11px] text-muted-foreground">Pilih outlet untuk dianalisis — periode mengikuti Bulan/Minggu aktif.</p>
-            </div>
-            <div className="w-80">{restoPicker('w-full')}</div>
-          </div>
-        </CardContent>
-      </Card>
+          unlike the global FilterBar outlet which refilters the dashboard.
+          (BUGHUNT-R2: hoisted to `filterRestoCard` above — shared with the
+          outlet-items error branch.) */}
+      {filterRestoCard}
 
       {/* Header */}
       <OutletHeaderCard data={data} profile={profile} isFetching={isFetching} isLoading={isLoading} />

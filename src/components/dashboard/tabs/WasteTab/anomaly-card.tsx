@@ -125,7 +125,9 @@ export const WasteAnomalyCard = memo(function WasteAnomalyCard({
             Tidak ada temuan anomali waste pada scope ini — semua outlet dalam batas normal.
           </div>
         ) : (
-          <div className="max-h-96 overflow-auto waste-scroll divide-y">
+          <div className="max-h-96 overflow-auto divide-y">
+            {/* FIX (BUGHUNT-R2): dropped dead `waste-scroll` class — defined in
+                no stylesheet (grep: 0 CSS hits); max-h-96/overflow-auto kept. */}
             {findings.map((f) => (
               <div key={f.key} className="flex items-start gap-3 px-4 py-2.5 hover:bg-muted/40 dark:hover:bg-zinc-800/30">
                 <Badge variant="outline" className={`text-[10px] font-semibold shrink-0 mt-0.5 ${severityBadgeClass(f.severity)}`}>

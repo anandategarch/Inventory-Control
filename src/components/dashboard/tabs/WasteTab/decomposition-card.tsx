@@ -34,7 +34,7 @@ export const LossDecompositionCard = memo(function LossDecompositionCard({
 }) {
   const [showAll, setShowAll] = useState(false);
 
-  const { chartData, totalExplained, totalResidual } = useMemo(() => {
+  const { chartData, totalExplained, totalResidual, totalOutlets } = useMemo(() => {
     const byOutlet = new Map<string, { waste: number; susut: number; trial: number; residual: number; totalLoss: number }>();
     for (const r of monthly) {
       const agg = byOutlet.get(r.outletCode) ?? { waste: 0, susut: 0, trial: 0, residual: 0, totalLoss: 0 };
@@ -51,7 +51,11 @@ export const LossDecompositionCard = memo(function LossDecompositionCard({
     const sliced = showAll ? sorted : sorted.slice(0, INITIAL_OUTLETS);
     const te = sorted.reduce((a, o) => a + o.waste + o.susut + o.trial, 0);
     const tr = sorted.reduce((a, o) => a + o.residual, 0);
-    return { chartData: sliced, totalExplained: te, totalResidual: tr };
+    // FIX (BUGHUNT-R2): expose sorted.length — the expand button below must
+    // show the TOTAL outlet count, not the sliced list's (was "Tampilkan
+    // semua outlet (10)" with 343 outlets), and must hide when there is
+    // nothing to expand (sibling cards gate on fullLength > INITIAL_ROWS).
+    return { chartData: sliced, totalExplained: te, totalResidual: tr, totalOutlets: sorted.length };
   }, [monthly, showAll]);
 
   const explainedShare = totalExplained + totalResidual > 0
@@ -97,10 +101,14 @@ export const LossDecompositionCard = memo(function LossDecompositionCard({
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            {monthly.length > 0 && (
+            {/* FIX (BUGHUNT-R2): gate on the FULL sorted length (was
+                monthly.length > 0 — rendered a no-op toggle when ≤ 10 outlets)
+                and label with totalOutlets instead of the sliced list's
+                chartData.length. */}
+            {totalOutlets > INITIAL_OUTLETS && (
               <div className="mt-2 flex justify-center">
                 <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setShowAll((v) => !v)} aria-expanded={showAll}>
-                  {showAll ? 'Tampilkan top outlet saja' : `Tampilkan semua outlet (${chartData.length})`}
+                  {showAll ? 'Tampilkan top outlet saja' : `Tampilkan semua outlet (${totalOutlets})`}
                 </Button>
               </div>
             )}

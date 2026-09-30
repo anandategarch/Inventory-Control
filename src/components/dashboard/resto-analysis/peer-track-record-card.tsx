@@ -18,7 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Medal } from 'lucide-react';
-import { fmtIDR, numberColorNeg } from '@/lib/format';
+import { fmtIDR, numberColorNeg, fmtDecimal } from '@/lib/format';
 
 interface PeerTrackRecordRow {
   monthKey: string;
@@ -118,7 +118,9 @@ export const PeerTrackRecordCard = memo(function PeerTrackRecordCard({
             <Badge variant="secondary" className="text-xs tabular-nums font-medium">{summary.monthsTracked} bulan ber-band</Badge>
             {summary.avgRankNetDev != null && (
               <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground h-5 tabular-nums">
-                Rata-rata Rank Net #{summary.avgRankNetDev.toFixed(1)}
+                {/* FIX (BUGHUNT-R2 / VH-7): comma decimal — was
+                    avgRankNetDev.toFixed(1) → "3.5". */}
+                Rata-rata Rank Net #{fmtDecimal(summary.avgRankNetDev, 1)}
               </Badge>
             )}
             {summary.monthsWorstNetDev > 0 && (
