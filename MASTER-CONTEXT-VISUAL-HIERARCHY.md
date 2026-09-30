@@ -558,3 +558,18 @@ ThoughtSpot, ClearPoint, IEEE, IBCS/zebrabi/inforiver, NN/g, CFPB, Cedar, Eleken
   caption TERUKUR. Verifikasi: 4 gerbang (tsc 0 · vitest 446/446 · eslint 0 err / 333 warn =
   baseline persis 0 baru · build sukses) + harness mock 24/24 temuan (1440/375, 7 tab, 0
   hydration/page error) + review visual VLM bersih. Detail: worklog ROADMAP-VALIDATE-1 + ANA-1-B/C/D/E.
+- **v1.6 (DEEPRESTO-1 — Riwayat Multi-Bulan di tab Resto)**: user memilih 2 komponen deep
+  analysis resto untuk dieksekusi duluan ("Deret bulanan multi-bulan dalam satu view" +
+  "Track-record rank peer lintas bulan — MAU ITU DULU"). Section baru **"Riwayat Multi-Bulan"**
+  ditambahkan di tab Resto band 05 DEEP ANALYSIS, SETELAH Profil Outlet (posisi paling bawah
+  band — zona baca historis, tidak mengubah ritme zona kerja di atasnya; SectionHeader + ikon
+  History mengikuti pola header seksi). Isi 2 card self-fetch (useQuery staleTime 5 mnt +
+  keepPreviousData, memo): (1) **MonthlySeriesCard** — tabel deret 10 kolom (Bulan, Sales, MoM %,
+  QTY BOM, Nominal Deviasi signed, Dev/BOM %, Loss, Surplus, Net Cost Ratio, Abnormal) + baris
+  TOTAL + badge Abnormal amber + legend threshold; (2) **PeerTrackRecordCard** — tabel rank x/n
+  (Rank Net Dev, Rank Loss, band size, gap vs median loss) + chip ringkasan (avg rank / Nx
+  terburuk / kondisi bulan terakhir). Backed by `/api/outlet-monthly-series` +
+  `/api/peer-track-record` (cache 5 mnt, invalidasi mutasi server-side; DOCSYNC-1-B menutup
+  celah client-side: kedua root query key masuk `ALL_DATA_QUERY_KEYS`). Tabel lebar pakai
+  overflow-x-auto + min-w (pola tabel padat existing); NOL perubahan perhitungan pada modul
+  analisis lain. Detail: worklog DEEPRESTO-1 + DOCSYNC-1.
