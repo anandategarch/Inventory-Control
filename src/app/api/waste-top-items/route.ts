@@ -74,7 +74,26 @@ export async function GET(req: NextRequest) {
     // Resolve PIC → outletCodes (shared logic — same as /api/pareto).
     const picOutletCodes = await resolvePICOutletCodes(pic);
     if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
-      return NextResponse.json({ success: true, items: [], populationTotal: 0, lastMonthKey: null, prevMonthKey: null });
+      return NextResponse.json({ success: true, items: [], populationTotal: 0, lastMonthKey: null, prevMonthKey: null, windowMonths: 0 });
+    }
+
+    // Same currentMonthKey derivation as /api/recommendations — window
+    // upper bound (inclusive of the running month).
+    // BUGHUNT-R1 FIX 11: a format-valid but unresolvable month label (e.g.
+    // "Bulan 2030") used to leave currentMonthKey null → NO upper bound →
+    // the FULL history window was returned with 200 as if valid. Now it
+    // 400s with the standard error shape (the resolveMonthLabel
+    // case-fallback for format-invalid input is unchanged).
+    const currentSourceFile = await db.sourceFile.findFirst({
+      where: { monthLabel: month },
+      select: { monthKey: true },
+    });
+    const currentMonthKey = currentSourceFile?.monthKey ?? null;
+    if (!currentMonthKey) {
+      return NextResponse.json(
+        { success: false, error: `Bulan "${month}" tidak ditemukan dalam data` },
+        { status: 400 },
+      );
     }
 
     const cacheKey = buildCacheKey({
@@ -93,11 +112,6 @@ export async function GET(req: NextRequest) {
       cacheKey,
       WASTE_TOP_ITEMS_CACHE_TTL,
       async () => {
-        const currentSourceFile = await db.sourceFile.findFirst({
-          where: { monthLabel: month },
-          select: { monthKey: true },
-        });
-        const currentMonthKey = currentSourceFile?.monthKey ?? null;
         return queryWasteTopItems(week, currentMonthKey, {
           area: area && area !== 'all' ? area : null,
           kelompok: kelompokParam,
@@ -115,6 +129,10 @@ export async function GET(req: NextRequest) {
       populationTotal: topItemsData.populationTotal,
       lastMonthKey: topItemsData.lastMonthKey,
       prevMonthKey: topItemsData.prevMonthKey,
+      // BUGHUNT-R1 FIX 2 (additive): the ACTUAL window size behind the
+      // sistematik threshold (ceil(windowMonths/2)) so the UI footer can
+      // derive "≥ N bulan" instead of hardcoding the 12-month cap's 6.
+      windowMonths: topItemsData.windowMonths,
       ...(cached ? { cached: true } : {}),
       ...(stale ? { stale: true } : {}),
     }, { headers: CACHE_ANALYSIS });

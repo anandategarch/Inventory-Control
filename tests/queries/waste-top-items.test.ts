@@ -2,15 +2,19 @@
 // "Top Item Waste" Pareto + sistematik + Item×Outlet breakdown).
 //
 // Covers:
-//  1. isSistematikWasteItem (pure) — ≥ half the window months AND ≥ 2 outlets.
+//  1. isSistematikWasteItem (pure) — monthsActive ≥ ceil(ACTUAL windowMonths/2)
+//     AND ≥ 2 outlets (BUGHUNT-R1 FIX 2: the window is a parameter, not the
+//     12-month cap — boundary cases for window 9 → threshold 5).
 //  2. buildWasteTopItems (pure) — share + cumulative share of the population,
-//     sistematik flag, per-outlet breakdown sorted + capped at 8 with
-//     shareOfItem, empty input shape.
-//  3. queryWasteTopItems — three query rounds (items + breakdown + window
-//     months), SQL pins the SAME weekLabel + inclusive window + 12-month cap,
-//     aggregates ΣABS nominalWaste + COUNT DISTINCT outlet/month, pivots
+//     sistematik flag (window-aware), per-outlet breakdown sorted + capped at
+//     8 with shareOfItem, empty input shape, windowMonths passthrough.
+//  3. queryWasteTopItems — month derivation runs FIRST (BUGHUNT-R1 FIX 9) and
+//     yields monthKeys + windowMonths; the item + breakdown rounds filter on
+//     the materialized IN list (no months CTE rebuild), SQL pins the SAME
+//     weekLabel + inclusive window, aggregates ΣABS nominalWaste, counts
+//     DISTINCT outlet/month with waste > 0 (FIX 1 — FILTER clause), pivots
 //     last/prev month inline, breakdown restricted to the top-N item ids,
-//     lastMonthKey/prevMonthKey wired from the month scan.
+//     lastMonthKey/prevMonthKey/windowMonths wired from the month round.
 //
 // Mock @/lib/db (same vi.hoisted pattern as waste-series.test.ts).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -82,11 +86,26 @@ beforeEach(() => {
 // ------------------------------------------------------------
 
 describe('isSistematikWasteItem', () => {
-  it('requires ≥ half the window months AND ≥ 2 outlets', () => {
-    expect(isSistematikWasteItem(6, 2)).toBe(true);   // 6 ≥ ceil(12/2)
-    expect(isSistematikWasteItem(5, 2)).toBe(false);  // 5 < 6
-    expect(isSistematikWasteItem(6, 1)).toBe(false);  // single outlet
-    expect(isSistematikWasteItem(12, 20)).toBe(true);
+  it('requires ≥ ceil(windowMonths/2) months AND ≥ 2 outlets (explicit window)', () => {
+    expect(isSistematikWasteItem(6, 2, 12)).toBe(true);   // 6 ≥ ceil(12/2)
+    expect(isSistematikWasteItem(5, 2, 12)).toBe(false);  // 5 < 6
+    expect(isSistematikWasteItem(6, 1, 12)).toBe(false);  // single outlet
+    expect(isSistematikWasteItem(12, 20, 12)).toBe(true);
+  });
+
+  it('BUGHUNT-R1 FIX 2: live windows below the 12-month cap lower the threshold', () => {
+    // Window 9 (e.g. Jan–Sep data) → ceil(9/2) = 5 — the old hardcoded 6
+    // required the cap itself, unreachable on a 9-month window.
+    expect(isSistematikWasteItem(5, 2, 9)).toBe(true);
+    expect(isSistematikWasteItem(4, 2, 9)).toBe(false);
+    // Window 8 → ceil(8/2) = 4.
+    expect(isSistematikWasteItem(4, 3, 8)).toBe(true);
+    expect(isSistematikWasteItem(3, 3, 8)).toBe(false);
+  });
+
+  it('defaults to the 12-month cap when no window is passed (back-compat)', () => {
+    expect(isSistematikWasteItem(6, 2)).toBe(true);
+    expect(isSistematikWasteItem(5, 2)).toBe(false);
   });
 });
 
@@ -95,7 +114,7 @@ describe('isSistematikWasteItem', () => {
 // ------------------------------------------------------------
 
 describe('buildWasteTopItems', () => {
-  it('computes share + cumulative share against the population + sistematik', () => {
+  it('computes share + cumulative share against the population + window-aware sistematik', () => {
     const result = buildWasteTopItems(
       [
         itemRow({ itemId: 1, totalWaste: 500 }),
@@ -103,8 +122,10 @@ describe('buildWasteTopItems', () => {
         itemRow({ itemId: 3, totalWaste: 200, monthsActive: 2 }),
       ],
       [],
+      12,
     );
     expect(result.populationTotal).toBe(1000);
+    expect(result.windowMonths).toBe(12);
     expect(result.items).toHaveLength(3);
     expect(result.items[0].share).toBeCloseTo(0.5, 10);
     expect(result.items[0].cumulativeShare).toBeCloseTo(0.5, 10);
@@ -112,6 +133,14 @@ describe('buildWasteTopItems', () => {
     expect(result.items[2].cumulativeShare).toBeCloseTo(1.0, 10);
     expect(result.items[0].sistematik).toBe(true);   // 7 months, 3 outlets
     expect(result.items[2].sistematik).toBe(false);  // 2 months
+  });
+
+  it('BUGHUNT-R1 FIX 2: an 8-month window flags 4 active months as sistematik', () => {
+    // monthsActive 4 with cap 12 → NOT sistematik; with the ACTUAL window 8
+    // (ceil(8/2) = 4) → sistematik. Same input rows, different window param.
+    const rows = [itemRow({ monthsActive: 4, outletsActive: 5 })];
+    expect(buildWasteTopItems(rows, [], 12).items[0].sistematik).toBe(false);
+    expect(buildWasteTopItems(rows, [], 8).items[0].sistematik).toBe(true);
   });
 
   it('guards share when populationTotal is 0', () => {
@@ -140,12 +169,13 @@ describe('buildWasteTopItems', () => {
     expect(result.items[0].byOutlet[7].outletCode).toBe('OUT7');
   });
 
-  it('empty input → empty result', () => {
-    const result = buildWasteTopItems([], []);
+  it('empty input → empty result carrying the window', () => {
+    const result = buildWasteTopItems([], [], 9);
     expect(result.items).toEqual([]);
     expect(result.populationTotal).toBe(0);
     expect(result.lastMonthKey).toBeNull();
     expect(result.prevMonthKey).toBeNull();
+    expect(result.windowMonths).toBe(9);
   });
 });
 
@@ -154,35 +184,51 @@ describe('buildWasteTopItems', () => {
 // ------------------------------------------------------------
 
 describe('queryWasteTopItems', () => {
-  it('runs 3 query rounds; item SQL pins week + window + caps 12 + counts distinct outlet/month', async () => {
+  it('derives months FIRST, then item + breakdown rounds filter on the IN list (FIX 9) with waste-based counts (FIX 1)', async () => {
+    // Round 0 — month derivation (8-month live window, most recent first).
+    mockQueryRaw.mockResolvedValueOnce([
+      { monthKey: '2026-08' },
+      { monthKey: '2026-07' },
+      { monthKey: '2026-06' },
+      { monthKey: '2026-05' },
+      { monthKey: '2026-04' },
+      { monthKey: '2026-03' },
+      { monthKey: '2026-02' },
+      { monthKey: '2026-01' },
+    ]);
     mockQueryRaw.mockResolvedValueOnce([
       itemRow({ itemId: 1, totalWaste: BigInt(500), wasteQty: BigInt(1200), outletsActive: BigInt(3), monthsActive: BigInt(7), populationTotal: BigInt(1000) }),
     ]);
     mockQueryRaw.mockResolvedValueOnce([
       { itemId: 1, outletCode: 'A', outletName: 'Outlet A', area: 'AREA', waste: BigInt(500), monthsActive: BigInt(7) },
     ]);
-    mockQueryRaw.mockResolvedValueOnce([
-      { monthKey: '2026-08' },
-      { monthKey: '2026-07' },
-    ]);
 
     const result = await queryWasteTopItems('WEEK 4', '2026-08', {}, 20);
 
     expect(mockQueryRaw).toHaveBeenCalledTimes(3);
-    const itemSql = deepText(mockQueryRaw.mock.calls[0]);
+    // Round 0 = the month-derivation query (cheapest first — FIX 9).
+    const monthSql = deepText(mockQueryRaw.mock.calls[0]);
+    expect(monthSql).toContain('ir."weekLabel" =');
+    expect(monthSql).toContain('<=');
+    expect(monthSql).toContain(String(WASTE_TOP_ITEMS_WINDOW_MONTHS));
+
+    const itemSql = deepText(mockQueryRaw.mock.calls[1]);
     expect(itemSql).toContain('ir."weekLabel" =');
-    expect(itemSql).toContain('<=');
-    expect(itemSql).toContain(String(WASTE_TOP_ITEMS_WINDOW_MONTHS));
     expect(itemSql).toContain('ABS(ir."nominalWaste")');
-    expect(itemSql).toContain('COUNT(DISTINCT ir."outletId")');
-    expect(itemSql).toContain('COUNT(DISTINCT sf."monthKey")');
-    expect(itemSql).toContain('last_month');
-    expect(itemSql).toContain('prev_month');
+    // FIX 1: distinct outlet/month counts are FILTERed on waste > 0.
+    expect(itemSql).toContain('COUNT(DISTINCT ir."outletId") FILTER (WHERE ABS(ir."nominalWaste") > 0)');
+    expect(itemSql).toContain('COUNT(DISTINCT sf."monthKey") FILTER (WHERE ABS(ir."nominalWaste") > 0)');
+    // FIX 9: the month set arrives as a parameter IN list, not a months CTE.
+    expect(itemSql).toContain('sf."monthKey" IN (');
+    expect(itemSql).not.toContain('WITH months');
     expect(itemSql).toContain('SUM(ia."totalWaste") OVER ()');
 
-    const breakdownSql = deepText(mockQueryRaw.mock.calls[1]);
+    const breakdownSql = deepText(mockQueryRaw.mock.calls[2]);
     expect(breakdownSql).toContain('ir."itemId" IN (');
+    expect(breakdownSql).toContain('sf."monthKey" IN (');
+    expect(breakdownSql).toContain('COUNT(DISTINCT sf."monthKey") FILTER (WHERE ABS(ir."nominalWaste") > 0)');
     expect(breakdownSql).toContain('GROUP BY ir."itemId", o.code, o.name, ir.area');
+    expect(breakdownSql).not.toContain('WITH months');
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0].totalWaste).toBe(500);
@@ -192,14 +238,30 @@ describe('queryWasteTopItems', () => {
     expect(result.items[0].byOutlet[0].waste).toBe(500);
     expect(result.lastMonthKey).toBe('2026-08');
     expect(result.prevMonthKey).toBe('2026-07');
+    // FIX 2: the ACTUAL window size rides on the result (8 here, not the 12 cap).
+    expect(result.windowMonths).toBe(8);
+    // monthsActive 7 ≥ ceil(8/2) = 4 → sistematik under the live window.
+    expect(result.items[0].sistematik).toBe(true);
   });
 
-  it('short-circuits to ONE query when no items match (empty scope)', async () => {
+  it('short-circuits to ONE query when the window has no months (empty scope)', async () => {
     mockQueryRaw.mockResolvedValueOnce([]);
     const result = await queryWasteTopItems('WEEK 4', '2026-08', { area: 'NOWHERE' }, 20);
     expect(mockQueryRaw).toHaveBeenCalledTimes(1);
     expect(result.items).toEqual([]);
     expect(result.populationTotal).toBe(0);
+    expect(result.windowMonths).toBe(0);
+  });
+
+  it('stops after 2 queries when months exist but no items match', async () => {
+    mockQueryRaw.mockResolvedValueOnce([{ monthKey: '2026-08' }, { monthKey: '2026-07' }]);
+    mockQueryRaw.mockResolvedValueOnce([]);
+    const result = await queryWasteTopItems('WEEK 4', '2026-08', {}, 20);
+    expect(mockQueryRaw).toHaveBeenCalledTimes(2);
+    expect(result.items).toEqual([]);
+    expect(result.lastMonthKey).toBe('2026-08');
+    expect(result.prevMonthKey).toBe('2026-07');
+    expect(result.windowMonths).toBe(2);
   });
 
   it('fires the merged set_config round-trip via withStatementTimeout', async () => {

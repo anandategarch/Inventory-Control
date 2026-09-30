@@ -19,7 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { CalendarRange } from 'lucide-react';
-import { fmtIDR, fmtNum, fmtPct, fmtGrowth, growthColor, numberColorNeg } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtPct, fmtGrowth, growthColor, growthColorClass, numberColorNeg } from '@/lib/format';
 
 interface MonthlySeriesRow {
   monthKey: string;
@@ -46,10 +46,19 @@ interface MonthlySeriesTotal {
   abnormalCount: number;
 }
 
+/** BUGHUNT-R1 FIX 14 (additive): the exact runtime thresholds the route's
+ * `abnormal` flag was computed with — the Dev/BOM cell + legend follow these
+ * instead of hardcoded 5% / Rp 50 Jt. */
+interface MonthlySeriesThresholds {
+  devBomTolerance: number;
+  highLossNominal: number;
+}
+
 interface MonthlySeriesResponse {
   success: boolean;
   months?: MonthlySeriesRow[];
   total?: MonthlySeriesTotal;
+  thresholds?: MonthlySeriesThresholds;
   error?: string;
 }
 
@@ -87,6 +96,10 @@ export const MonthlySeriesCard = memo(function MonthlySeriesCard({
 
   const rows = data?.months || [];
   const total = data?.total;
+  // BUGHUNT-R1 FIX 14: runtime-adjustable thresholds from the response
+  // (fallback = the documented defaults when the field is absent).
+  const devBomTolerance = data?.thresholds?.devBomTolerance ?? 0.05;
+  const highLossNominal = data?.thresholds?.highLossNominal ?? 50_000_000;
 
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
@@ -157,12 +170,12 @@ export const MonthlySeriesCard = memo(function MonthlySeriesCard({
                     <TableCell className={`text-right text-xs tabular-nums font-semibold ${numberColorNeg(r.nominalDeviasi)}`}>
                       {fmtIDR(r.nominalDeviasi)}
                     </TableCell>
-                    <TableCell className={`text-right text-xs tabular-nums ${r.devBom > 0.1 ? 'text-red-600 dark:text-red-400 font-semibold' : ''}`}>
+                    <TableCell className={`text-right text-xs tabular-nums ${r.devBom > devBomTolerance ? 'text-red-600 dark:text-red-400 font-semibold' : ''}`}>
                       {fmtPct(r.devBom, false)}
                     </TableCell>
                     <TableCell className="text-right text-xs tabular-nums text-red-600 dark:text-red-400">{fmtIDR(r.totalLoss)}</TableCell>
                     <TableCell className="text-right text-xs tabular-nums text-emerald-600 dark:text-emerald-400">{fmtIDR(r.totalSurplus)}</TableCell>
-                    <TableCell className={`text-right text-xs tabular-nums ${numberColorNeg(r.netCostRatio)}`}>
+                    <TableCell className={`text-right text-xs tabular-nums ${growthColorClass(r.netCostRatio)}`}>
                       {fmtPct(r.netCostRatio, false)}
                     </TableCell>
                     <TableCell className="text-center">
@@ -190,7 +203,7 @@ export const MonthlySeriesCard = memo(function MonthlySeriesCard({
                     <TableCell className="text-right text-xs text-muted-foreground">—</TableCell>
                     <TableCell className="text-right text-xs tabular-nums text-red-600 dark:text-red-400">{fmtIDR(total.totalLoss)}</TableCell>
                     <TableCell className="text-right text-xs tabular-nums text-emerald-600 dark:text-emerald-400">{fmtIDR(total.totalSurplus)}</TableCell>
-                    <TableCell className={`text-right text-xs tabular-nums ${numberColorNeg(total.netCostRatio)}`}>
+                    <TableCell className={`text-right text-xs tabular-nums ${growthColorClass(total.netCostRatio)}`}>
                       {fmtPct(total.netCostRatio, false)}
                     </TableCell>
                     <TableCell className="text-center text-xs text-muted-foreground">
@@ -203,8 +216,8 @@ export const MonthlySeriesCard = memo(function MonthlySeriesCard({
           </div>
         )}
         <p className="px-4 py-2.5 text-[10px] text-muted-foreground border-t">
-          Abnormal = Dev/BOM &gt; toleransi fallback (5%) ATAU Total Loss &gt; ambang P1 (Rp 50 Jt) — definisi yang sama dengan
-          rekurensi outlet (Riwayat/REKUREN). Sales = MODE(nominalSales) per periode.
+          Abnormal = Dev/BOM &gt; toleransi ({fmtPct(devBomTolerance, false, 0)}) ATAU Total Loss &gt; ambang P1 ({fmtIDR(highLossNominal)}) —
+          definisi yang sama dengan rekurensi outlet (Riwayat/REKUREN). Sales = MODE(nominalSales) per periode. Net Ratio positif (rugi bersih) merah.
         </p>
       </CardContent>
     </Card>

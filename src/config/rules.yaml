@@ -40,6 +40,31 @@
 #
 #  severity: NORMAL | WARNING | ABNORMAL
 #  priority: makin tinggi = makin penting (dipakai untuk tie-break)
+#
+#  ------------------------------------------------------------
+#  ATURAN TIE-BREAK TOP-FLAG (BUGHUNT-R1 FIX 12 — dokumentasi)
+#  ------------------------------------------------------------
+#  Seleksi top-flag per record menggantikan HANYA pada prioritas LEBIH
+#  TINGGI (strictly greater); prioritas SAMA mempertahankan flag yang
+#  lebih dulu dijumpai. Urutan evaluasi: rule record (RULE_MAP di
+#  rule-evaluation.ts) → rule historis (zScore) → rule waste — jadi
+#  pada prioritas sama, rule record menang atas historis, historis
+#  menang atas waste. Prinsip umum: SPESIFIK mengungguli GENERIK
+#  (cf. 4bb2ace DEEP-WASTE-1-B — WASTE_ZERO_BIG_LOSS 81 > HIGH_LOSS_
+#  NOMINAL 80, WASTE_RESIDUAL_DOMINANT 76 > RESIDUAL_LOSS_HIGH 75,
+#  keduanya dinaikkan justru karena kondisinya subset ketat rule
+#  ber-prioritas lebih tinggi sehingga tak pernah bisa top-flag).
+#  Konsekuensi wajib saat menambah/mengubah rule: cek prioritas DAN
+#  kondisi vs rule lain yang MEMUAT kondisi baru — rule yang firing
+#  set-nya subset dari rule ber-prioritas lebih tinggi = rule mati
+#  (dievaluasi tapi tak pernah tampil). Contoh terkini (divalidasi
+#  silang di /api/settings POST — BUGHUNT-R1 FIX 6): BOM_DEVIATION_
+#  DISPROPORTIONATE harus tetap STRICTLY DI BAWAH BOM_DEVIATION_
+#  MISMATCH pada prioritas (56 < 88) DAN faktornya harus benar-benar
+#  lebih kecil (BOM_DISPROPORTIONATE_FACTOR < BOM_DEVIATION_FACTOR);
+#  dispro >= dev membuat firing set-nya subset ketat MISMATCH → rule
+#  tidak pernah bisa jadi top-flag.
+#  ------------------------------------------------------------
 # ============================================================
 
 rules:

@@ -81,6 +81,27 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    // Same currentMonthKey derivation as /api/recommendations — window
+    // upper bound (inclusive of the running month).
+    // BUGHUNT-R1 FIX 11: a format-valid but unresolvable month label (e.g.
+    // "Bulan 2030" — passes the zod regex, resolves to NO SourceFile row)
+    // used to leave currentMonthKey null → NO upper bound → the FULL
+    // history window was returned with 200 as if the month were valid.
+    // Now it 400s with the standard error shape; the resolveMonthLabel
+    // case-fallback for format-invalid input is unchanged (that path
+    // still returns the label for a case-insensitive re-lookup).
+    const currentSourceFile = await db.sourceFile.findFirst({
+      where: { monthLabel: month },
+      select: { monthKey: true },
+    });
+    const currentMonthKey = currentSourceFile?.monthKey ?? null;
+    if (!currentMonthKey) {
+      return NextResponse.json(
+        { success: false, error: `Bulan "${month}" tidak ditemukan dalam data` },
+        { status: 400 },
+      );
+    }
+
     // Cache key covers every response-affecting param (route/month/week via
     // the standard set + the full filter scope incl. the optional outlet).
     const cacheKey = buildCacheKey({
@@ -98,13 +119,6 @@ export async function GET(req: NextRequest) {
       cacheKey,
       WASTE_SERIES_CACHE_TTL,
       async () => {
-        // Same currentMonthKey derivation as /api/recommendations —
-        // window upper bound (inclusive of the running month).
-        const currentSourceFile = await db.sourceFile.findFirst({
-          where: { monthLabel: month },
-          select: { monthKey: true },
-        });
-        const currentMonthKey = currentSourceFile?.monthKey ?? null;
         const thresholds = await getRuntimeThresholds();
         return queryWasteNetwork(week, currentMonthKey, {
           area: area && area !== 'all' ? area : null,

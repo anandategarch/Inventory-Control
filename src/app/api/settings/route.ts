@@ -70,6 +70,41 @@ interface SettingWithMeta extends SettingDefinition {
   updatedAt: Date | null;
 }
 
+// ============================================================
+//  BUGHUNT-R1 FIX 6: cross-key validation — BOM factor pair.
+// With bomGrowth > 0, BOM_DEVIATION_MISMATCH (priority 88, ABNORMAL)
+// fires iff deviationBomRatio > BOM_DEVIATION_FACTOR, while
+// BOM_DEVIATION_DISPROPORTIONATE (priority 56, WARNING) fires iff
+// deviationBomRatio > BOM_DISPROPORTIONATE_FACTOR. Whenever
+// dispro >= dev, the DISPROPORTIONATE firing set is a strict subset of
+// MISMATCH's — the higher-priority rule always wins the top-flag, so
+// DISPROPORTIONATE can NEVER appear (an invisible rule). The per-key
+// ranges (1..5 vs 1..100) allow that combination with no warning, so
+// the POST handler validates the EFFECTIVE pair (request merged over
+// the stored values — a one-key update is checked against the value
+// the other key keeps) and rejects it with a clear Indonesian message.
+// ============================================================
+const BOM_DISPRO_KEY = 'BOM_DISPROPORTIONATE_FACTOR';
+const BOM_DEV_KEY = 'BOM_DEVIATION_FACTOR';
+
+/**
+ * Effective numeric value of a number-type setting key: the validated
+ * request value when present, else the stored value, else the default.
+ * Module-private — tests exercise it through POST().
+ */
+function effectiveNumber(
+  key: string,
+  updates: Array<{ key: string; value: string }>,
+  stored: Map<string, string>,
+): number {
+  const def = SETTING_DEFINITIONS.find((d) => d.key === key);
+  const raw = updates.find((u) => u.key === key)?.value
+    ?? stored.get(key)
+    ?? def?.defaultValue;
+  const n = Number(raw);
+  return isNaN(n) ? Number.NaN : n;
+}
+
 export async function GET() {
   try {
     await ensureDefaultSettings();
@@ -214,6 +249,26 @@ export async function POST(req: NextRequest) {
         error: 'No valid settings to update',
         errors: errors.length > 0 ? errors : undefined,
       }, { status: 400 });
+    }
+
+    // BUGHUNT-R1 FIX 6: cross-key validation of the BOM factor pair —
+    // computed over the EFFECTIVE settings (request over stored) so a
+    // one-key update is checked against the value the other key keeps.
+    // Rejected pairs would silently kill BOM_DEVIATION_DISPROPORTIONATE
+    // (strict subset of BOM_DEVIATION_MISMATCH → never a top-flag).
+    {
+      const stored = await getAllSettings();
+      const dispro = effectiveNumber(BOM_DISPRO_KEY, updates, stored);
+      const dev = effectiveNumber(BOM_DEV_KEY, updates, stored);
+      if (Number.isFinite(dispro) && Number.isFinite(dev) && dispro >= dev) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `BOM_DISPROPORTIONATE_FACTOR (${dispro}) harus < BOM_DEVIATION_FACTOR (${dev}) agar rule BOM_DEVIATION_DISPROPORTIONATE tidak mati (menjadi subset ketat BOM_DEVIATION_MISMATCH dan tak pernah bisa jadi top-flag). Kirim kedua key sekaligus dengan nilai yang benar.`,
+          },
+          { status: 400 }
+        );
+      }
     }
 
     // BUG 1.3 fix: wrap all upserts in a transaction so partial failures don't

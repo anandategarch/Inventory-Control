@@ -116,6 +116,9 @@ export interface WasteTopItemsResponse {
   populationTotal?: number;
   lastMonthKey?: string | null;
   prevMonthKey?: string | null;
+  /** BUGHUNT-R1 FIX 2 (additive): ACTUAL months in the window (≤ 12) — the
+   *  sistematik threshold is ceil(windowMonths/2), not the cap's 6. */
+  windowMonths?: number;
   error?: string;
 }
 

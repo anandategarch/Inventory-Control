@@ -9,16 +9,23 @@
 //    - waste qty (ΣABS qtyWaste) + satuan;
 //    - SISTEMIK columns: #outlet aktif + #bulan aktif (an item that
 //      wastes across many outlets AND months is a recipe/process
-//      problem, not a one-off incident);
+//      problem, not a one-off incident) — counted only over rows with
+//      waste > 0 (BUGHUNT-R1 FIX 1: record presence overstated both
+//      counts, e.g. an item stocked in 343 outlets but wasting in 1);
 //    - share of the network's total waste + cumulative share (the
 //      80/20 reading);
 //    - last-month vs prev-month waste (trend direction);
 //    - per-outlet breakdown (top 8 per item, the Item×Outlet matrix).
 //
-//  Two SQL round trips (same pattern as the nested Pareto):
+//  Three SQL round trips (same pattern as the nested Pareto), but the
+//  months CTE is derived ONCE up front (BUGHUNT-R1 FIX 9 — it used to be
+//  rebuilt 3×, each a full ~378K-row scan):
+//    0. month derivation (cheapest) — the window monthKeys + windowMonths;
 //    1. per-item aggregate over the window (+ population total via
 //       SUM() OVER ());
 //    2. per-(item, outlet) breakdown restricted to the top-N item ids.
+//  Rounds 1-2 receive the monthKeys as a Prisma.join IN list — identical
+//  month set to the old per-round CTE (same WHERE week filter + bound).
 //  Cumulative share + share columns are derived in the PURE builder
 //  (testable — same compute/classify split as waste-series.ts).
 //
@@ -106,6 +113,10 @@ export interface WasteTopItemsResult {
   /** Latest + previous monthKeys of the window (for the trend column). */
   lastMonthKey: string | null;
   prevMonthKey: string | null;
+  /** ACTUAL number of months in the window (≤ cap; e.g. 8-9 live) — the
+   *  sistematik threshold is ceil(windowMonths / 2), NOT the 12-month cap
+   *  (BUGHUNT-R1 FIX 2). Additive field. */
+  windowMonths: number;
 }
 
 // ------------------------------------------------------------
@@ -117,9 +128,18 @@ const toNum = (v: number | bigint | null | undefined): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-/** Window sistematik flag — recipe/process problem vs one-off incident. */
-export function isSistematikWasteItem(monthsActive: number, outletsActive: number): boolean {
-  return monthsActive >= Math.ceil(WASTE_TOP_ITEMS_WINDOW_MONTHS / 2) && outletsActive >= 2;
+/**
+ * Window sistematik flag — recipe/process problem vs one-off incident.
+ * BUGHUNT-R1 FIX 2: the threshold is ceil(ACTUAL windowMonths / 2), not
+ * the 12-month cap — with a live 8-9 month window the old hardcoded 6
+ * made "sistematik" nearly unreachable while the cap was never filled.
+ */
+export function isSistematikWasteItem(
+  monthsActive: number,
+  outletsActive: number,
+  windowMonths: number = WASTE_TOP_ITEMS_WINDOW_MONTHS,
+): boolean {
+  return monthsActive >= Math.ceil(windowMonths / 2) && outletsActive >= 2;
 }
 
 /**
@@ -130,9 +150,10 @@ export function isSistematikWasteItem(monthsActive: number, outletsActive: numbe
 export function buildWasteTopItems(
   itemRows: WasteItemRawRow[],
   breakdownRows: WasteItemOutletRawRow[],
+  windowMonths: number = WASTE_TOP_ITEMS_WINDOW_MONTHS,
 ): WasteTopItemsResult {
   if (itemRows.length === 0) {
-    return { items: [], populationTotal: 0, lastMonthKey: null, prevMonthKey: null };
+    return { items: [], populationTotal: 0, lastMonthKey: null, prevMonthKey: null, windowMonths };
   }
   const populationTotal = toNum(itemRows[0].populationTotal);
   const byItemBreakdown = new Map<number, WasteItemOutletBreakdown[]>();
@@ -169,7 +190,7 @@ export function buildWasteTopItems(
       cumulativeShare: populationTotal > 0 ? cumulative : 0,
       lastMonthWaste: toNum(r.lastMonthWaste),
       prevMonthWaste: toNum(r.prevMonthWaste),
-      sistematik: isSistematikWasteItem(toNum(r.monthsActive), toNum(r.outletsActive)),
+      sistematik: isSistematikWasteItem(toNum(r.monthsActive), toNum(r.outletsActive), windowMonths),
       byOutlet: breakdown,
     };
   });
@@ -177,9 +198,10 @@ export function buildWasteTopItems(
     items,
     populationTotal,
     // Filled by the caller (queryWasteTopItems) from the month keys — the
-    // raw rows don't carry them (single source: the SQL window CTE).
+    // raw rows don't carry them (single source: the month-derivation round).
     lastMonthKey: null,
     prevMonthKey: null,
+    windowMonths,
   };
 }
 
@@ -199,42 +221,54 @@ export async function queryWasteTopItems(
     ? Prisma.sql`AND sf."monthKey" <= ${currentMonthKey}`
     : Prisma.empty;
 
+  // Round trip 0 — month derivation FIRST (BUGHUNT-R1 FIX 9): the cheapest
+  // query of the three yields BOTH the window monthKeys (latest + previous
+  // for the trend column) AND windowMonths for the sistematik threshold
+  // (FIX 2). Rounds 1-2 then filter on the materialized IN list instead of
+  // each rebuilding this identical months CTE (a full ~378K-row scan ×3).
+  const monthRows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ monthKey: string }>>`
+    SELECT sf."monthKey"
+    FROM "InventoryRecord" ir
+    JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
+    WHERE ir."weekLabel" = ${week}
+      ${monthBound}
+      ${f}
+    GROUP BY sf."monthKey"
+    ORDER BY sf."monthKey" DESC
+    LIMIT ${WASTE_TOP_ITEMS_WINDOW_MONTHS}
+  `);
+  const monthKeys = monthRows.map((r) => r.monthKey);
+  const windowMonths = monthKeys.length;
+  if (monthKeys.length === 0) {
+    return { items: [], populationTotal: 0, lastMonthKey: null, prevMonthKey: null, windowMonths: 0 };
+  }
+  // Prisma.join requires ≥ 1 element — guaranteed by the early return above.
+  const monthInList = Prisma.join(monthKeys);
+  const lastMonthKey = monthKeys[0] ?? null;
+  const prevMonthKey = monthKeys[1] ?? null;
+
   // Round trip 1 — per-item aggregates over the window. lastMonthWaste /
   // prevMonthWaste pivot the two most recent window months inline (scalar
-  // subqueries on the months CTE), populationTotal rides via SUM() OVER ().
+  // parameters from round 0), populationTotal rides via SUM() OVER ().
+  // BUGHUNT-R1 FIX 1: outletsActive / monthsActive count DISTINCT
+  // outlet/month ONLY over rows with waste > 0 (FILTER clause) — the UI
+  // footer documents the metric as "jumlah distinct outlet/bulan dengan
+  // waste > 0", and record-presence counts minted fake SISTEMATIK badges
+  // (an item stocked in 343 outlets but wasting in 1 used to read 343).
   const itemRows = await withStatementTimeout((tx) => tx.$queryRaw<WasteItemRawRow[]>`
-    WITH months AS (
-      SELECT sf."monthKey"
-      FROM "InventoryRecord" ir
-      JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
-      WHERE ir."weekLabel" = ${week}
-        ${monthBound}
-        ${f}
-      GROUP BY sf."monthKey"
-      ORDER BY sf."monthKey" DESC
-      LIMIT ${WASTE_TOP_ITEMS_WINDOW_MONTHS}
-    ),
-    last_month AS (
-      SELECT MAX("monthKey") as "monthKey" FROM months
-    ),
-    prev_month AS (
-      SELECT MAX(m."monthKey") as "monthKey"
-      FROM months m, last_month lm
-      WHERE m."monthKey" < lm."monthKey"
-    ),
-    item_agg AS (
+    WITH item_agg AS (
       SELECT
         ir."itemId",
         COALESCE(SUM(ABS(ir."nominalWaste")), 0) as "totalWaste",
         COALESCE(SUM(ABS(ir."qtyWaste")), 0) as "wasteQty",
-        COUNT(DISTINCT ir."outletId") as "outletsActive",
-        COUNT(DISTINCT sf."monthKey") as "monthsActive",
-        COALESCE(SUM(CASE WHEN sf."monthKey" = (SELECT "monthKey" FROM last_month) THEN ABS(ir."nominalWaste") ELSE 0 END), 0) as "lastMonthWaste",
-        COALESCE(SUM(CASE WHEN sf."monthKey" = (SELECT "monthKey" FROM prev_month) THEN ABS(ir."nominalWaste") ELSE 0 END), 0) as "prevMonthWaste"
+        COUNT(DISTINCT ir."outletId") FILTER (WHERE ABS(ir."nominalWaste") > 0) as "outletsActive",
+        COUNT(DISTINCT sf."monthKey") FILTER (WHERE ABS(ir."nominalWaste") > 0) as "monthsActive",
+        COALESCE(SUM(CASE WHEN sf."monthKey" = ${lastMonthKey} THEN ABS(ir."nominalWaste") ELSE 0 END), 0) as "lastMonthWaste",
+        COALESCE(SUM(CASE WHEN sf."monthKey" = ${prevMonthKey} THEN ABS(ir."nominalWaste") ELSE 0 END), 0) as "prevMonthWaste"
       FROM "InventoryRecord" ir
       JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
       WHERE ir."weekLabel" = ${week}
-        AND sf."monthKey" IN (SELECT "monthKey" FROM months)
+        AND sf."monthKey" IN (${monthInList})
         ${f}
       GROUP BY ir."itemId"
     )
@@ -256,58 +290,34 @@ export async function queryWasteTopItems(
   `);
 
   if (itemRows.length === 0) {
-    return { items: [], populationTotal: 0, lastMonthKey: null, prevMonthKey: null };
+    return { items: [], populationTotal: 0, lastMonthKey, prevMonthKey, windowMonths };
   }
 
   // Round trip 2 — per-(item, outlet) breakdown for the top-N items only
   // (Prisma.join for the IN list — same pattern as heatmap.ts item filter).
+  // FIX 1 applies here too: monthsActive = distinct months with waste > 0.
   const itemIds = itemRows.map((r) => r.itemId);
   const breakdownRows = await withStatementTimeout((tx) => tx.$queryRaw<WasteItemOutletRawRow[]>`
-    WITH months AS (
-      SELECT sf."monthKey"
-      FROM "InventoryRecord" ir
-      JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
-      WHERE ir."weekLabel" = ${week}
-        ${monthBound}
-        ${f}
-      GROUP BY sf."monthKey"
-      ORDER BY sf."monthKey" DESC
-      LIMIT ${WASTE_TOP_ITEMS_WINDOW_MONTHS}
-    )
     SELECT
       ir."itemId",
       o.code as "outletCode",
       o.name as "outletName",
       ir.area,
       COALESCE(SUM(ABS(ir."nominalWaste")), 0) as "waste",
-      COUNT(DISTINCT sf."monthKey") as "monthsActive"
+      COUNT(DISTINCT sf."monthKey") FILTER (WHERE ABS(ir."nominalWaste") > 0) as "monthsActive"
     FROM "InventoryRecord" ir
     JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
     JOIN "Outlet" o ON ir."outletId" = o.id
     WHERE ir."weekLabel" = ${week}
-      AND sf."monthKey" IN (SELECT "monthKey" FROM months)
+      AND sf."monthKey" IN (${monthInList})
       AND ir."itemId" IN (${Prisma.join(itemIds)})
       ${f}
     GROUP BY ir."itemId", o.code, o.name, ir.area
   `);
 
-  const result = buildWasteTopItems(itemRows, breakdownRows);
-
-  // Window month keys (latest + previous) for the trend column — one cheap
-  // scalar query rather than threading them through the aggregates.
-  const windowMonths = await withStatementTimeout((tx) => tx.$queryRaw<Array<{ monthKey: string }>>`
-    SELECT sf."monthKey"
-    FROM "InventoryRecord" ir
-    JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
-    WHERE ir."weekLabel" = ${week}
-      ${monthBound}
-      ${f}
-    GROUP BY sf."monthKey"
-    ORDER BY sf."monthKey" DESC
-    LIMIT 2
-  `);
-  result.lastMonthKey = windowMonths[0]?.monthKey ?? null;
-  result.prevMonthKey = windowMonths[1]?.monthKey ?? null;
+  const result = buildWasteTopItems(itemRows, breakdownRows, windowMonths);
+  result.lastMonthKey = lastMonthKey;
+  result.prevMonthKey = prevMonthKey;
 
   return result;
 }

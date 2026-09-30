@@ -64,6 +64,24 @@ export async function GET(req: NextRequest) {
     const resolver = await getMonthResolver();
     month = resolveMonthLabel(month, resolver) || month;
 
+    // Same currentMonthKey derivation as /api/recommendations.
+    // BUGHUNT-R1 FIX 11: a format-valid but unresolvable month label (e.g.
+    // "Bulan 2030") used to leave currentMonthKey null → NO upper bound →
+    // the FULL history window was returned with 200 as if valid. Now it
+    // 400s with the standard error shape (the resolveMonthLabel
+    // case-fallback for format-invalid input is unchanged).
+    const currentSourceFile = await db.sourceFile.findFirst({
+      where: { monthLabel: month },
+      select: { monthKey: true },
+    });
+    const currentMonthKey = currentSourceFile?.monthKey ?? null;
+    if (!currentMonthKey) {
+      return NextResponse.json(
+        { success: false, error: `Bulan "${month}" tidak ditemukan dalam data` },
+        { status: 400 },
+      );
+    }
+
     // Cache key covers every response-affecting param — outlet/month/week
     // via the standard set, kelompok as the peer-set scope.
     const cacheKey = buildCacheKey({
@@ -79,12 +97,6 @@ export async function GET(req: NextRequest) {
       cacheKey,
       WASTE_PEER_ZSCORE_CACHE_TTL,
       async () => {
-        // Same currentMonthKey derivation as /api/recommendations.
-        const currentSourceFile = await db.sourceFile.findFirst({
-          where: { monthLabel: month },
-          select: { monthKey: true },
-        });
-        const currentMonthKey = currentSourceFile?.monthKey ?? null;
         return queryWastePeerZScore(outletCode, week, currentMonthKey, kelompokParam);
       },
     );

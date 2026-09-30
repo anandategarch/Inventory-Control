@@ -7,7 +7,8 @@
 //     coercion, DQ passthrough.
 //  2. buildWasteOutlets (pure) — window aggregation per outlet, the 4
 //     network detectors (zeroWasteBigLoss / underRecording /
-//     residualDominant boundaries), competition rank with ties.
+//     residualDominant boundaries — BUGHUNT-R1: the first two are
+//     PER-MONTH grain, never window sums), competition rank with ties.
 //  3. buildWasteKpis (pure) — network totals + anomaly counts + spike
 //     cells; guard when population is empty.
 //  4. summarizeWastePeerZScore (pure) — avg z over defined z only,
@@ -192,7 +193,28 @@ describe('buildWasteOutlets', () => {
     expect(get('D')).toBe(false);  // loss exactly at threshold → not above
   });
 
-  it('flags underRecording (waste/sales < 0.1%, sales > 0, months >= 2)', () => {
+  it('BUGHUNT-R1 FIX 3: zeroWasteBigLoss is PER-MONTH, not the window sum', () => {
+    // 9 months × loss 5.6jt = 50.4jt window total > Rp 50jt threshold, but
+    // NO single month exceeds it — the old window-sum grain flagged this
+    // outlet KRITIS while every per-month consumer of the same threshold
+    // (outlet-recurrence, HIGH_LOSS_NOMINAL) would not.
+    const steadyLossMonths = Array.from({ length: 9 }, (_, i) =>
+      rawRow({ outletCode: 'WINDOW', monthKey: `2026-0${i + 1}`, waste: 0, totalLoss: 5_600_000 }),
+    );
+    // One month over the threshold with zero waste → flags (any-month).
+    const oneBadMonth = [
+      rawRow({ outletCode: 'ANY', monthKey: '2026-07', waste: 0, totalLoss: HI_LOSS + 1 }),
+      rawRow({ outletCode: 'ANY', monthKey: '2026-08', waste: 500, totalLoss: 10_000_000 }),
+    ];
+    const outlets = buildWasteOutlets(
+      buildWasteMonthlyRows([...steadyLossMonths, ...oneBadMonth]),
+      HI_LOSS,
+    );
+    expect(outlets.find((o) => o.outletCode === 'WINDOW')!.zeroWasteBigLoss).toBe(false);
+    expect(outlets.find((o) => o.outletCode === 'ANY')!.zeroWasteBigLoss).toBe(true);
+  });
+
+  it('flags underRecording (≥ 2 months EACH with sales > 0 and ratio < 0.1%)', () => {
     const monthly = buildWasteMonthlyRows([
       rawRow({ outletCode: 'A', monthKey: '2026-07', sales: 100_000, waste: 10 }),  // 0.01%, 2 months
       rawRow({ outletCode: 'A', monthKey: '2026-08', sales: 100_000, waste: 10 }),
@@ -211,7 +233,27 @@ describe('buildWasteOutlets', () => {
     void WASTE_UNDER_RECORD_PCT;
   });
 
-  it('flags residualDominant (residual > 80% loss AND waste < 10% of loss)', () => {
+  it('BUGHUNT-R1 FIX 4: aggregate-ratio under-recording no longer flags (needs ≥ 2 qualifying MONTHS)', () => {
+    // One clean month + one 0.15% month: the WINDOW AGGREGATE ratio is
+    // 160/200.000 = 0.08% < 0.1% (the old detector flagged this), but only
+    // ONE month is individually under 0.1% — the "≥ 2 months each" spec
+    // (and the record-grain WASTE_SALES_UNDER_RECORD rule) says no flag.
+    const monthly = buildWasteMonthlyRows([
+      rawRow({ outletCode: 'AGG', monthKey: '2026-07', sales: 100_000, waste: 10 }),   // 0.01% ✓
+      rawRow({ outletCode: 'AGG', monthKey: '2026-08', sales: 100_000, waste: 150 }), // 0.15% ✗
+    ]);
+    const outlets = buildWasteOutlets(monthly, HI_LOSS);
+    const agg = outlets.find((o) => o.outletCode === 'AGG')!;
+    expect(agg.underRecording).toBe(false);
+    // Both months individually under → flags.
+    const both = buildWasteOutlets(buildWasteMonthlyRows([
+      rawRow({ outletCode: 'AGG2', monthKey: '2026-07', sales: 100_000, waste: 10 }),
+      rawRow({ outletCode: 'AGG2', monthKey: '2026-08', sales: 100_000, waste: 50 }),
+    ]), HI_LOSS);
+    expect(both.find((o) => o.outletCode === 'AGG2')!.underRecording).toBe(true);
+  });
+
+  it('flags residualDominant (loss-side residual > 80% loss AND waste < 10% of loss)', () => {
     const monthly = buildWasteMonthlyRows([
       // residual 90 / loss 100 = 90% > 80%; waste 5/100 = 5% < 10% → fires
       rawRow({ outletCode: 'A', waste: 5, residual: 90, totalLoss: 100 }),
@@ -225,6 +267,31 @@ describe('buildWasteOutlets', () => {
     expect(outlets.find((o) => o.outletCode === 'B')!.residualDominant).toBe(false);
     expect(outlets.find((o) => o.outletCode === 'C')!.residualDominant).toBe(false);
     void WASTE_RESIDUAL_DOMINANT_PCT;
+  });
+
+  it('BUGHUNT-R1 FIX 5: loss-side residual keeps residualShare ≤ 1 and residualDominant ⊅ wasteShareOfLoss < 10%', () => {
+    // Fixture mirrors a mixed month AFTER the SQL fix: loss-side records
+    // carry residual 60 of the 100 loss, while the (formerly two-sided)
+    // residual also counted 80 of "residual" sitting on SURPLUS records —
+    // exactly the shape that produced residualShare > 1 (median 2.34 live)
+    // and made the > 0.8 guard vacuous.
+    const monthly = buildWasteMonthlyRows([
+      // LOSS-side residual only 60/100 = 60% → NOT dominant even though
+      // wasteShareOfLoss (5%) < 10% — the old two-sided 140/100 = 140%
+      // flagged it. Proves the two predicates are no longer equivalent.
+      rawRow({ outletCode: 'MIX', waste: 5, residual: 60, totalLoss: 100, totalSurplus: 80 }),
+      // A genuinely residual-dominated outlet still flags with share ≤ 1.
+      rawRow({ outletCode: 'RD', waste: 5, residual: 95, totalLoss: 100, totalSurplus: 0 }),
+    ]);
+    const outlets = buildWasteOutlets(monthly, HI_LOSS);
+    const mix = outlets.find((o) => o.outletCode === 'MIX')!;
+    const rd = outlets.find((o) => o.outletCode === 'RD')!;
+    expect(mix.residualShare).toBeCloseTo(0.6, 10);
+    expect(mix.residualShare).toBeLessThanOrEqual(1);
+    expect(mix.wasteShareOfLoss).toBeCloseTo(0.05, 10);
+    expect(mix.residualDominant).toBe(false); // waste<10% of loss but residual only 60% of it
+    expect(rd.residualShare).toBeCloseTo(0.95, 10);
+    expect(rd.residualDominant).toBe(true);
   });
 
   it('counts spikeMonths from the monthly rows', () => {
@@ -353,6 +420,13 @@ describe('queryWasteNetwork', () => {
     expect(sql).toContain('STDDEV_SAMP("wasteToSales")');
     expect(sql).toContain(String(WASTE_SPIKE_MIN_MONTHS));
     expect(sql).toContain('BOOL_OR(sf."dqStatus" = \'ERROR\')');
+    // BUGHUNT-R1 FIX 5: the residual aggregate is loss-side (CASE-guarded).
+    expect(sql).toContain('CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualNominal") ELSE 0 END');
+    // BUGHUNT-R1 FIX 7: sales=0 months emit NULL ratios and are excluded
+    // from the spike baseline count (COUNT over the non-NULL ratio only).
+    expect(sql).toContain('CASE WHEN mr.sales > 0 THEN mr.waste / mr.sales END');
+    expect(sql).toContain('COUNT("wasteToSales")');
+    expect(sql).not.toContain('COUNT(*) as n');
 
     expect(result.monthly).toHaveLength(1);
     expect(result.monthly[0].waste).toBe(20_000);

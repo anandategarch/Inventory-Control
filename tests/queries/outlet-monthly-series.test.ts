@@ -116,6 +116,28 @@ describe('buildMonthlySeriesRows', () => {
     expect(rows[1].salesMoM).toBeNull();
   });
 
+  it('BUGHUNT-R1 FIX 8: nulls MoM across a data gap (non-adjacent monthKeys)', () => {
+    // April has no data — May must NOT report a "MoM" against March (the
+    // old consecutive-row comparison bridged the gap, presenting a
+    // 2-month jump as a 1-month growth rate).
+    const rows = buildMonthlySeriesRows([
+      rawRow({ monthKey: '2026-03', monthLabel: 'Maret 2026', sales: 1000 }),
+      rawRow({ monthKey: '2026-05', monthLabel: 'Mei 2026', sales: 1250 }),
+      rawRow({ monthKey: '2026-06', monthLabel: 'Juni 2026', sales: 1500 }),
+    ], TOL, HI_LOSS);
+    expect(rows[0].salesMoM).toBeNull();     // first row
+    expect(rows[1].salesMoM).toBeNull();     // gap 2026-03 → 2026-05 (> 1 month)
+    expect(rows[2].salesMoM).toBeCloseTo(0.2, 10); // adjacent 2026-05 → 2026-06
+  });
+
+  it('BUGHUNT-R1 FIX 8: gap across a year boundary (2026-12 → 2027-01) is adjacent', () => {
+    const rows = buildMonthlySeriesRows([
+      rawRow({ monthKey: '2026-12', sales: 1000 }),
+      rawRow({ monthKey: '2027-01', sales: 1100 }),
+    ], TOL, HI_LOSS);
+    expect(rows[1].salesMoM).toBeCloseTo(0.1, 10);
+  });
+
   it('computes Net Cost Ratio = (loss − surplus) / sales, 0 when sales is 0', () => {
     const rows = buildMonthlySeriesRows([
       rawRow({ sales: 1000, totalLoss: 300, totalSurplus: 100 }),

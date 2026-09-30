@@ -11,18 +11,30 @@
 //     aggregates over the most recent 12 months (incl. the
 //     running month), scoped by the global filters (area /
 //     kelompok / PIC / outletCode): ΣABS nominalWaste/Susut/
-//     Trial, ΣABS residualNominal, Total Loss/Surplus (Excel
-//     convention), sales (MODE per OutletPeriodSales),
-//     waste/sales ratio, and 4 network anomaly detectors:
+//     Trial, LOSS-SIDE ΣABS residualNominal (BUGHUNT-R1 FIX 5:
+//     only rows with nominalLossSurplus < 0 — the loss-decomposition
+//     consumers, incl. residualShare = residual/totalLoss, need the
+//     same grain as the denominator or the share exceeds 1),
+//     Total Loss/Surplus (Excel convention), sales (MODE per
+//     OutletPeriodSales), waste/sales ratio, and 4 network anomaly
+//     detectors:
 //       - spike            : waste/sales > mean + 2σ of the
 //                            outlet's OWN months in the window
-//                            (min 3 months, std > 0) — the
+//                            (min 3 months WITH sales > 0 — the
+//                            baseline skips sales=0 months rather
+//                            than diluting them with forced 0s;
+//                            BUGHUNT-R1 FIX 7) and std > 0 — the
 //                            "spike waste > 2σ" P2 rule;
-//       - zeroWasteBigLoss : waste ≈ 0 (≤ Rp 1) with total loss
-//                            above HIGH_LOSS_NOMINAL_THRESHOLD;
-//       - underRecording   : waste/sales < 0.1% for ≥ 2 months;
-//       - residualDominant : residual > 80% of loss AND waste
-//                            explains < 10% of it.
+//       - zeroWasteBigLoss : ANY window month with waste ≈ 0 (≤ Rp 1)
+//                            AND that month's total loss above
+//                            HIGH_LOSS_NOMINAL_THRESHOLD (FIX 3:
+//                            per-month grain — the threshold is a
+//                            single-period value everywhere else);
+//       - underRecording   : ≥ 2 months EACH with sales > 0 and
+//                            waste/sales < 0.1% (FIX 4: per-month
+//                            ratios, not the window aggregate);
+//       - residualDominant : loss-side residual > 80% of loss AND
+//                            waste explains < 10% of it.
 //     The per-outlet profile rows + network KPIs are derived
 //     from the monthly rows by PURE builders (testable — same
 //     compute/classify split as outlet-monthly-series.ts).
@@ -277,6 +289,18 @@ export function buildWasteMonthlyRows(raw: WasteMonthlyRawRow[]): WasteMonthlyRo
 /**
  * Derive the per-outlet profile rows (with the 4 network detectors +
  * competition rank on waste/sales) from the monthly rows. Pure.
+ *
+ * BUGHUNT-R1 grain fixes — the first three detectors compare against
+ * SINGLE-PERIOD thresholds, so they evaluate per-month rows, never the
+ * window sums:
+ *   - zeroWasteBigLoss: any month with waste ≤ 1 && that month's loss >
+ *     highLossNominal (a 9-month window averaging ~5.6jt/month loss with
+ *     zero waste no longer trips the Rp 50jt single-period threshold);
+ *   - underRecording: ≥ 2 months EACH with sales > 0 and a per-month
+ *     waste/sales < WASTE_UNDER_RECORD_PCT (the old window-aggregate
+ *     ratio let one big-sales month mask a year of near-zero recording);
+ *   - residualDominant: residual (loss-side since FIX 5) / totalLoss —
+ *     same formula, now on a matching-grain numerator.
  */
 export function buildWasteOutlets(
   monthly: WasteMonthlyRow[],
@@ -300,6 +324,16 @@ export function buildWasteOutlets(
     const totalSurplus = rows.reduce((a, r) => a + r.totalSurplus, 0);
     const months = rows.length;
     const wasteToSales = sales > 0 ? waste / sales : 0;
+    // FIX 3: per-month grain — highLossNominal is a single-period
+    // threshold (same value used per-month by outlet-recurrence + the
+    // HIGH_LOSS_NOMINAL record rule), so only a month that ITSELF lost
+    // more than it can flag the outlet.
+    const zeroWasteBigLoss = rows.some((r) => r.waste <= 1 && r.totalLoss > highLossNominal);
+    // FIX 4: count months with a DEFINED per-month ratio under the
+    // threshold (sales > 0 so the ratio exists); flag iff ≥ 2 such months.
+    const underRecordMonths = rows.filter(
+      (r) => r.sales > 0 && r.waste / r.sales < WASTE_UNDER_RECORD_PCT,
+    ).length;
     outlets.push({
       outletCode,
       outletName: first.outletName,
@@ -316,8 +350,8 @@ export function buildWasteOutlets(
       wasteShareOfLoss: totalLoss > 0 ? waste / totalLoss : 0,
       residualShare: totalLoss > 0 ? residual / totalLoss : 0,
       spikeMonths: rows.filter((r) => r.spike).length,
-      zeroWasteBigLoss: waste <= 1 && totalLoss > highLossNominal,
-      underRecording: wasteToSales < WASTE_UNDER_RECORD_PCT && sales > 0 && months >= 2,
+      zeroWasteBigLoss,
+      underRecording: underRecordMonths >= 2,
       residualDominant:
         totalLoss > 0 && residual / totalLoss > WASTE_RESIDUAL_DOMINANT_PCT && waste / totalLoss < WASTE_MIN_SHARE,
       rankWasteToSales: 0,
@@ -477,7 +511,15 @@ export async function queryWasteNetwork(
         COALESCE(SUM(ABS(ir."nominalWaste")), 0) as "waste",
         COALESCE(SUM(ABS(ir."nominalSusut")), 0) as "susut",
         COALESCE(SUM(ABS(ir."nominalTrial")), 0) as "trial",
-        COALESCE(SUM(ABS(ir."residualNominal")), 0) as "residual",
+        -- BUGHUNT-R1 FIX 5: residual is the UNEXPLAINED PART OF LOSS — sum
+        -- ABS(residualNominal) only over loss-side records, matching the
+        -- totalLoss denominator. The old two-sided sum made residualShare
+        -- exceed 1 for 343/343 outlets (median 2.34) and the >0.8 guard
+        -- filtered nothing. Every consumer of this field (KPI "Σ Residual",
+        -- profile/matrix/decomposition displays, residualShare) reads it
+        -- in a loss-decomposition context, so no separate two-sided
+        -- magnitude field is exposed.
+        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."residualNominal") ELSE 0 END), 0) as "residual",
         COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "totalLoss",
         COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "totalSurplus"
       FROM "InventoryRecord" ir
@@ -512,14 +554,19 @@ export async function queryWasteNetwork(
     ),
     monthly_ratios AS (
       SELECT mr.*,
-        CASE WHEN mr.sales > 0 THEN mr.waste / mr.sales ELSE 0 END as "wasteToSales"
+        -- BUGHUNT-R1 FIX 7: sales=0 months emit NULL (not a forced 0) so
+        -- the outlet_stats AVG/STDDEV/COUNT baseline below SKIPS them —
+        -- forced 0s deflated the mean and crushed the σ, manufacturing
+        -- fake "spikes" on any month with sales. The response ratio is
+        -- recomputed in TS (buildWasteMonthlyRows guards sales=0 → 0).
+        CASE WHEN mr.sales > 0 THEN mr.waste / mr.sales END as "wasteToSales"
       FROM monthly_raw mr
     ),
     outlet_stats AS (
       SELECT "outletCode",
         AVG("wasteToSales") as "wtsMean",
         COALESCE(STDDEV_SAMP("wasteToSales"), 0) as "wtsStd",
-        COUNT(*) as n
+        COUNT("wasteToSales") as n
       FROM monthly_ratios
       GROUP BY "outletCode"
     ),

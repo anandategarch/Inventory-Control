@@ -81,3 +81,7 @@ data/inventory/*.csv
 data/inventory/*.tmp
 .zscripts/dev.pid
 .tmp-render/
+
+# BUGHUNT-R1 FIX 15: live GitHub PAT sits untracked in the repo root —
+# one `git add -A` away from leaking. Never commit it.
+.github-pat

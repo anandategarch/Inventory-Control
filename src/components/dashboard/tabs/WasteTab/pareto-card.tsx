@@ -74,6 +74,14 @@ export const WasteParetoCard = memo(function WasteParetoCard({
   });
 
   const items = data?.items || [];
+  // BUGHUNT-R1 FIX 2: derive the sistematik month threshold from the
+  // ACTUAL window size the server used (ceil(windowMonths/2)) instead of
+  // the hardcoded "6 bulan" (the 12-month cap's half — wrong on the live
+  // 8-9 month window). Sane fallback when the field is absent.
+  const windowMonths = data?.windowMonths;
+  const sistematikMonthsText = windowMonths != null && windowMonths > 0
+    ? `≥ ${Math.ceil(windowMonths / 2)} bulan`
+    : '≥ separuh bulan window';
 
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
@@ -86,7 +94,7 @@ export const WasteParetoCard = memo(function WasteParetoCard({
         </CardTitle>
         <p className="text-xs text-muted-foreground ml-9">
           Item teratas by ΣABS nominalWaste pada window same-week (maks. 12 bulan). Share & kumulatif = porsi dari
-          total waste scope. <span className="font-medium text-foreground/70">SISTEMATIK</span> = aktif ≥ 6 bulan
+          total waste scope. <span className="font-medium text-foreground/70">SISTEMATIK</span> = aktif {sistematikMonthsText}
           dan ≥ 2 outlet (masalah resep/proses, bukan kejadian sekali). Klik baris untuk breakdown per outlet.
         </p>
         {data?.populationTotal != null && data.populationTotal > 0 && (
@@ -108,7 +116,7 @@ export const WasteParetoCard = memo(function WasteParetoCard({
         ) : items.length === 0 ? (
           <div className="p-6 text-center text-sm text-muted-foreground">Tidak ada item waste pada scope ini.</div>
         ) : (
-          <div className="max-h-96 overflow-auto waste-scroll">
+          <div className="max-h-96 overflow-auto">
             <Table className="min-w-[880px]">
               <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                 <TableRow className="border-b hover:bg-transparent">
@@ -185,7 +193,8 @@ export const WasteParetoCard = memo(function WasteParetoCard({
         )}
         <p className="px-4 py-2.5 text-[10px] text-muted-foreground border-t">
           Trend = waste bulan terakhir vs bulan sebelumnya pada window (naik = memburuk). Kumulatif ≥ 80% = item
-          masuk zona Pareto kritikal. #Outlet/#Bulan = jumlah distinct outlet/bulan dengan waste &gt; 0.
+          masuk zona Pareto kritikal. #Outlet/#Bulan = jumlah distinct outlet/bulan dengan waste &gt; 0. SISTEMATIK ={' '}
+          {sistematikMonthsText} dan ≥ 2 outlet.
         </p>
       </CardContent>
     </Card>

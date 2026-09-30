@@ -156,9 +156,28 @@ const toNum = (v: number | bigint | null | undefined): number => {
 };
 
 /**
+ * monthKey "YYYY-MM" → absolute month index (year*12 + month) so calendar
+ * adjacency is a plain −1 check — the SAME parsing convention as
+ * outlet-recurrence.ts's SQL `mIdx` (BUG-2-c). Malformed keys yield NaN,
+ * which never equals an adjacent gap → MoM nulls out (safe fallback).
+ */
+function monthIndex(monthKey: string): number {
+  const parts = monthKey.split('-');
+  const y = Number(parts[0]);
+  const m = Number(parts[1]);
+  return Number.isFinite(y) && Number.isFinite(m) ? y * 12 + m : Number.NaN;
+}
+
+/**
  * Map raw SQL rows → MonthlySeriesRow[] (chronological, monthKey ASC —
  * the SQL already orders) adding MoM sales growth, Net Cost Ratio and
  * the recurrence-style abnormal flag.
+ *
+ * BUGHUNT-R1 FIX 8: MoM is only computed between CALENDAR-ADJACENT months.
+ * A month with no data simply doesn't appear as a row, so the old
+ * consecutive-row comparison bridged data gaps — if April was missing,
+ * May's "MoM" silently compared against March (a 2-month jump presented
+ * as a 1-month growth rate).
  */
 export function buildMonthlySeriesRows(
   raw: MonthlySeriesRawRow[],
@@ -168,11 +187,12 @@ export function buildMonthlySeriesRows(
   return raw.map((r, i) => {
     const sales = toNum(r.sales);
     const prevSales = i > 0 ? toNum(raw[i - 1].sales) : null;
+    const adjacent = i > 0 && monthIndex(r.monthKey) - monthIndex(raw[i - 1].monthKey) === 1;
     return {
       monthKey: r.monthKey,
       monthLabel: r.monthLabel,
       sales,
-      salesMoM: i > 0 && prevSales !== null && prevSales !== 0
+      salesMoM: adjacent && prevSales !== null && prevSales !== 0
         ? sales / prevSales - 1
         : null,
       qtyBom: toNum(r.qtyBom),

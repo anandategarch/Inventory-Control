@@ -57,6 +57,33 @@ export async function GET(req: NextRequest) {
     const resolver = await getMonthResolver();
     month = resolveMonthLabel(month, resolver) || month;
 
+    // Same currentMonthKey derivation as /api/recommendations — window
+    // upper bound (inclusive of the running month).
+    // BUGHUNT-R1 FIX 11: a format-valid but unresolvable month label (e.g.
+    // "Bulan 2030") used to leave currentMonthKey null → NO upper bound →
+    // the FULL history window was returned with 200 as if valid. Now it
+    // 400s with the standard error shape (the resolveMonthLabel
+    // case-fallback for format-invalid input is unchanged).
+    const currentSourceFile = await db.sourceFile.findFirst({
+      where: { monthLabel: month },
+      select: { monthKey: true },
+    });
+    const currentMonthKey = currentSourceFile?.monthKey ?? null;
+    if (!currentMonthKey) {
+      return NextResponse.json(
+        { success: false, error: `Bulan "${month}" tidak ditemukan dalam data` },
+        { status: 400 },
+      );
+    }
+
+    // BUGHUNT-R1 FIX 14: load the thresholds OUTSIDE the cache closure so
+    // the EXACT runtime values used for the abnormal computation are
+    // echoed on the response (additive `thresholds` object) — the card's
+    // Dev/BOM cell + legend previously hardcoded 0.1 / "Rp 50 Jt" while
+    // the abnormal flag follows these runtime-adjustable values.
+    // getRuntimeThresholds() has its own 30s cache — no extra DB cost.
+    const thresholds = await getRuntimeThresholds();
+
     // Cache key covers every response-affecting param — outlet/month/week.
     // The window derives deterministically from (month, week), so it needs
     // no separate key part.
@@ -72,14 +99,6 @@ export async function GET(req: NextRequest) {
       cacheKey,
       SERIES_CACHE_TTL,
       async () => {
-        // Same currentMonthKey derivation as /api/recommendations —
-        // window upper bound (inclusive of the running month).
-        const currentSourceFile = await db.sourceFile.findFirst({
-          where: { monthLabel: month },
-          select: { monthKey: true },
-        });
-        const currentMonthKey = currentSourceFile?.monthKey ?? null;
-        const thresholds = await getRuntimeThresholds();
         return queryOutletMonthlySeries(outletCode, week, currentMonthKey, thresholds.FALLBACK_TOLERANCE_PCT, thresholds.HIGH_LOSS_NOMINAL_THRESHOLD);
       },
     );
@@ -90,6 +109,12 @@ export async function GET(req: NextRequest) {
       week,
       months: seriesData.rows,
       total: seriesData.total,
+      // BUGHUNT-R1 FIX 14 (additive): the exact values the `abnormal` flag
+      // was computed with this request.
+      thresholds: {
+        devBomTolerance: thresholds.FALLBACK_TOLERANCE_PCT,
+        highLossNominal: thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
+      },
       ...(cached ? { cached: true } : {}),
       ...(stale ? { stale: true } : {}),
     }, { headers: CACHE_ANALYSIS });
