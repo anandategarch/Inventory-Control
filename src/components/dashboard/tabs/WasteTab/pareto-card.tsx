@@ -94,8 +94,8 @@ export const WasteParetoCard = memo(function WasteParetoCard({
         </CardTitle>
         <p className="text-xs text-muted-foreground ml-9">
           Item teratas by ΣABS nominalWaste pada window same-week (maks. 12 bulan). Share & kumulatif = porsi dari
-          total waste scope. <span className="font-medium text-foreground/70">SISTEMATIK</span> = aktif {sistematikMonthsText}
-          dan ≥ 2 outlet (masalah resep/proses, bukan kejadian sekali). Klik baris untuk breakdown per outlet.
+          total waste scope. <span className="font-medium text-foreground/70">SISTEMATIK</span> = aktif{' '}
+          {sistematikMonthsText} dan ≥ 2 outlet (masalah resep/proses, bukan kejadian sekali). Klik baris untuk breakdown per outlet.
         </p>
         {data?.populationTotal != null && data.populationTotal > 0 && (
           <div className="flex items-center gap-2 pt-2 flex-wrap ml-9">
