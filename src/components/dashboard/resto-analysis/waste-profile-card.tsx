@@ -21,7 +21,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Recycle } from 'lucide-react';
-import { fmtIDR, fmtPct } from '@/lib/format';
+import { fmtIDR, fmtPct, fmtDecimal } from '@/lib/format';
 import type { WasteSeriesResponse, WastePeerZScoreResponse, WastePeerZScoreRow, WasteMonthlyRow } from '@/components/dashboard/tabs/WasteTab/types';
 
 interface JoinedRow extends WasteMonthlyRow {
@@ -148,7 +148,8 @@ export const WasteProfileCard = memo(function WasteProfileCard({
             <Badge variant="secondary" className="text-xs tabular-nums font-medium">{zSummary.monthsTracked} bulan ber-band</Badge>
             {zSummary.avgZ != null && (
               <Badge variant="outline" className={`text-[10px] font-normal h-5 tabular-nums ${zSummary.avgZ > 1 ? 'text-amber-700 dark:text-amber-400 border-amber-300/70 dark:border-amber-800/70 bg-amber-50/60 dark:bg-amber-950/30' : 'text-muted-foreground'}`}>
-                rata-rata z {zSummary.avgZ.toFixed(2)}
+                rata-rata z {fmtDecimal(zSummary.avgZ, 2)}
+                {/* FIX (BUGHUNT-R2 / VH-7): comma decimal — was avgZ.toFixed(2) → "2.08". */}
               </Badge>
             )}
             {zSummary.monthsHighestWaste > 0 && (
@@ -174,7 +175,9 @@ export const WasteProfileCard = memo(function WasteProfileCard({
             Tidak ada data waste {currentWeek} untuk outlet ini pada bulan-bulan sebelumnya.
           </div>
         ) : (
-          <div className="max-h-96 overflow-auto waste-scroll">
+          <div className="max-h-96 overflow-auto">
+            {/* FIX (BUGHUNT-R2): dropped dead `waste-scroll` class — referenced
+                here but defined in no stylesheet (grep: 0 CSS hits). */}
             <Table className="min-w-[880px]">
               <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                 <TableRow className="border-b hover:bg-transparent">
@@ -216,12 +219,19 @@ export const WasteProfileCard = memo(function WasteProfileCard({
                         : '—'}
                     </TableCell>
                     <TableCell className={`text-right text-xs tabular-nums ${zTone(r.zScore)}`}>
-                      {r.zScore != null ? r.zScore.toFixed(2) : '—'}
+                      {/* FIX (BUGHUNT-R2 / VH-7): comma decimal — was zScore.toFixed(2). */}
+                      {r.zScore != null ? fmtDecimal(r.zScore, 2) : '—'}
                     </TableCell>
                   </TableRow>
                 ))}
                 <TableRow className="h-9 bg-muted/50 dark:bg-zinc-800/40 font-semibold border-t-2">
-                  <TableCell className="text-xs font-semibold">TOTAL / {totals.months} BULAN</TableCell>
+                  {/* FIX (BUGHUNT-R2): the 2σ spike tally now rides the Bulan
+                      TOTAL label — it used to sit in the 9th cell, under the
+                      "Rank Band" column (a rank column), where it made no
+                      sense; the per-row 2σ badges live in this Bulan column. */}
+                  <TableCell className="text-xs font-semibold">
+                    TOTAL / {totals.months} BULAN{totals.spikes > 0 ? ` · ${totals.spikes}× 2σ` : ''}
+                  </TableCell>
                   <TableCell className="text-right text-xs tabular-nums">{fmtIDR(totals.sales)}</TableCell>
                   <TableCell className="text-right text-xs tabular-nums text-amber-600 dark:text-amber-400">{fmtIDR(totals.waste)}</TableCell>
                   <TableCell className="text-right text-xs tabular-nums text-muted-foreground">{fmtIDR(totals.susut)}</TableCell>
@@ -231,7 +241,7 @@ export const WasteProfileCard = memo(function WasteProfileCard({
                   <TableCell className="text-right text-xs tabular-nums">
                     {totals.sales > 0 ? fmtPct(totals.waste / totals.sales, false, 2) : '—'}
                   </TableCell>
-                  <TableCell className="text-right text-xs text-muted-foreground">{totals.spikes > 0 ? `${totals.spikes}× 2σ` : '—'}</TableCell>
+                  <TableCell className="text-right text-xs text-muted-foreground">—</TableCell>
                   <TableCell className="text-right text-xs text-muted-foreground">—</TableCell>
                 </TableRow>
               </TableBody>

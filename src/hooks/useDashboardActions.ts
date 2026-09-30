@@ -11,7 +11,7 @@
 //      recommendations) + fires a toast. Memoized.
 //    • isExporting   — local UI state toggled by handleExport.
 //    • Global keyboard shortcuts useEffect (Cmd/Ctrl+E, R, K,
-//      1-7, Escape).
+//      1-8, Escape).
 //
 //  Parent (DashboardPage) still owns `exportDialogOpen` +
 //  `itemSearchOpen` state because the modals
@@ -25,7 +25,7 @@ import { useToast } from '@/hooks/use-toast';
 import type { AnalysisData, StatusData } from '@/hooks/useAnalysis';
 import { invalidateAllData } from '@/lib/query-invalidation';
 
-// P3-HYG-6: the open-dropdown DOM probe is only needed for the 1-7 tab
+// P3-HYG-6: the open-dropdown DOM probe is only needed for the 1-8 tab
 // shortcuts — hoisted to module scope + only evaluated inside that branch
 // (was: 3-selector document.querySelector on EVERY keypress, even plain
 // typing in inputs, before the isTyping guard had a chance to matter).
@@ -302,8 +302,8 @@ export function useDashboardActions({
   // UX-ENHANCE: Global keyboard shortcuts.
   // Cmd/Ctrl+E → open export dialog
   // Cmd/Ctrl+R → refresh data (prevents browser refresh)
-  // 1-7 → switch tabs (Area / Resto / Item / Peer / Pareto /
-  //       Historical / Heatmap)
+  // 1-8 → switch tabs (Area / Resto / Item / Peer / Pareto /
+  //       Historical / Heatmap / Waste)
   // Escape → close any open dialog/drawer
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -328,12 +328,15 @@ export function useDashboardActions({
         void handleRefresh(); // async since TASK H-3 — intentionally fire-and-forget
         return;
       }
-      // 1-7 → switch tabs (only when not typing in an input)
+      // 1-8 → switch tabs (only when not typing in an input)
       // FIX #6: Also block when a SearchableComboBox dropdown is open
       // (Radix uses [data-state=open] / [role=combobox][aria-expanded=true]).
       // P3-HYG-6: the querySelector probe now runs ONLY when the key is one
       // of the tab digits — cheap constant folding for every other keypress.
-      if (!mod && !isTyping && !e.altKey && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4' || e.key === '5' || e.key === '6' || e.key === '7')) {
+      // FIX (BUGHUNT-R2): '8' was missing — the Waste tab (DEEPWASTE-1's 8th
+      // tab) was unreachable via keyboard while the shortcut comments still
+      // said "1-7".
+      if (!mod && !isTyping && !e.altKey && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4' || e.key === '5' || e.key === '6' || e.key === '7' || e.key === '8')) {
         const isDropdownOpen = Boolean(document.querySelector(OPEN_DROPDOWN_SELECTOR));
         if (isDropdownOpen) return;
         // FIX (BUG-HUNT C18/BUG-3-08): also block while a Radix Popover/Dialog
@@ -344,8 +347,9 @@ export function useDashboardActions({
           (document.activeElement as HTMLElement | null)?.closest?.('[data-radix-popper-content-wrapper], [role="dialog"]')
         );
         if (focusInOverlay) return;
-        // VH-2 remap: 7 deep-analysis tabs (spec §6.8 — keyboard 1-7).
-        const tabMap: Record<string, string> = { '1': 'area', '2': 'resto', '3': 'item', '4': 'peer', '5': 'pareto', '6': 'historical', '7': 'heatmap' };
+        // VH-2 remap: 8 deep-analysis tabs (spec §6.8 — keyboard 1-7; '8' =
+        // Waste, added by DEEP-WASTE-1 + BUGHUNT-R2).
+        const tabMap: Record<string, string> = { '1': 'area', '2': 'resto', '3': 'item', '4': 'peer', '5': 'pareto', '6': 'historical', '7': 'heatmap', '8': 'waste' };
         setActiveTab(tabMap[e.key]);
         return;
       }

@@ -190,7 +190,10 @@ export default function DashboardPage() {
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
   useEffect(() => {
-    const VALID_TABS = ['area', 'resto', 'item', 'peer', 'pareto', 'historical', 'heatmap'];
+    // FIX (BUGHUNT-R2): 'waste' was missing from the whitelist — the sync
+    // effect below WRITES ?tab=waste, but this mount-read REJECTED it, so a
+    // reload on the Waste tab silently landed on Area (DEEPWASTE-1 tab #8).
+    const VALID_TABS = ['area', 'resto', 'item', 'peer', 'pareto', 'historical', 'heatmap', 'waste'];
     const t = new URLSearchParams(window.location.search).get('tab');
     if (t && t !== 'area' && VALID_TABS.includes(t) && t !== activeTabRef.current) {
       setActiveTab(t);
