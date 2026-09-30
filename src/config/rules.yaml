@@ -314,7 +314,9 @@ rules:
     name: "Item rugi besar tapi waste ≈ 0"
     category: WASTE
     severity: ABNORMAL
-    priority: 79
+    # DEEP-WASTE-1-B: 79 → 81 — subset ketat HIGH_LOSS_NOMINAL (80); di 79
+    # rule ini tak pernah bisa jadi top-flag (tak terlihat di byRule/byCategory).
+    priority: 81
     condition:
       all:
         - absNominalWaste: { lte: 1 }
@@ -338,8 +340,12 @@ rules:
   - code: WASTE_RESIDUAL_DOMINANT
     name: "Residual dominan dan waste menjelaskan < 10% dari loss"
     category: WASTE
-    severity: WARNING
-    priority: 59
+    # DEEP-WASTE-1-B: 59 → 76 + WARNING → ABNORMAL — subset ketat
+    # RESIDUAL_LOSS_HIGH (75/ABNORMAL); di 59 selalu ter-shadow. Naik ke 76
+    # agar muncul sebagai top-flag; severity ikut ABNORMAL supaya record yang
+    # sebelumnya dihitung abnormal via RESIDUAL_LOSS_HIGH tidak turun kelas.
+    severity: ABNORMAL
+    priority: 76
     condition:
       all:
         - nominalLossSurplus: { lt: 0 }

@@ -264,9 +264,25 @@ export async function evaluateRulesSql(
     { col: 'f_bom_disproportionate', code: 'BOM_DEVIATION_DISPROPORTIONATE', severity: 'WARNING', category: 'BOM', priority: 56 },
     // DEEP-WASTE-1: the 3 waste record rules (rows without these columns —
     // e.g. older mocks — never fire: Number(undefined) = NaN ≠ 1).
-    { col: 'f_waste_zero_big_loss', code: 'WASTE_ZERO_BIG_LOSS', severity: 'ABNORMAL', category: 'WASTE', priority: 79 },
+    // DEEP-WASTE-1-B (priority fix): WASTE_ZERO_BIG_LOSS is a STRICT SUBSET of
+    // HIGH_LOSS_NOMINAL (same |loss| > highLossNominalThreshold, plus waste ≈ 0),
+    // so at its original 79 it could never win the top-flag race against
+    // HIGH_LOSS_NOMINAL (80) — it fired but was invisible in byRule/byCategory
+    // and per-record top flags. Bumped to 81: the SPECIFIC cause outranks the
+    // generic one (same ladder convention as SALES_DEVIATION_MISMATCH 90 >
+    // TOLERANCE_BREACH_HIGH 80). Same ABNORMAL severity → global severity
+    // counts unchanged — pure re-bucketing out of HIGH_LOSS_NOMINAL.
+    { col: 'f_waste_zero_big_loss', code: 'WASTE_ZERO_BIG_LOSS', severity: 'ABNORMAL', category: 'WASTE', priority: 81 },
     { col: 'f_waste_under_record', code: 'WASTE_SALES_UNDER_RECORD', severity: 'WARNING', category: 'WASTE', priority: 57 },
-    { col: 'f_waste_residual_dominant', code: 'WASTE_RESIDUAL_DOMINANT', severity: 'WARNING', category: 'WASTE', priority: 59 },
+    // DEEP-WASTE-1-B (priority fix): strict subset of RESIDUAL_LOSS_HIGH
+    // (75 / ABNORMAL — same loss<0 + residualRatio>high conditions, plus the
+    // waste-share <10% clause), so at 59 it was always shadowed. 76 > 75
+    // surfaces it; severity upgraded WARNING→ABNORMAL so the top-flag swap
+    // never DOWNGRADES records that already counted abnormal via
+    // RESIDUAL_LOSS_HIGH (severity totals preserved — pure re-bucketing).
+    // Tie with OVER_EXPLAINED (76) is safe: the conditions are disjoint
+    // (qty over-explanation vs nominal residual dominance) and both ABNORMAL.
+    { col: 'f_waste_residual_dominant', code: 'WASTE_RESIDUAL_DOMINANT', severity: 'ABNORMAL', category: 'WASTE', priority: 76 },
   ];
 
   const flags: SqlRuleFlag[] = [];

@@ -465,17 +465,17 @@ describe('DEEP-WASTE-1 waste record rules (flags CTE)', () => {
     ...over,
   });
 
-  it('fires WASTE_ZERO_BIG_LOSS as ABNORMAL / WASTE / priority 79', async () => {
+  it('fires WASTE_ZERO_BIG_LOSS as ABNORMAL / WASTE / priority 81 (DEEP-WASTE-1-B: outranks HIGH_LOSS_NOMINAL 80)', async () => {
     mockQueryRaw.mockResolvedValueOnce([wasteRow({ f_waste_zero_big_loss: 1 })]);
     const flags = await evaluateRulesSql('WEEK 1', 'Agustus 2026', 'WEEK 1', 'Juli 2026', {}, baseThresholds());
     expect(flags).toHaveLength(1);
     expect(flags[0].ruleCode).toBe('WASTE_ZERO_BIG_LOSS');
     expect(flags[0].severity).toBe('ABNORMAL');
     expect(flags[0].category).toBe('WASTE');
-    expect(flags[0].priority).toBe(79);
+    expect(flags[0].priority).toBe(81);
   });
 
-  it('fires WASTE_SALES_UNDER_RECORD + WASTE_RESIDUAL_DOMINANT together (both WARNING / WASTE)', async () => {
+  it('fires WASTE_SALES_UNDER_RECORD (WARNING) + WASTE_RESIDUAL_DOMINANT (ABNORMAL, DEEP-WASTE-1-B: 76 > RESIDUAL_LOSS_HIGH 75)', async () => {
     mockQueryRaw.mockResolvedValueOnce([
       wasteRow({ itemId: 10, f_waste_under_record: 1 }),
       wasteRow({ itemId: 11, f_waste_residual_dominant: 1 }),
@@ -486,8 +486,8 @@ describe('DEEP-WASTE-1 waste record rules (flags CTE)', () => {
     const rd = flags.find((f) => f.ruleCode === 'WASTE_RESIDUAL_DOMINANT')!;
     expect(ur.severity).toBe('WARNING');
     expect(ur.priority).toBe(57);
-    expect(rd.severity).toBe('WARNING');
-    expect(rd.priority).toBe(59);
+    expect(rd.severity).toBe('ABNORMAL');
+    expect(rd.priority).toBe(76);
     expect(flags.every((f) => f.category === 'WASTE')).toBe(true);
   });
 
