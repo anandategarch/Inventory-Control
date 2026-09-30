@@ -43,6 +43,8 @@ import { BahanAnalysisCard } from './bahan-analysis-card';
 // DEEP-RESTO-1: multi-month same-week views (self-fetching cards).
 import { MonthlySeriesCard } from '@/components/dashboard/resto-analysis/monthly-series-card';
 import { PeerTrackRecordCard } from '@/components/dashboard/resto-analysis/peer-track-record-card';
+// DEEP-WASTE-2: per-outlet waste profile (self-fetching card).
+import { WasteProfileCard } from '@/components/dashboard/resto-analysis/waste-profile-card';
 
 // Backward-compat re-exports (no external file imports types from here today,
 // but keep them exported so future imports don't break).
@@ -258,6 +260,19 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
       )}
       {activeOutlet && (
         <PeerTrackRecordCard
+          outletCode={activeOutlet}
+          monthLabel={monthLabel || ''}
+          currentWeek={currentWeek || ''}
+          kelompok={kelompok}
+        />
+      )}
+
+      {/* DEEP-WASTE-2: Profil Waste — deret waste multi-bulan same-week +
+          rank/z-score vs band sales setara (paradox detector). Self-fetch —
+          independen dari payload outlet-items, jadi tetap render saat profil
+          parsial (sama seperti kedua card di atas). */}
+      {activeOutlet && (
+        <WasteProfileCard
           outletCode={activeOutlet}
           monthLabel={monthLabel || ''}
           currentWeek={currentWeek || ''}

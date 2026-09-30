@@ -79,6 +79,9 @@ export async function postProcess(params: ResolvedParams, records: FetchedRecord
   // hist-rules promises fired in stage 3 — PERF TAHAP-2/P2-7).
   const { topFlagByKey, severityMaps, normal, warning, abnormal, ruleBreakdown } = await evaluateAndMergeFlags(
     earlyPromises.histFlagsSqlPromise, earlyPromises.sqlFlagsPromise, healthRankingRows,
+    // DEEP-WASTE-1: the waste-spike flags join the same merge (highest-
+    // priority-per-record semantics unchanged).
+    earlyPromises.wasteFlagsSqlPromise,
   );
 
   // PERF-API-04 (Task PERF-API): run Sub-step 1b (BOM correlation findings) and

@@ -24,6 +24,8 @@
 //    • tabs/ParetoTab        — 80/20 Pareto analysis
 //    • tabs/HistoricalTab    — Z-Score + multi-period + BOM correlation (lazy) — VH-2
 //    • tabs/HeatmapTab       — Area × Item heatmap (lazy, self-fetch) — VH-2
+//    • tabs/WasteTab         — Deep Waste Analysis: multi-month waste
+//      network view + Pareto + anomali (lazy, self-fetch) — DEEP-WASTE-1/2
 //    • useDashboardEffects  — 2 useEffects (atomic auto-select + cache warming)
 //    • useDashboardActions  — export/refresh handlers + keyboard shortcuts
 //    • shared/index.tsx     — LoadingChart, SectionHeader, LayerHeader, EmptyState, etc.
@@ -57,6 +59,9 @@ const PeerTab = lazy(() => import('@/components/dashboard/tabs/PeerTab').then(m 
 const ParetoTab = lazy(() => import('@/components/dashboard/tabs/ParetoTab').then(m => ({ default: m.ParetoTab })));
 const HistoricalTab = lazy(() => import('@/components/dashboard/tabs/HistoricalTab').then(m => ({ default: m.HistoricalTab })));
 const HeatmapTab = lazy(() => import('@/components/dashboard/tabs/HeatmapTab').then(m => ({ default: m.HeatmapTab })));
+// DEEP-WASTE-1/2: lazy + self-fetch (HeatmapTab pattern) — the tab pulls
+// /api/waste-series + /api/waste-top-items itself, no analysis-payload prop.
+const WasteTab = lazy(() => import('@/components/dashboard/tabs/WasteTab').then(m => ({ default: m.WasteTab })));
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
 import { DrillDownDrawer } from '@/components/drilldown/DrillDownDrawer';
 import { SourceDataModal } from '@/components/drilldown/SourceDataModal';
@@ -81,7 +86,7 @@ import {
   EmptyState, LoadingState, ErrorState, ScrollToTop, LayerHeader,
 } from '@/components/dashboard/shared';
 import {
-  Activity, History, LayoutGrid, Loader2, MapPin, Store, TrendingDown, TrendingUp,
+  Activity, History, LayoutGrid, Loader2, MapPin, Store, Trash2, TrendingDown, TrendingUp,
 } from 'lucide-react';
 
 // ItemDeepDive — lazy-loaded (heavy). Custom spinner fallback.
@@ -347,6 +352,9 @@ export default function DashboardPage() {
                     <TabsTrigger value="heatmap" className={tabTriggerClass}>
                       <LayoutGrid className="h-3.5 w-3.5" /> Heatmap
                     </TabsTrigger>
+                    <TabsTrigger value="waste" className={tabTriggerClass}>
+                      <Trash2 className="h-3.5 w-3.5" /> Waste
+                    </TabsTrigger>
                   </TabsList>
 
                   {/* ====== AREA TAB (default — static import, eager render) ====== */}
@@ -404,6 +412,15 @@ export default function DashboardPage() {
                     {visitedTabs.includes('heatmap') ? (
                       <Suspense fallback={<TabSkeleton />}>
                         <HeatmapTab />
+                      </Suspense>
+                    ) : null}
+                  </TabsContent>
+
+                  {/* ====== WASTE TAB (Deep Waste Analysis — self-fetch, DEEP-WASTE-1/2) ====== */}
+                  <TabsContent value="waste" forceMount aria-label="Waste tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
+                    {visitedTabs.includes('waste') ? (
+                      <Suspense fallback={<TabSkeleton />}>
+                        <WasteTab />
                       </Suspense>
                     ) : null}
                   </TabsContent>

@@ -4,10 +4,10 @@
 //  Extracted from src/app/api/analysis/services/post-process.ts (Task 3-b).
 //
 //  Responsibilities:
-//    1. Await the two SQL rule-flag promises (16 SQL rules + 3 zScore
-//       rules — PERF TAHAP-2/P2-7 moved the zScore evaluation from a
-//       35K-row JS loop over currSlim to evaluateHistoricalRulesSql)
-//    2. Merge SQL + hist flags → topFlagByKey (key → highest-priority flag)
+//    1. Await the three SQL rule-flag promises (19 SQL rules + 3 zScore
+//       rules + 1 waste zScore rule — PERF TAHAP-2/P2-7 moved the zScore
+//       evaluation to SQL; DEEP-WASTE-1 added the waste-spike pass)
+//    2. Merge SQL + hist + waste flags → topFlagByKey (key → highest-priority flag)
 //    3. Compute per-outlet + global severity counts from topFlagByKey +
 //       healthRankingRows (zeroDev / nonZeroDev counts per outlet)
 //
@@ -19,13 +19,15 @@ import type { QueryResults } from './run-queries';
 import type { SeverityMaps } from './post-process-types';
 
 /**
- * Sub-step 1 — merge the SQL rule flags + SQL historical (zScore) flags.
- * Returns topFlagByKey + per-outlet severity counts + global normal/warning/abnormal.
+ * Sub-step 1 — merge the SQL rule flags + SQL historical (zScore) flags +
+ * SQL waste-spike flags. Returns topFlagByKey + per-outlet severity counts
+ * + global normal/warning/abnormal.
  */
 export async function evaluateAndMergeFlags(
   histFlagsSqlPromise: Promise<SqlRuleFlag[]>,
   sqlFlagsPromise: Promise<SqlRuleFlag[]>,
   healthRankingRows: QueryResults['healthRankingRows'],
+  wasteFlagsSqlPromise?: Promise<SqlRuleFlag[]>,
 ): Promise<{
   topFlagByKey: Map<string, SqlRuleFlag>;
   severityMaps: SeverityMaps;
@@ -37,9 +39,10 @@ export async function evaluateAndMergeFlags(
   // ============================================================
   //  POST-PROCESS RULE FLAGS (Sprint 3 + SQL-OPTIMIZE + TAHAP-2/P2-7)
   //  --------------------------------------------------------
-  //  1. Both flag sets are SQL now: the 16 rule flags (evaluateRulesSql)
-  //     + the 3 zScore hist flags (evaluateHistoricalRulesSql). Both have
-  //     been running in parallel since stage 3 fired them at t=0.
+  //  1. All flag sets are SQL now: the 19 rule flags (evaluateRulesSql)
+  //     + the 3 zScore hist flags (evaluateHistoricalRulesSql) + the
+  //     waste-spike flags (evaluateWasteRulesSql — DEEP-WASTE-1). All
+  //     have been running in parallel since stage 3 fired them at t=0.
   //  2. Merge → topFlagByKey (key → highest-priority flag)
   //  3. Compute per-outlet + global severity counts from topFlagByKey +
   //     healthRankingRows (zeroDev / nonZeroDev counts per outlet)
@@ -47,11 +50,17 @@ export async function evaluateAndMergeFlags(
   // PERF-FASE2-BE03: Await sqlFlagsPromise here (not in Group 1) — by now
   // the parallel wave has finished, and evaluateRulesSql has been running in
   // parallel the whole time. If it's already resolved, this await is ~0ms.
-  const [sqlFlags, histFlags] = await Promise.all([sqlFlagsPromise, histFlagsSqlPromise]);
+  const [sqlFlags, histFlags, wasteFlags] = await Promise.all([
+    sqlFlagsPromise,
+    histFlagsSqlPromise,
+    // DEEP-WASTE-1: optional for backward compat with tests/older callers —
+    // resolves to [] when absent.
+    wasteFlagsSqlPromise ?? Promise.resolve([] as SqlRuleFlag[]),
+  ]);
 
   // topFlagByKey — one entry per (outletId, itemId, akunPenyesuaian) record
   // that fired at least one rule. Keeps the highest-priority flag.
-  const allFlags = [...sqlFlags, ...histFlags];
+  const allFlags = [...sqlFlags, ...histFlags, ...wasteFlags];
   const topFlagByKey = new Map<string, SqlRuleFlag>();
   for (const flag of allFlags) {
     const key = `${flag.outletId}|${flag.itemId}|${flag.akunPenyesuaian ?? ''}`;

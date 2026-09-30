@@ -3,7 +3,7 @@
 // withStatementTimeout — tested with mocked db (the SQL flag-expansion
 // contract is what matters; the guards live inside the SQL text).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { evaluateRulesSql, evaluateHistoricalRulesSql } from '@/lib/queries/rule-evaluation';
+import { evaluateRulesSql, evaluateHistoricalRulesSql, evaluateWasteRulesSql } from '@/lib/queries/rule-evaluation';
 import type { RuntimeThresholds } from '@/lib/settings';
 
 const { mockQueryRaw, mockExecuteRaw } = vi.hoisted(() => ({
@@ -243,9 +243,13 @@ describe('evaluateRulesSql', () => {
     expect(sqlText).toContain('flags AS');
     expect(sqlText).toContain('FROM flags');
     expect(sqlText).toContain('"f_tol_breach_high" + "f_tol_breach"');
-    expect(sqlText).toContain('"f_bom_disproportionate") > 0');
-    // All 16 flag columns still selected + row order preserved
+    // DEEP-WASTE-1: the sum now ends with the 3 waste columns (was
+    // '"f_bom_disproportionate") > 0' — 19 flag columns egress).
+    expect(sqlText).toContain('"f_bom_disproportionate"');
+    expect(sqlText).toContain('+ "f_waste_zero_big_loss" + "f_waste_under_record" + "f_waste_residual_dominant") > 0');
+    // All flag columns still selected + row order preserved
     expect(sqlText).toContain('"f_trial_bom_mismatch", "f_bom_disproportionate"');
+    expect(sqlText).toContain('"f_waste_zero_big_loss", "f_waste_under_record", "f_waste_residual_dominant"');
     expect(sqlText).toContain('ORDER BY "outletId", "itemId"');
   });
 
@@ -426,5 +430,126 @@ describe('evaluateRulesSql', () => {
     ]);
     // All 4 should be WARNING + BOM category
     expect(flags.every((f) => f.severity === 'WARNING' && f.category === 'BOM')).toBe(true);
+  });
+});
+
+// ============================================================
+//  DEEP-WASTE-1: the 4 waste rules (3 record-level in the flags
+// CTE + evaluateWasteRulesSql for WASTE_SPIKE_2SIGMA).
+// ============================================================
+
+describe('DEEP-WASTE-1 waste record rules (flags CTE)', () => {
+  const wasteRow = (over: Partial<Record<string, number | string | null>> = {}) => ({
+    outletId: 1,
+    itemId: 10,
+    akunPenyesuaian: 'AKUN_W',
+    f_tol_breach_high: 0,
+    f_tol_breach: 0,
+    f_tol_not_set: 0,
+    f_over_explained: 0,
+    f_resid_high: 0,
+    f_resid_warn: 0,
+    f_high_loss: 0,
+    f_dir_flip: 0,
+    f_sales_mismatch: 0,
+    f_sales_decrease: 0,
+    f_bom_mismatch: 0,
+    f_bom_down_dev_up: 0,
+    f_waste_bom_mismatch: 0,
+    f_susut_bom_mismatch: 0,
+    f_trial_bom_mismatch: 0,
+    f_bom_disproportionate: 0,
+    f_waste_zero_big_loss: 0,
+    f_waste_under_record: 0,
+    f_waste_residual_dominant: 0,
+    ...over,
+  });
+
+  it('fires WASTE_ZERO_BIG_LOSS as ABNORMAL / WASTE / priority 79', async () => {
+    mockQueryRaw.mockResolvedValueOnce([wasteRow({ f_waste_zero_big_loss: 1 })]);
+    const flags = await evaluateRulesSql('WEEK 1', 'Agustus 2026', 'WEEK 1', 'Juli 2026', {}, baseThresholds());
+    expect(flags).toHaveLength(1);
+    expect(flags[0].ruleCode).toBe('WASTE_ZERO_BIG_LOSS');
+    expect(flags[0].severity).toBe('ABNORMAL');
+    expect(flags[0].category).toBe('WASTE');
+    expect(flags[0].priority).toBe(79);
+  });
+
+  it('fires WASTE_SALES_UNDER_RECORD + WASTE_RESIDUAL_DOMINANT together (both WARNING / WASTE)', async () => {
+    mockQueryRaw.mockResolvedValueOnce([
+      wasteRow({ itemId: 10, f_waste_under_record: 1 }),
+      wasteRow({ itemId: 11, f_waste_residual_dominant: 1 }),
+    ]);
+    const flags = await evaluateRulesSql('WEEK 1', 'Agustus 2026', null, null, {}, baseThresholds());
+    expect(flags).toHaveLength(2);
+    const ur = flags.find((f) => f.ruleCode === 'WASTE_SALES_UNDER_RECORD')!;
+    const rd = flags.find((f) => f.ruleCode === 'WASTE_RESIDUAL_DOMINANT')!;
+    expect(ur.severity).toBe('WARNING');
+    expect(ur.priority).toBe(57);
+    expect(rd.severity).toBe('WARNING');
+    expect(rd.priority).toBe(59);
+    expect(flags.every((f) => f.category === 'WASTE')).toBe(true);
+  });
+
+  it('emits the 3 waste flag columns in the SQL text (curr CTE selects nominalWaste)', async () => {
+    mockQueryRaw.mockResolvedValueOnce([]);
+    await evaluateRulesSql('WEEK 1', 'Agustus 2026', null, null, {}, baseThresholds());
+    const callR = mockQueryRaw.mock.calls[0][0];
+    const sql = Array.isArray(callR) ? callR.join('$PARAM$') : String(callR);
+    expect(sql).toContain('ir."nominalWaste"');
+    expect(sql).toContain('"f_waste_zero_big_loss"');
+    expect(sql).toContain('"f_waste_under_record"');
+    expect(sql).toContain('"f_waste_residual_dominant"');
+  });
+});
+
+describe('evaluateWasteRulesSql (WASTE_SPIKE_2SIGMA)', () => {
+  // The file's other describes reset the shared mocks in their own beforeEach
+  // — these appended blocks need their own (mock calls otherwise leak across
+  // tests and break the not.toHaveBeenCalled assertion below).
+  beforeEach(() => {
+    mockQueryRaw.mockReset();
+    mockExecuteRaw.mockReset();
+  });
+
+  it('returns [] when historicalPeriods is empty (no baseline)', async () => {
+    const flags = await evaluateWasteRulesSql('WEEK 1', 'Agustus 2026', [], {}, baseThresholds());
+    expect(flags).toEqual([]);
+    expect(mockQueryRaw).not.toHaveBeenCalled();
+  });
+
+  it('maps f_waste_spike to WASTE_SPIKE_2SIGMA ABNORMAL / WASTE / 74', async () => {
+    mockQueryRaw.mockResolvedValueOnce([
+      { outletId: 1, itemId: 10, akunPenyesuaian: 'AKUN_W', f_waste_spike: 1 },
+    ]);
+    const periods = [
+      { monthLabel: 'Juli 2026', weekLabel: 'WEEK 1' },
+      { monthLabel: 'Juni 2026', weekLabel: 'WEEK 1' },
+    ];
+    const flags = await evaluateWasteRulesSql('WEEK 1', 'Agustus 2026', periods, {}, baseThresholds());
+    expect(flags).toHaveLength(1);
+    expect(flags[0].ruleCode).toBe('WASTE_SPIKE_2SIGMA');
+    expect(flags[0].severity).toBe('ABNORMAL');
+    expect(flags[0].category).toBe('WASTE');
+    expect(flags[0].priority).toBe(74);
+  });
+
+  it('SQL shape: weekly waste-ratio baseline + z formula + waste>0 guard', async () => {
+    mockQueryRaw.mockResolvedValueOnce([]);
+    const periods = [
+      { monthLabel: 'Juli 2026', weekLabel: 'WEEK 1' },
+      { monthLabel: 'Juni 2026', weekLabel: 'WEEK 1' },
+    ];
+    await evaluateWasteRulesSql('WEEK 1', 'Agustus 2026', periods, {}, baseThresholds());
+    expect(mockQueryRaw).toHaveBeenCalledTimes(1);
+    const callW = mockQueryRaw.mock.calls[0][0];
+    const sql = Array.isArray(callW) ? callW.join('$PARAM$') : String(callW);
+    expect(sql).toContain('WITH weekly_waste AS');
+    expect(sql).toContain('SUM(ABS(ir."qtyWaste")) / SUM(ABS(ir."qtyBom"))');
+    expect(sql).toContain('SQRT(GREATEST(0, ("sumSq" - n * "mean" * "mean") / (n - 1)))');
+    expect(sql).toContain('ABS(ir."qtyWaste") / ABS(ir."qtyBom")');
+    expect(sql).toContain('ABS(ir."qtyWaste") > 0');
+    expect(sql).toContain('(c."recordWasteBom" - s."mean") / s."stdDev"');
+    expect(sql).toContain('"zScore" >');
   });
 });

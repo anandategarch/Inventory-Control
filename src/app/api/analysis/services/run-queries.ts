@@ -42,7 +42,7 @@ import {
   queryParetoByDevBom,
 } from '@/lib/queries';
 import { queryGrowthDrivers, queryTopGrowth } from '@/lib/queries/growth-drivers';
-import { evaluateRulesSql, evaluateHistoricalRulesSql, type SqlRuleFlag } from '@/lib/queries/rule-evaluation';
+import { evaluateRulesSql, evaluateHistoricalRulesSql, evaluateWasteRulesSql, type SqlRuleFlag } from '@/lib/queries/rule-evaluation';
 import { cachedSharedQuery } from '@/lib/queries/query-cache';
 import { buildExecSummaryFromSql } from './exec-summary';
 import type { FetchedRecords, FilterOpts } from './fetch-records';
@@ -56,6 +56,10 @@ export interface EarlyPromises {
   // inline historical-baseline CTE (replaces the 35K-row currSlim fetch + JS
   // loop). Fired early like sqlFlags so post-process awaits the same promise.
   histFlagsSqlPromise: Promise<SqlRuleFlag[]>;
+  // DEEP-WASTE-1: the WASTE_SPIKE_2SIGMA pass — same SQL push-down shape as
+  // the zScore rules (waste-ratio baseline). Fired early + cached under
+  // 'q-waste-rules' so the export pipeline shares the row.
+  wasteFlagsSqlPromise: Promise<SqlRuleFlag[]>;
   healthRankingSqlPromise: ReturnType<typeof queryOutletHealthRanking>;
   varianceAnalysisPromise: ReturnType<typeof queryVarianceAnalysis>;
   growthDriversPromise: ReturnType<typeof queryGrowthDrivers>;
@@ -143,6 +147,15 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
     'q-hist-rules',
     { month, week, filters: filterOpts },
     () => evaluateHistoricalRulesSql(week, month, historicalPeriods, filterOpts, thresholds),
+  );
+  // DEEP-WASTE-1: WASTE_SPIKE_2SIGMA — waste z-score vs own history, same
+  // historicalPeriods + filterOpts as the zScore pass above. Cached under
+  // its own q-* row (invalidated by every mutation via 'q-waste-rules' in
+  // aggregation-cache/invalidate.ts).
+  const wasteFlagsSqlPromise = cachedSharedQuery(
+    'q-waste-rules',
+    { month, week, filters: filterOpts },
+    () => evaluateWasteRulesSql(week, month, historicalPeriods, filterOpts, thresholds),
   );
   // H-10 (G1 scan-share): health ranking now goes through the shared
   // q-outlet-agg scan (superset also consumed by /api/recommendations) —
@@ -299,7 +312,7 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
   // enrichment inline if needed.
 
   return {
-    earlyPromises: { sqlFlagsPromise, histFlagsSqlPromise, healthRankingSqlPromise, varianceAnalysisPromise, growthDriversPromise },
+    earlyPromises: { sqlFlagsPromise, histFlagsSqlPromise, wasteFlagsSqlPromise, healthRankingSqlPromise, varianceAnalysisPromise, growthDriversPromise },
     execSummary,
     topNominal,
     topDevBom,

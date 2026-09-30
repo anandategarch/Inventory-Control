@@ -68,6 +68,17 @@ const ALL_DATA_QUERY_KEYS: readonly (readonly unknown[])[] = [
   // series / track-record ranks for up to the 5-min staleTime.
   ['outlet-monthly-series'],
   ['peer-track-record'],
+  // DEEP-WASTE-1/2: the Waste tab's network series + Pareto and the Resto
+  // tab's Profil Waste card self-fetch /api/waste-series /
+  // /api/waste-top-items / /api/waste-peer-zscore under the
+  // ['waste-series', month, week, ...] / ['waste-top-items', ...] /
+  // ['waste-peer-zscore', outlet, month, week, kelompok] keys. Listed from
+  // birth (the DOCSYNC-1-B lesson: a missing client-side root left the
+  // DEEPRESTO-1 cards stale for up to the 5-min staleTime after mutations
+  // even though the server-side cache was correctly invalidated).
+  ['waste-series'],
+  ['waste-top-items'],
+  ['waste-peer-zscore'],
 ];
 
 /**

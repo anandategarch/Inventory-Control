@@ -172,6 +172,16 @@ export async function invalidateAnalysisCache(): Promise<void> {
     // both (new month rows, changed sales, changed deviation sums), so
     // their 5-min TTL rows must die on every mutation like the siblings.
     'outlet-monthly-series', 'peer-track-record',
+    // DEEP-WASTE-1/2: the Waste tab + Resto tab "Profil Waste" views —
+    // same rule as the DEEP-RESTO-1 siblings above: every mutation (new
+    // month rows, changed sales/waste sums, changed outlet sets via PIC)
+    // must kill the 5-min TTL rows or the tab serves pre-mutation data.
+    'waste-series', 'waste-top-items', 'waste-peer-zscore',
+    // DEEP-WASTE-1: the waste z-score rule pass (evaluateWasteRulesSql) —
+    // cached under its own q-* row by run-queries (same rule as
+    // 'q-rules' / 'q-hist-rules': mutations must kill it or the analysis
+    // payload keeps pre-mutation waste-spike flags for up to 30 min).
+    'q-waste-rules',
     // REFINE-3: the export's own-history anomaly ranking + weekly category
     // composition — same rule: mutations must kill these rows or the export
     // serves pre-mutation data for up to 30 min.

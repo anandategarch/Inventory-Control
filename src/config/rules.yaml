@@ -2,9 +2,10 @@
 #  ATURAN ANOMALI — Inventory Control Intelligence Platform
 #  ----------------------------------------------------------
 #  SPEC ONLY (Task W / dead-code cleanup): file ini adalah SPESIFIKASI
-#  deklaratif 19 aturan anomaly — dokumentasi satu-satunya definisi rule.
+#  deklaratif 23 aturan anomaly — dokumentasi satu-satunya definisi rule.
 #  Eksekusi aktual ada di src/lib/queries/rule-evaluation.ts
-#  (16 rule via SQL push-down + 3 rule zScore via evaluateHistoricalRulesSql —
+#  (19 rule via SQL push-down + 3 rule zScore via evaluateHistoricalRulesSql
+#  + 1 rule waste zScore via evaluateWasteRulesSql — DEEP-WASTE-1;
 #  PERF TAHAP-2/P2-7 moved the zScore rules from JS post-process to SQL).
 #  Legacy JS evaluator (src/engine/rules/) dihapus — tidak ada pemanggil
 #  produksi sejak migrasi SQL. Saat menambah/mengubah aturan: update file
@@ -303,3 +304,66 @@ rules:
         - zScore: { lte: historicalZscoreHigh }
     narrative_template: >
       Peringatan: Deviasi/BOM {{zScore}} std-dev di atas rata-rata historis (z > 1.5 — ambang historicalZscoreWarn default).
+
+  # ===== WASTE (DEEP-WASTE-1 — P2 rules dari analisa deep waste offline) =====
+  # 4 aturan tambahan (19 → 23). 3 dievaluasi di flags CTE evaluateRulesSql
+  # (record grain); WASTE_SPIKE_2SIGMA dievaluasi evaluateWasteRulesSql
+  # (zScore vs riwayat waste sendiri — same-weekLabel, sama seperti 3 rule
+  # HISTORIS di atas tapi metrik rasio ABS(qtyWaste)/ABS(qtyBom)).
+  - code: WASTE_ZERO_BIG_LOSS
+    name: "Item rugi besar tapi waste ≈ 0"
+    category: WASTE
+    severity: ABNORMAL
+    priority: 79
+    condition:
+      all:
+        - absNominalWaste: { lte: 1 }
+        - nominalLossSurplus: { lt: -highLossNominalThreshold }
+    narrative_template: >
+      Item rugi {{absNominalLossSurplus}} tapi waste ≈ 0 — waste tidak (belum) dicatat untuk kerugian sebesar itu.
+
+  - code: WASTE_SALES_UNDER_RECORD
+    name: "Waste < 0,1% dari sales pada item LOSS (indikasi under-recording)"
+    category: WASTE
+    severity: WARNING
+    priority: 57
+    condition:
+      all:
+        - nominalSales: { gt: 0 }
+        - absNominalWaste: { lt: { mul: [nominalSales, 0.001] } }
+        - nominalLossSurplus: { lt: 0 }
+    narrative_template: >
+      Waste {{absNominalWaste}} hanya < 0,1% dari sales {{nominalSales}} pada item LOSS — indikasi waste kurang tercatat.
+
+  - code: WASTE_RESIDUAL_DOMINANT
+    name: "Residual dominan dan waste menjelaskan < 10% dari loss"
+    category: WASTE
+    severity: WARNING
+    priority: 59
+    condition:
+      all:
+        - nominalLossSurplus: { lt: 0 }
+        - residualRatio: { gt: residualLossHighPct }
+        - absNominalWaste: { lt: { mul: [absNominalLossSurplus, 0.1] } }
+    narrative_template: >
+      Residual {{residualRatio}} dominan dan waste hanya menjelaskan < 10% dari loss — "waste explains nothing" di item ini.
+
+  - code: WASTE_SPIKE_2SIGMA
+    name: "Lonjakan waste > 2σ vs riwayat sendiri"
+    category: WASTE
+    severity: ABNORMAL
+    priority: 74
+    condition:
+      all:
+        - qtyWaste: { not_null: true }
+        - zScoreWaste: { gt: historicalZscoreHigh }
+    narrative_template: >
+      Lonjakan waste: rasio waste/BOM {{zScoreWaste}} std-dev di atas rata-rata historis (z > 2.0) — investigasi kejadian bulan ini.
+# ------------------------------------------------------------
+#  Catatan field tambahan DEEP-WASTE-1 (Condition DSL):
+#    - absNominalWaste = ABS(COALESCE(nominalWaste, 0)) — helper record.
+#    - zScoreWaste = (ABS(qtyWaste)/ABS(qtyBom) − mean) / stdDev atas
+#      riwayat same-week rasio waste/BOM per (outlet, item) — hanya
+#      terdefinisi saat qtyWaste ada, ABS(qtyWaste) > 0, stdDev > 0,
+#      n >= historicalMinWeeks (default 4).
+# ------------------------------------------------------------

@@ -199,6 +199,49 @@ export const peerTrackRecordQuerySchema = z.object({
   kelompok: kelompokSchema,
 });
 
+// /api/waste-series?month=&week=&area=&kelompok=&pic=&outletCode=
+// DEEP-WASTE-1: multi-month SAME-week waste network view (per-outlet
+// monthly waste/susut/trial/residual/loss + waste/sales + the 4 network
+// detectors). Same filter scope as /api/pareto (area/kelompok/pic); the
+// optional outletCode scopes the view to ONE outlet (the Resto tab's
+// Profil Waste card). `month` resolves the running month (window upper
+// bound, inclusive).
+export const wasteSeriesQuerySchema = z.object({
+  month: monthLabelSchema,
+  week: weekLabelSchema,
+  area: areaSchema,
+  kelompok: kelompokSchema,
+  pic: picSchema,
+  outletCode: outletCodeSchema,
+});
+
+// /api/waste-top-items?month=&week=&area=&kelompok=&pic=&outletCode=&limit=
+// DEEP-WASTE-1: Pareto of items by ΣABS nominalWaste over the same
+// window + sistematik columns (#outlet/#bulan) + per-outlet breakdown.
+// The optional outletCode scopes the view to ONE outlet (global outlet
+// filter parity with waste-series). limit is clamped in the route
+// (1..50, default 20) — bogus values must not reach the cache key (same
+// style as peer-comparison/top-items).
+export const wasteTopItemsQuerySchema = z.object({
+  month: monthLabelSchema,
+  week: weekLabelSchema,
+  area: areaSchema,
+  kelompok: kelompokSchema,
+  pic: picSchema,
+  outletCode: outletCodeSchema,
+});
+
+// /api/waste-peer-zscore?outletCode=&month=&week=&kelompok=
+// DEEP-WASTE-2: per-month waste/sales + rank + z-score of ONE outlet
+// inside its dynamic ±10% sales band over the same window.
+// kelompok scopes the PEER set only — the focus outlet is always included.
+export const wastePeerZScoreQuerySchema = z.object({
+  outletCode: z.string().min(1).max(50),
+  month: monthLabelSchema,
+  week: weekLabelSchema,
+  kelompok: kelompokSchema,
+});
+
 // /api/peer-comparison/top-items?outletCode=&month=&week=&kelompok=
 // PEERTOP-1 — per-peer top-N items + cross-peer union. topN/limit/mode are
 // parsed + clamped manually in the route (same style as the items route's

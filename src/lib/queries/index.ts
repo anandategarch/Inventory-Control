@@ -29,6 +29,14 @@ export * from './outlets/outlet-recurrence';
 // track-record for ONE outlet (Resto tab "Riwayat Multi-Bulan" section —
 // /api/outlet-monthly-series + /api/peer-track-record).
 export * from './outlets/outlet-monthly-series';
+// DEEP-WASTE-1/2: multi-month same-week waste network view (per-outlet
+// monthly aggregates + the 4 network detectors) + per-outlet waste/sales
+// z-score vs its dynamic ±10% sales band (Waste tab + Resto tab
+// "Profil Waste" card — /api/waste-series + /api/waste-peer-zscore).
+export * from './waste/waste-series';
+// DEEP-WASTE-1: item Pareto by ΣABS nominalWaste over the same window +
+// sistematik columns + per-outlet breakdown (/api/waste-top-items).
+export * from './waste/waste-top-items';
 export * from './areas';
 export * from './historical';
 // SQL-OPTIMIZE: pushed computeOutletHealthRanking + computeVarianceAnalysis +
