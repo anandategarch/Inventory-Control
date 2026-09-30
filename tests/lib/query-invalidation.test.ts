@@ -60,10 +60,22 @@ describe('invalidateAllData (BUG-3-b B1 regression)', () => {
     }
   });
 
+  // DOCSYNC-1-B regression: DEEPRESTO-1's Riwayat Multi-Bulan cards (tab Resto)
+  // self-fetch under ['outlet-monthly-series', ...] / ['peer-track-record', ...] —
+  // both roots MUST be invalidated on every mutation or the keep-alive Resto tab
+  // serves pre-mutation series/ranks for up to the 5-min staleTime (H-14/T3 class).
+  it("invalidates the DEEPRESTO-1 ['outlet-monthly-series'] + ['peer-track-record'] roots", () => {
+    const { queryClient, invalidated } = makeRecordingClient();
+    invalidateAllData(queryClient);
+    const roots = new Set(invalidated.map((k) => k[0]));
+    expect(roots.has('outlet-monthly-series')).toBe(true);
+    expect(roots.has('peer-track-record')).toBe(true);
+  });
+
   it('passes every key as a non-empty array (prefix-matchable shape)', () => {
     const { queryClient, invalidated } = makeRecordingClient();
     invalidateAllData(queryClient);
-    expect(invalidated.length).toBeGreaterThanOrEqual(19);
+    expect(invalidated.length).toBeGreaterThanOrEqual(21);
     for (const key of invalidated) {
       expect(Array.isArray(key)).toBe(true);
       expect(key.length).toBeGreaterThan(0);

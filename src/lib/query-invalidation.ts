@@ -57,6 +57,17 @@ const ALL_DATA_QUERY_KEYS: readonly (readonly unknown[])[] = [
   // prefix-matching invalidates both keys from this single entry (the server
   // side already lists 'change-analysis' in aggregation-cache/invalidate.ts).
   ['change-analysis'],
+  // DOCSYNC-1-B (same H-14/T3 class, found during the post-DEEPRESTO-1 doc
+  // sync): DEEPRESTO-1's "Riwayat Multi-Bulan" cards (tab Resto) self-fetch
+  // /api/outlet-monthly-series + /api/peer-track-record under the
+  // ['outlet-monthly-series', outlet, month, week] /
+  // ['peer-track-record', outlet, month, week, kelompok] keys. The SERVER
+  // side already listed both prefixes in aggregation-cache/invalidate.ts at
+  // DEEPRESTO-1 birth, but these client-side roots were missed — after any
+  // mutation the keep-alive Resto tab kept serving pre-mutation monthly
+  // series / track-record ranks for up to the 5-min staleTime.
+  ['outlet-monthly-series'],
+  ['peer-track-record'],
 ];
 
 /**
