@@ -19,10 +19,13 @@ import { FilterBar } from '@/components/filters/FilterBar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
+  Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger,
+} from '@/components/ui/sheet';
+import {
   Tooltip, TooltipContent, TooltipTrigger,
 } from '@/components/ui/tooltip';
 import {
-  Activity, Boxes, Clock3, FileDown, Keyboard, Loader2, RefreshCw,
+  Activity, Boxes, Clock3, FileDown, Keyboard, Loader2, RefreshCw, SlidersHorizontal,
 } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
@@ -258,10 +261,43 @@ export function DashboardHeader({
       )}
 
       {/* Tier 2: FilterBar (bare, no Card wrapper) — only shown when data exists.
-          VH-4: id="l1-filter" completes the §6.6 anchor set (l1-filter … l6-deep). */}
+          VH-4: id="l1-filter" completes the §6.6 anchor set (l1-filter … l6-deep).
+          FIX (UIUX-A T3): Tier-2 kini responsif — desktop (md+) FilterBar inline
+          (layout & lebar IDENTIK dengan sebelumnya); mobile (<md) disembunyikan di
+          balik satu tombol "Filter & Aksi" yang membuka bottom Sheet berisi
+          FilterBar yang sama. Header sticky mobile turun ±377px → ±140px (56% →
+          ~17% viewport 375×667); ResizeObserver --dashboard-header-h menyesuaikan
+          otomatis (mekanisme itu tidak disentuh). Dua instansi FilterBar aman:
+          keduanya store-driven (useFilterBarState baca store yang sama), status
+          query ter-dedupe queryKey oleh TanStack, dialog management di dalamnya
+          lazy-load dan hanya terbuka via klik pada instansi yang terlihat —
+          CSS-only visibility (hidden md:block vs md:hidden), nol hydration branch. */}
       {hasData && (
-        <div id="l1-filter" className="px-6 pb-1.5 max-w-[1600px] mx-auto">
-          <FilterBar />
+        <div id="l1-filter">
+          {/* Desktop (md+): FilterBar inline — layout & lebar identik dengan sebelumnya */}
+          <div className="hidden md:block px-6 pb-1.5 max-w-[1600px] mx-auto">
+            <FilterBar />
+          </div>
+          {/* Mobile (<md): satu tombol full-width membuka bottom Sheet (FIX UIUX-A T3) */}
+          <div className="md:hidden px-6 pb-1.5 max-w-[1600px] mx-auto">
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button variant="outline" size="sm" className="h-8 w-full gap-1.5 text-xs">
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  Filter & Aksi
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="bottom" className="h-auto max-h-[85vh] overflow-y-auto px-4 pb-4">
+                <SheetHeader className="pb-2 border-b">
+                  <SheetTitle className="text-sm">Filter & Aksi</SheetTitle>
+                  <SheetDescription className="text-xs">
+                    Filter periode & organisasi, upload/import file, dan pengaturan data.
+                  </SheetDescription>
+                </SheetHeader>
+                <FilterBar />
+              </SheetContent>
+            </Sheet>
+          </div>
         </div>
       )}
     </header>

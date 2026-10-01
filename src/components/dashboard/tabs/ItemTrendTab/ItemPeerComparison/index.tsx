@@ -195,9 +195,9 @@ function ItemPeerComparisonImpl({
 
       <CardContent className="space-y-3">
         {/* 4 analysis cards — 2x2 grid on desktop
-            FIX (UI-13): changed md:grid-cols-2 → sm:grid-cols-2 so cards
-            pair up earlier on tablet / small desktop. */}
-        <div className="grid gap-3 grid-cols-2">
+            FIX (UIUX-D D1 + S5-5): grid-cols-1 sm:grid-cols-2 — mobile 1 kolom
+            (komentar lama mengklaim sm:grid-cols-2 yang tidak pernah ada di kode). */}
+        <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">
           <EfficiencyScoreCard
             score={score}
             footnote="Komposit dari Dev/BOM (50%) + Nominal Deviasi (50%). Higher = better."

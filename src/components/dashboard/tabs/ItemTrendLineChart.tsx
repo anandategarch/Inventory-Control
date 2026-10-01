@@ -24,6 +24,10 @@ import {
   ReferenceLine,
 } from 'recharts';
 import { fmtIDR, fmtNum, fmtDecimal } from '@/lib/format';
+// FIX (UIUX-D D5a): single-source z color (lib/zScoreHelpers — includes
+// dark: variants, used by HistoricalZScoreCard + ItemTrendTable) replaces
+// the local inline ladder below that had NO dark: variants.
+import { zScoreColor } from '@/lib/zScoreHelpers';
 import type { ItemTrendMetric, ItemTrendPeriod } from '@/hooks/useAnalysis';
 import { getFlipsForPeriod, periodKey as flipPeriodKey, type FlipAnalysis } from './ItemTrendTab/flipHelpers';
 // SHADCN-PATTERNS (Pattern 1) — ChartContainer + ChartConfig system
@@ -166,14 +170,11 @@ function CustomTooltip({ active, payload, metric }: CustomTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
   const row = payload[0].payload;
   const z = row.zScore;
-  const zColorClass = z == null
-    ? 'text-muted-foreground'
-    : z > 3 ? 'text-red-600' :
-      z > 2 ? 'text-amber-600' :
-      z > 1 ? 'text-yellow-600' :
-      z < -2 ? 'text-emerald-600' :
-      z < -1 ? 'text-emerald-500' :
-      'text-muted-foreground';
+  // FIX (UIUX-D D5a): zScoreColor from lib/zScoreHelpers (dark: variants
+  // included) — the local red/amber/yellow/emerald ladder diverged from
+  // the table's z column colors in dark mode. Null stays muted (no
+  // historical baseline).
+  const zColorClass = z == null ? 'text-muted-foreground' : zScoreColor(z);
   return (
     <div className="rounded-md border bg-background/95 backdrop-blur-sm shadow-lg p-2.5 text-[11px] space-y-1 max-w-[260px]">
       <p className="font-semibold text-foreground">{row.fullLabel}</p>
@@ -355,7 +356,9 @@ export const ItemTrendLineChart = memo(function ItemTrendLineChart({ periods, me
           </>
         )}
       </p>
-      {/* FIX (UI2-07): h-56 on mobile (224px — leaves room for table), h-72 on desktop.
+      {/* FIX (UIUX-D S5-4): komentar stale dihapus — fix (UI2-07 "h-56 on mobile,
+          h-72 on desktop") yang dideskripsikan tidak ada di kode (ChartContainer
+          hanya h-72, tanpa varian responsif).
           SHADCN-PATTERNS (Pattern 1): wrapped with <ChartContainer> instead of
           a bare <div><ResponsiveContainer></div>. ChartContainer injects the
           `--color-qty` / `--color-historicalMean` / `--color-zScore` CSS

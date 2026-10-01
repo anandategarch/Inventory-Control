@@ -3,6 +3,16 @@
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -75,6 +85,9 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
   const [filterNoPic, setFilterNoPic] = useState(false);
   const [editingCode, setEditingCode] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
+  // FIX (UIUX-B S10): per-row PIC remove — confirm() native diganti AlertDialog
+  // state-driven (pendingRemove = outlet code yang menunggu konfirmasi).
+  const [pendingRemove, setPendingRemove] = useState<string | null>(null);
 
   // Import dialog state
   const [importOpen, setImportOpen] = useState(false);
@@ -247,7 +260,9 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
   }
 
   function removePic(outletCode: string) {
-    if (!confirm(`Hapus PIC untuk outlet ${outletCode}?`)) return;
+    // FIX (UIUX-B S10): confirm() native → AlertDialog styled (state-driven,
+    // pola "Reset Semua Data" DataManagementDialog) — logika mutasi/toast/
+    // invalidasi tidak berubah.
     deletePicMutation.mutate(outletCode, { onSettled: invalidateAll });
   }
 
@@ -262,7 +277,17 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
   // ---------- Render ----------
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[820px] max-h-[85vh] flex flex-col">
+      {/* FIX (UIUX-B S3): guard Escape saat inline-edit PIC — listener Escape
+          Radix berjalan di fase capture pada document SEBELUM handler input
+          (bubble), sehingga tanpa preventDefault dialog ikut tertutup + seluruh
+          state transient di-reset. Saat editingCode aktif, batalkan dismiss;
+          handler Escape milik input (cancelEdit) tetap berjalan setelahnya. */}
+      <DialogContent
+        className="max-w-[820px] max-h-[85vh] flex flex-col"
+        onEscapeKeyDown={(e) => {
+          if (editingCode) e.preventDefault();
+        }}
+      >
         <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <Users className="h-5 w-5" />
@@ -465,7 +490,7 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
                                 size="sm"
                                 className="h-7 px-2 text-[11px] text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/30"
                                 disabled={deletePicMutation.isPending}
-                                onClick={() => removePic(o.code)}
+                                onClick={() => setPendingRemove(o.code)}
                                 title={`Hapus PIC untuk ${o.code}`}
                               >
                                 <Trash2 className="h-3 w-3" />
@@ -487,6 +512,37 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
             Tutup
           </Button>
         </DialogFooter>
+
+        {/* FIX (UIUX-B S10): konfirmasi hapus PIC per-baris — SATU AlertDialog
+            state-driven (pola in-file DataManagementDialog "Reset Semua Data"). */}
+        <AlertDialog open={!!pendingRemove} onOpenChange={(v) => { if (!v) setPendingRemove(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Hapus PIC untuk outlet {pendingRemove}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                PIC outlet ini akan dikosongkan. Anda bisa mengaturnya kembali kapan saja lewat kolom PIC.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Batal</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-red-600 hover:bg-red-700 text-white"
+                onClick={() => {
+                  const target = pendingRemove;
+                  if (!target) return;
+                  removePic(target);
+                  setPendingRemove(null);
+                }}
+              >
+                {deletePicMutation.isPending ? (
+                  <><Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> Menghapus...</>
+                ) : (
+                  'Ya, Hapus'
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );

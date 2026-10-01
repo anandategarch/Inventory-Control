@@ -164,6 +164,8 @@ export const InsightsPanel = memo(function InsightsPanel({ data }: { data: Analy
         </div>
       </CardHeader>
       <CardContent className="pt-4">
+        {/* FIX (UIUX-D D1): grid-cols-2 → grid-cols-1 gap-3 sm:grid-cols-2 —
+            insight callouts get full width on mobile, 2 columns at ≥sm. */}
         {insights.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-10 text-center">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl border bg-muted/40 text-muted-foreground/50 mb-3">
@@ -172,7 +174,7 @@ export const InsightsPanel = memo(function InsightsPanel({ data }: { data: Analy
             <p className="text-sm text-muted-foreground">Tidak ada insight yang dapat dihasilkan dari data ini.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {visible.map((insight) => {
               const style = SEVERITY_STYLES[insight.severity];
               return (

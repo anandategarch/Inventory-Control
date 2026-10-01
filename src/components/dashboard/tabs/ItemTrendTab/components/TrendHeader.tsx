@@ -106,7 +106,10 @@ export function TrendHeader({
       </CardTitle>
 
       {/* Search row + metric selector */}
-      <div className="flex flex-row items-center gap-2 mt-2">
+      {/* FIX (UIUX-D D3): flex-row → flex-col sm:flex-row — on mobile the search
+          bar got squeezed to ~30-50px by the ~280px metric selector; search now
+          stacks full-width above the selector, one row again at ≥sm. */}
+      <div className="flex flex-col sm:flex-row items-center gap-2 mt-2">
         <ItemTrendSearchBar
           query={ac.query}
           setQuery={ac.setQuery}

@@ -147,11 +147,24 @@ export const LossDecompositionCard = memo(function LossDecompositionCard({
           <div className="p-6 text-center text-sm text-muted-foreground">Tidak ada loss pada scope ini.</div>
         ) : (
           <>
-            <div className="h-64">
+            {/* FIX (UIUX-C S5): role="img" + aria-label — the main stacked
+                BarChart was invisible to screen readers (recharts svg has
+                no accessible name); same pattern as the W10 meters below
+                and the quadrant-card scatter. */}
+            <div
+              className="h-64"
+              role="img"
+              aria-label={`Bar chart dekomposisi loss W/S/T vs residual per outlet (${chartData.length} outlet teratas by total loss) — loss terjelaskan ${fmtPctId(attribution.explainedShare)} dari total loss`}
+            >
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData} margin={{ left: 0, right: 0, top: 10, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" className="opacity-60" />
-                  <XAxis dataKey="name" fontSize={10} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} interval={0} angle={-35} textAnchor="end" height={52} />
+                  {/* FIX (UIUX-C S7): "Tampilkan semua outlet" renders up to
+                      ~344 bars — interval={0} forced EVERY outletCode label
+                      into ±3px slots (unreadable smear). Above 40 rows the
+                      axis keeps only start/end ticks; the expand behavior
+                      itself stays (bars + tooltips remain useful). */}
+                  <XAxis dataKey="name" fontSize={10} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} interval={chartData.length > 40 ? 'preserveStartEnd' : 0} angle={-35} textAnchor="end" height={52} />
                   <YAxis tickFormatter={(v) => (v === 0 ? '0' : fmtHeatmapCompact(v))} fontSize={11} stroke="var(--muted-foreground)" tickLine={false} axisLine={false} width={54} />
                   <Tooltip
                     cursor={{ fill: 'var(--muted)', opacity: 0.4, stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '3 3' }}

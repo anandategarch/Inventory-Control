@@ -283,6 +283,11 @@ export function useDashboardActions({
       // Cmd/Ctrl+R → refresh data (prevent browser refresh)
       if (mod && (e.key === 'r' || e.key === 'R')) {
         if (isTyping) return;
+        // FIX (UIUX-A T6): Ctrl/Cmd+Shift+R (hard reload) dikembalikan ke browser —
+        // saat Shift ditekan, e.key === 'R' (huruf besar) tetap cocok cabang ini,
+        // sehingga hard reload berubah jadi refresh-data tanpa jalan keluar selain F5.
+        // Cegatan hanya untuk plain Ctrl/Cmd+R (perilaku VH-6 dipertahankan).
+        if (e.shiftKey) return;
         e.preventDefault();
         void handleRefresh(); // async since TASK H-3 — intentionally fire-and-forget
         return;

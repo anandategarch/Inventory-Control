@@ -13,7 +13,7 @@ import type { DrilldownRecord } from '@/hooks/useAnalysis';
 // COM / Waste / Susut / Trial) are non-negative so they render neutral, matching
 // the uncolored Nom Sales column treatment (no more spurious emerald).
 import { fmtIDR, fmtNum, fmtPctAbs, directionColor, numberColorNeg } from '@/lib/format';
-import { ExternalLink, X, Loader2 } from 'lucide-react';
+import { ExternalLink, Loader2 } from 'lucide-react';
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
@@ -37,6 +37,9 @@ export function DrillDownDrawer() {
   const [allRecords, setAllRecords] = useState<DrilldownRecord[]>([]);
   const [nextCursor, setNextCursor] = useState<number | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  // FIX (UIUX-B S5): Load-More failures were swallowed silently (catch only
+  // logged) — this flag drives the inline red hint under the button.
+  const [loadMoreError, setLoadMoreError] = useState(false);
 
   // First page fetch — pass dashboard filters so drill-down respects active filter
   const drill = useDrilldown({
@@ -55,6 +58,9 @@ export function DrillDownDrawer() {
     if (drill.data) {
       setAllRecords(drill.data.records);
       setNextCursor(drill.data.nextCursor);
+      // FIX (UIUX-B S5): fresh first page (drawer reopened / drill target
+      // switched / "Coba Lagi" refetch) → clear any stale Load-More error.
+      setLoadMoreError(false);
     }
   }, [drill.data]);
 
@@ -87,6 +93,8 @@ export function DrillDownDrawer() {
     // Capture the live filter signature at fetch start
     const filterSig = filterSigRef.current;
     setLoadingMore(true);
+    // FIX (UIUX-B S5): reset at attempt start so a retry clears the hint.
+    setLoadMoreError(false);
     try {
       const params = new URLSearchParams();
       if (drilldown.outletCode) params.set('outletCode', drilldown.outletCode);
@@ -117,9 +125,15 @@ export function DrillDownDrawer() {
         }
         setAllRecords(prev => [...prev, ...data.records]);
         setNextCursor(data.nextCursor);
+      } else {
+        // FIX (UIUX-B S5): !data.success was silent too — surface it like
+        // the catch branch below.
+        setLoadMoreError(true);
       }
     } catch (e) {
       logger.error("[drilldown] Load More failed:", { error: e });
+      // FIX (UIUX-B S5): surfaced inline instead of swallowed.
+      setLoadMoreError(true);
     } finally {
       setLoadingMore(false);
     }
@@ -134,6 +148,10 @@ export function DrillDownDrawer() {
       <SheetContent side="right" className="w-full max-w-2xl p-0 flex flex-col">
         <SheetHeader className="p-4 border-b shrink-0">
           <div className="flex items-center justify-between">
+            {/* FIX (UIUX-B S1): custom X removed — SheetContent's built-in close
+                already renders a working X in the same top-right corner, so the
+                two stacked up visually and produced two tab-stops (the custom one
+                had no aria-label; see the sr-only fix in ui/sheet.tsx). */}
             <div>
               <SheetTitle className="text-base">Drill-down: Data Sumber</SheetTitle>
               <SheetDescription className="text-xs">
@@ -143,9 +161,6 @@ export function DrillDownDrawer() {
                 {currentWeek && ` · ${currentWeek} ${monthLabel || ''}`}
               </SheetDescription>
             </div>
-            <Button size="sm" variant="ghost" onClick={() => setDrilldown({ outletCode: null, itemName: null })}>
-              <X className="h-4 w-4" />
-            </Button>
           </div>
         </SheetHeader>
 
@@ -196,7 +211,7 @@ export function DrillDownDrawer() {
 
               {/* FIX M1 (AUDIT-6): Load More button — consumes cursor pagination. */}
               {nextCursor && (
-                <div className="flex justify-center pt-2">
+                <div className="flex flex-col items-center gap-1 pt-2">
                   <Button
                     variant="outline"
                     size="sm"
@@ -212,6 +227,13 @@ export function DrillDownDrawer() {
                       'Muat Lebih Banyak'
                     )}
                   </Button>
+                  {/* FIX (UIUX-B S5): silent-failure feedback — small inline red
+                      message near the button (pattern: drill.error block above). */}
+                  {loadMoreError && (
+                    <p className="text-xs text-red-600 dark:text-red-400">
+                      Gagal memuat lebih banyak record. Coba lagi.
+                    </p>
+                  )}
                 </div>
               )}
 

@@ -117,7 +117,11 @@ export function SourceDataModal() {
             <div>
               <DialogTitle className="flex items-center gap-2 text-base">
                 <Database className="h-4 w-4" />
-                Data Sumber Lengkap
+                {/* FIX (UIUX-B S11): retitle honestly — the modal shares the
+                    drawer's limit-50 queryKey (by-design H-12) and has no Load
+                    More, so "Lengkap" over-promised; the existing footnote
+                    explains where the full data lives. */}
+                Data Sumber (maks. 50 record)
               </DialogTitle>
               <DialogDescription className="text-xs mt-1">
                 {drilldown.outletCode && `Outlet: ${drilldown.outletCode}`}
@@ -125,7 +129,9 @@ export function SourceDataModal() {
                 {drilldown.itemName && `Item: ${drilldown.itemName}`}
                 {currentWeek && ` · ${currentWeek}`}
                 {monthLabel && ` ${monthLabel}`}
-                {records.length > 0 && ` · ${records.length} records`}
+                {/* FIX (UIUX-B S11): "records" → "record" — match the drawer's
+                    Indonesian singular convention ("N record" badge). */}
+                {records.length > 0 && ` · ${records.length} record`}
               </DialogDescription>
             </div>
             <div className="flex items-center gap-2">
@@ -139,10 +145,15 @@ export function SourceDataModal() {
                 <Download className="h-3.5 w-3.5 mr-1" />
                 Export CSV
               </Button>
+              {/* FIX (UIUX-B S2): icon-only custom X had no accessible name —
+                  aria-label added (built-in close stays off via
+                  showCloseButton={false}: it would stack on this Export CSV
+                  row at the same top-right corner). */}
               <Button
                 variant="ghost"
                 size="sm"
                 className="h-8 w-8 p-0"
+                aria-label="Tutup"
                 onClick={() => setSourceModal(false)}
               >
                 <X className="h-4 w-4" />
@@ -179,7 +190,9 @@ export function SourceDataModal() {
         {drill.data && records.length > 0 && (
           <div className="flex items-center justify-between pt-2 text-xs text-muted-foreground shrink-0">
             <span>
-              Menampilkan {records.length} record{records.length !== 1 ? 's' : ''}
+              {/* FIX (UIUX-B S11): dropped the English plural "s" — same
+                  in-file consistency as the header count line. */}
+              Menampilkan {records.length} record
               {/* H-12: the modal shares the drawer's limit-50 queryKey (see the
                   useDrilldown call above) — the old "maks 500" hint could never
                   fire. Full data remains traceable via the source Excel. */}

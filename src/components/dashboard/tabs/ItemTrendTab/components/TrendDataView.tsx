@@ -104,8 +104,12 @@ export function TrendDataView({
 
       {/* TREMOR Pattern 3 — Tracker: per-period status blocks.
           Each block colored by Z-Score: emerald (z<-1, baik),
-          amber (-1..1, normal), red (z>1, abnormal), zinc (null,
-          no baseline). Tooltip shows monthLabel + weekLabel + Z. */}
+          amber (-1..2, normal — menyerap rentang watch 1..2), red (z>2,
+          abnormal), zinc (null, no baseline). Tooltip shows monthLabel +
+          weekLabel + Z.
+          FIX (UIUX-D D5c): red threshold z>1 → z>2 — "merah" previously
+          meant two severities across tabs (the badge/dot ladder reserves
+          red for z>2+). */}
       {selectedItem && periods.length > 1 && (
         <div className="px-4 pt-3 pb-1">
           <p className="text-[10px] text-muted-foreground mb-1.5 flex items-center gap-1.5">
@@ -116,7 +120,7 @@ export function TrendDataView({
             blocks={chronological.map((p) => {
               const z = p.zScore;
               return {
-                color: z == null ? 'zinc' : z < -1 ? 'emerald' : z > 1 ? 'red' : 'amber',
+                color: z == null ? 'zinc' : z < -1 ? 'emerald' : z > 2 ? 'red' : 'amber',
                 tooltip: `${p.monthLabel} ${p.weekLabel}: Z-Score ${z != null ? fmtDecimal(z, 2) : '—'}`,
               };
             })}

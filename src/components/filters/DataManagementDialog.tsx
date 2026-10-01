@@ -101,6 +101,9 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
   const [selectedMonth, setSelectedMonth] = useState<string>('');
   // DQ detail expansion state
   const [expandedFileId, setExpandedFileId] = useState<number | null>(null);
+  // FIX (UIUX-B S10): konfirmasi hapus file per-baris — confirm() native diganti
+  // SATU AlertDialog state-driven (pendingFile = baris yang menunggu konfirmasi).
+  const [pendingFile, setPendingFile] = useState<{ id: number; name: string } | null>(null);
 
   // Reset month picker state when dialog closes
   const [prevOpen, setPrevOpen] = useState(open);
@@ -197,14 +200,12 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
   }
 
   // Wrap mutations to invalidate after settle
-  function handleDeleteFile(fileId: number, fileName: string) {
-    if (!confirm(`Hapus file "${fileName}"?\nSemua record, week, dan DQ issue terkait akan dihapus.`)) return;
-    deleteFileMutation.mutate(fileId, { onSettled: invalidateAll });
-  }
-
+  // FIX (UIUX-B S10): kedua confirm() native (hapus file per-baris + hapus
+  // bulan) dimigrasikan ke AlertDialog styled — logika mutasi/toast/invalidasi
+  // tidak berubah. Hapus-file per-baris kini state-driven (pendingFile);
+  // hapus-bulan memakai AlertDialogTrigger pada tombol "Hapus Bulan Ini".
   function handleDeleteMonth() {
     if (!selectedMonth) return;
-    if (!confirm(`Hapus SEMUA data untuk bulan ${selectedMonth}?\nTindakan ini tidak dapat dibatalkan.`)) return;
     deleteMonthMutation.mutate(selectedMonth, { onSettled: invalidateAll });
   }
 
@@ -260,19 +261,48 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
                     ))}
                   </SelectContent>
                 </Select>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 w-full text-xs border-amber-300 text-amber-700 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/40"
-                  disabled={!selectedMonth || deleteMonthMutation.isPending}
-                  onClick={handleDeleteMonth}
-                >
-                  {deleteMonthMutation.isPending ? (
-                    <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Menghapus...</>
-                  ) : (
-                    <><Trash2 className="h-3 w-3 mr-1" /> Hapus Bulan Ini</>
-                  )}
-                </Button>
+                {/* FIX (UIUX-B S10): tombol hapus bulan dibungkus AlertDialogTrigger
+                    asChild — disabled-conditions tombol dipertahankan. */}
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 w-full text-xs border-amber-300 text-amber-700 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/40"
+                      disabled={!selectedMonth || deleteMonthMutation.isPending}
+                    >
+                      {deleteMonthMutation.isPending ? (
+                        <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Menghapus...</>
+                      ) : (
+                        <><Trash2 className="h-3 w-3 mr-1" /> Hapus Bulan Ini</>
+                      )}
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Hapus SEMUA data bulan {selectedMonth}?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Semua file sumber, record, week, dan DQ issue untuk bulan ini akan dihapus.
+                        <br />
+                        <br />
+                        <strong className="text-red-600">Tindakan ini tidak dapat dibatalkan.</strong>
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Batal</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={handleDeleteMonth}
+                        className="bg-red-600 hover:bg-red-700 text-white"
+                      >
+                        {deleteMonthMutation.isPending ? (
+                          <><Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> Menghapus...</>
+                        ) : (
+                          'Ya, Hapus'
+                        )}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
 
               {/* Reset semua */}
@@ -404,7 +434,7 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
                                 size="sm"
                                 className="h-7 px-2 text-[11px] text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/30"
                                 disabled={deleteFileMutation.isPending}
-                                onClick={() => handleDeleteFile(f.id, f.fileName)}
+                                onClick={() => setPendingFile({ id: f.id, name: f.fileName })}
                                 title={`Hapus ${f.fileName}`}
                               >
                                 <Trash2 className="h-3 w-3 mr-1" />
@@ -481,6 +511,37 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
             Tutup
           </Button>
         </DialogFooter>
+
+        {/* FIX (UIUX-B S10): konfirmasi hapus file per-baris — SATU AlertDialog
+            state-driven (pola in-file "Reset Semua Data" di atas). */}
+        <AlertDialog open={!!pendingFile} onOpenChange={(v) => { if (!v) setPendingFile(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Hapus file &quot;{pendingFile?.name}&quot;?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Semua record, week, dan DQ issue terkait akan dihapus.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Batal</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-red-600 hover:bg-red-700 text-white"
+                onClick={() => {
+                  const target = pendingFile;
+                  if (!target) return;
+                  deleteFileMutation.mutate(target.id, { onSettled: invalidateAll });
+                  setPendingFile(null);
+                }}
+              >
+                {deleteFileMutation.isPending ? (
+                  <><Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> Menghapus...</>
+                ) : (
+                  'Ya, Hapus'
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );

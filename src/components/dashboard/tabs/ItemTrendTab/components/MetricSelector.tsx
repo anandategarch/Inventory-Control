@@ -18,7 +18,10 @@ interface MetricSelectorProps {
 
 export function MetricSelector({ metric, setMetric }: MetricSelectorProps) {
   return (
-    <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-muted/40 self-auto">
+    <div className="flex flex-wrap items-center gap-0.5 p-0.5 rounded-lg bg-muted/40 self-auto">
+      {/* FIX (UIUX-D D3): added flex-wrap — the 4 nowrap buttons total ~280px and
+          must wrap to 2 rows on narrow screens instead of overflowing the row
+          (pairs with TrendHeader's flex-col sm:flex-row stack). */}
       {METRICS.map((m) => (
         <button
           key={m.value}

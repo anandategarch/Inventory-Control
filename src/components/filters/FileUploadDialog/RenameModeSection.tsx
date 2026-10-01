@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Pencil, Wand2, Keyboard } from 'lucide-react';
-import type { Dispatch, SetStateAction } from 'react';
+import type { Dispatch, Ref, SetStateAction } from 'react';
 
 interface RenameModeSectionProps {
   isBusy: boolean;
@@ -20,6 +20,10 @@ interface RenameModeSectionProps {
   manualValidation: { ok: boolean; cleaned?: string; error?: string };
   numberLocale: 'auto' | 'id' | 'us';
   onNumberLocaleChange: Dispatch<SetStateAction<'auto' | 'id' | 'us'>>;
+  // FIX (UIUX-B S3b): ref ke input nama manual — dipakai parent
+  // (FileUploadDialog) untuk guard Escape pada DialogContent: Escape saat
+  // mengetik nama file manual tidak menutup dialog + me-reset file terpilih.
+  inputRef?: Ref<HTMLInputElement>;
 }
 
 export function RenameModeSection({
@@ -31,6 +35,7 @@ export function RenameModeSection({
   manualValidation,
   numberLocale,
   onNumberLocaleChange,
+  inputRef,
 }: RenameModeSectionProps) {
   return (
     <div className="border rounded-lg p-3 space-y-3 bg-muted/30">
@@ -87,6 +92,7 @@ export function RenameModeSection({
           </Label>
           <Input
             id="manual-filename"
+            ref={inputRef}
             value={manualFileName}
             onChange={(e) => onManualFileNameChange(e.target.value)}
             placeholder="MEI 2026.xlsx"

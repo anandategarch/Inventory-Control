@@ -51,7 +51,10 @@ export const ItemTab = memo(function ItemTab({ data }: ItemTabProps) {
         />
         {/* FIX (UI-05): min-w-0 on grid wrapper prevents overflow.
             H-11 (#4a): 3→2 columns after the TopOutlets card removal. */}
-        <div className="grid grid-cols-2 gap-4 min-w-0">
+        {/* FIX (UIUX-D D1): grid-cols-2 → grid-cols-1 sm:grid-cols-2 — the two
+            TopItems cards hold 5-6 column tables (~155px wide at 375px); stack
+            1 column on mobile, 2 columns at ≥sm. Desktop unchanged. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 min-w-0">
           <ErrorBoundary label="Top Items">
             <TopItemsByNominal data={data} />
             <TopItemsByDevBom data={data} />

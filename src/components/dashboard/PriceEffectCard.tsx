@@ -188,7 +188,10 @@ export const PriceEffectCard = memo(function PriceEffectCard() {
           </div>
         ) : isLoading ? (
           <div className="space-y-3">
-            <div className="grid grid-cols-4 gap-3">
+            {/* FIX (UIUX-D D1): grid-cols-4 → grid-cols-2 sm:grid-cols-4 — MUST
+                stay identical to the summary-tiles grid below so the skeleton
+                aligns with the tiles it reserves space for. */}
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-[76px] rounded-lg" />)}
             </div>
             {/* ANA-1-B: waterfall section skeleton (heading + 160px chart). */}
@@ -206,7 +209,10 @@ export const PriceEffectCard = memo(function PriceEffectCard() {
         ) : (
           <div className="space-y-4">
             {/* Summary tiles (compact default view) */}
-            <div className="grid grid-cols-4 gap-3">
+            {/* FIX (UIUX-D D1): grid-cols-4 → grid-cols-2 sm:grid-cols-4 — tiles
+                were ~72px wide at 375px; 2 columns on mobile, 4 at ≥sm. Kept in
+                sync with the skeleton grid above. */}
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <SummaryTile
                 label="Δ |Nominal Deviasi|"
                 value={fmtIDR(s.netDelta)}

@@ -72,9 +72,13 @@ function SheetContent({
         {...props}
       >
         {children}
+        {/* FIX (UIUX-B S1): sr-only "Close" → "Tutup" — align with the
+            app-wide Indonesian label (Dialog's built-in close already says
+            "Tutup"); pure text change, zero behavior — every Sheet consumer
+            now gets a correctly named close button. */}
         <SheetPrimitive.Close className="ring-offset-background focus:ring-ring data-[state=open]:bg-secondary absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none">
           <XIcon className="size-4" />
-          <span className="sr-only">Close</span>
+          <span className="sr-only">Tutup</span>
         </SheetPrimitive.Close>
       </SheetPrimitive.Content>
     </SheetPortal>

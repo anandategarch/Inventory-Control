@@ -3,6 +3,17 @@
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -83,6 +94,8 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   // Track if user has started editing (controls whether we use initial or edit values)
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [hasEdits, setHasEdits] = useState(false);
+  // FIX (UIUX-B S9): dirty-close guard — state AlertDialog "buang perubahan?"
+  const [discardOpen, setDiscardOpen] = useState(false);
 
   // BUG FIX #005: Reset unsaved edits when dialog closes
   // Using React-recommended pattern (adjust state during render, not in effect)
@@ -92,6 +105,9 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     if (!open) {
       setHasEdits(false);
       setEditValues({});
+      // FIX (UIUX-B S9): bersihkan juga state discard-confirm (edge: dialog
+      // ditutup dari luar saat AlertDialog masih terbuka).
+      setDiscardOpen(false);
     }
   }
 
@@ -202,12 +218,27 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     saveMutation.mutate();
   }
 
-  function handleResetAll() {
-    if (confirm('Reset SEMUA pengaturan ke default? Ini tidak dapat dibatalkan.')) {
-      resetMutation.mutate(undefined);
-      setHasEdits(false);
-      setEditValues({});
+  // FIX (UIUX-B S9): Tutup/X/Escape/overlay-click saat masih ada perubahan
+  // belum disimpan tidak lagi membuang edit senyap — tampilkan AlertDialog
+  // konfirmasi dulu. `dirty` + changedCount = komputasi yang sama persis
+  // dengan indikator "N perubahan belum disimpan" di footer, jadi guard dan
+  // indikator selalu konsisten. Saat save sedang berjalan, tutup langsung
+  // diizinkan (onSuccess akan membersihkan state edit).
+  function handleOpenChange(v: boolean) {
+    if (!v && dirty && !saveMutation.isPending) {
+      setDiscardOpen(true);
+      return;
     }
+    onOpenChange(v);
+  }
+
+  function handleResetAll() {
+    // FIX (UIUX-B S10): confirm() native → AlertDialog styled (trigger pada
+    // tombol "Reset Semua" di header) — logika mutasi + reset state edit
+    // dipertahankan persis.
+    resetMutation.mutate(undefined);
+    setHasEdits(false);
+    setEditValues({});
   }
 
   // Migration: Fix inverted direction values in DB (CALC-1 fix)
@@ -248,14 +279,10 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   });
 
   function handleMigrateDirection() {
-    if (confirm(
-      'Fix data direction yang terbalik?\n\n' +
-      'Ini akan mengoreksi field direction (LOSS/SURPLUS) berdasarkan tanda nominalLossSurplus.\n' +
-      'Aman dijalankan berkali-kali (idempotent).\n\n' +
-      'Lanjutkan?'
-    )) {
-      migrateMutation.mutate();
-    }
+    // FIX (UIUX-B S10): confirm() native → AlertDialog styled (trigger pada
+    // tombol "Fix Direction Data" di footer) — aksi idempotent, Action
+    // non-destructive (style default).
+    migrateMutation.mutate();
   }
 
   function handleResetOne(key: string, defaultValue: string) {
@@ -284,23 +311,53 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-[700px] max-h-[85vh]">
         <DialogHeader>
           <DialogTitle className="flex items-center justify-between">
             <span className="flex items-center gap-2">
               <span>⚙️ Pengaturan Standar</span>
             </span>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs"
-              onClick={handleResetAll}
-              disabled={resetMutation.isPending}
-            >
-              <RotateCcw className="h-3 w-3 mr-1" />
-              Reset Semua
-            </Button>
+            {/* FIX (UIUX-B S10): konfirmasi reset SEMUA via AlertDialog styled
+                (pola "Reset Semua Data" DataManagementDialog) — menggantikan
+                confirm() native pada handleResetAll. */}
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-xs"
+                  disabled={resetMutation.isPending}
+                >
+                  <RotateCcw className="h-3 w-3 mr-1" />
+                  Reset Semua
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Reset SEMUA pengaturan?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Semua pengaturan (threshold toleransi, faktor growth, bobot priority, benchmark, dll.) akan dikembalikan ke nilai default. Kustomisasi yang sudah tersimpan akan hilang.
+                    <br />
+                    <br />
+                    <strong className="text-red-600">Tindakan ini tidak dapat dibatalkan.</strong>
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Batal</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={handleResetAll}
+                    className="bg-red-600 hover:bg-red-700 text-white"
+                  >
+                    {resetMutation.isPending ? (
+                      <><Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> Mereset...</>
+                    ) : (
+                      'Ya, Reset ke Default'
+                    )}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </DialogTitle>
           <DialogDescription>
             Atur standar & threshold untuk analisis inventory. Perubahan langsung berlaku di dashboard berikutnya (klik Refresh atau ganti periode).
@@ -412,20 +469,44 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
             <DialogFooter className="border-t pt-3">
               <div className="flex items-center justify-between w-full flex-wrap gap-2">
                 <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-xs border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-900 dark:text-amber-400"
-                    onClick={handleMigrateDirection}
-                    disabled={migrateMutation.isPending}
-                    title="Fix data direction yang terbalik (LOSS/SURPLUS) berdasarkan tanda nominalLossSurplus. Aman dijalankan berkali-kali."
-                  >
-                    {migrateMutation.isPending ? (
-                      <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Migrasi...</>
-                    ) : (
-                      <><Database className="h-3 w-3 mr-1" /> Fix Direction Data</>
-                    )}
-                  </Button>
+                  {/* FIX (UIUX-B S10): konfirmasi migrate direction via AlertDialog
+                      styled — menggantikan confirm() native; aksi idempotent →
+                      Action style default (non-destructive). */}
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-xs border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-900 dark:text-amber-400"
+                        disabled={migrateMutation.isPending}
+                        title="Fix data direction yang terbalik (LOSS/SURPLUS) berdasarkan tanda nominalLossSurplus. Aman dijalankan berkali-kali."
+                      >
+                        {migrateMutation.isPending ? (
+                          <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Migrasi...</>
+                        ) : (
+                          <><Database className="h-3 w-3 mr-1" /> Fix Direction Data</>
+                        )}
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Fix data direction yang terbalik?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Ini akan mengoreksi field direction (LOSS/SURPLUS) berdasarkan tanda nominalLossSurplus. Aman dijalankan berkali-kali (idempotent).
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Batal</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleMigrateDirection}>
+                          {migrateMutation.isPending ? (
+                            <><Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> Menjalankan...</>
+                          ) : (
+                            'Ya, Jalankan'
+                          )}
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                   {dirty ? (
                     <span className="text-xs text-amber-600 flex items-center gap-1">
                       <AlertCircle className="h-3 w-3" />
@@ -439,7 +520,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
                   )}
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => onOpenChange(false)}>
+                  <Button variant="outline" onClick={() => handleOpenChange(false)}>
                     Tutup
                   </Button>
                   <Button onClick={handleSave} disabled={!dirty || saveMutation.isPending}>
@@ -459,6 +540,33 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           </div>
         )}
       </DialogContent>
+
+      {/* FIX (UIUX-B S9): AlertDialog konfirmasi buang perubahan — state-driven,
+          di LUAR DialogContent (AlertDialog punya portal sendiri). "Tutup tanpa
+          Menyimpan" menutup dialog; reset-on-close di atas membersihkan
+          editValues/hasEdits. N = changedCount (komputasi indikator footer). */}
+      <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Ada perubahan belum disimpan</AlertDialogTitle>
+            <AlertDialogDescription>
+              {changedCount} perubahan pengaturan akan dibuang jika Anda menutup dialog ini.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Kembali</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700 text-white"
+              onClick={() => {
+                setDiscardOpen(false);
+                onOpenChange(false);
+              }}
+            >
+              Tutup tanpa Menyimpan
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

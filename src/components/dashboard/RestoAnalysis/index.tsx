@@ -183,7 +183,11 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
             <p className="text-xs font-medium">Filter Resto</p>
             <p className="text-[11px] text-muted-foreground">Pilih outlet untuk dianalisis — periode mengikuti Bulan/Minggu aktif.</p>
           </div>
-          <div className="w-80">{restoPicker('w-full')}</div>
+          {/* FIX (UIUX-D D2): w-80 → w-full max-w-80 — 320px fixed overflowed
+              the 375px viewport (row ≈408px with icon+gaps); the picker now
+              fills the remaining width on mobile and is capped at 320px on
+              desktop (identical to before). */}
+          <div className="w-full max-w-80">{restoPicker('w-full')}</div>
         </div>
       </CardContent>
     </Card>

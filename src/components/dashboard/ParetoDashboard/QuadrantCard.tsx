@@ -76,8 +76,13 @@ export function QuadrantCard({ title, icon, data, color, tooltip }: { title: str
                     <TableCell className="text-right text-xs tabular-nums text-muted-foreground p-1" title={d.histN ? `${d.histN} periode historis (all months)` : ''}>
                       {d.histAvg != null ? fmtIDR(d.histAvg) : '—'}
                     </TableCell>
+                    {/* FIX (UIUX-D D5b): SIGNED z predicate — Math.abs() painted a
+                        negative (improving) driver red+bold, the inverse of the
+                        signed z semantics in the Historical/Trend tabs. Now
+                        z>2 red bold, z>1 amber, z<-1 emerald (membaik), else
+                        muted; the +/- sign prefix on the value is unchanged. */}
                     <TableCell className={`text-right text-xs tabular-nums font-medium p-1 ${
-                      d.zScore == null ? 'text-muted-foreground' : Math.abs(d.zScore) > 2 ? 'text-red-600 dark:text-red-400 font-bold' : Math.abs(d.zScore) > 1 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'
+                      d.zScore == null ? 'text-muted-foreground' : d.zScore > 2 ? 'text-red-600 dark:text-red-400 font-bold' : d.zScore > 1 ? 'text-amber-600 dark:text-amber-400' : d.zScore < -1 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'
                     }`} title={d.zScore != null ? `Z-score: ${fmtDecimal(d.zScore, 2)} (${d.histN} periode)` : ''}>
                       {d.zScore != null ? (d.zScore > 0 ? '+' : '') + fmtDecimal(d.zScore, 1) : '—'}
                     </TableCell>

@@ -100,7 +100,11 @@ export function LoadingState({ text = 'Memuat data analisis...' }: { text?: stri
         <span className="text-xs tabular-nums font-mono opacity-70">{elapsed}s</span>
       </div>
       {/* Skeleton grid — KPI cards */}
-      <div className="grid grid-cols-6 gap-3">
+      {/* FIX (UIUX-D D1 + A T10): grid-cols-6 → grid-cols-2 sm:grid-cols-3
+          lg:grid-cols-6 (kpi-strip.tsx pattern) — six ~44px columns at 375px
+          made the w-20/w-28 skeleton children bleed/stack; 2 cols mobile,
+          3 at ≥sm, 6 at ≥lg (desktop identical). */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         {Array.from({ length: 6 }).map((_, i) => (
           <div key={i} className="rounded-xl border bg-card p-4 space-y-2 shadow-sm">
             <div className="flex items-center justify-between">
@@ -124,7 +128,10 @@ export function LoadingState({ text = 'Memuat data analisis...' }: { text?: stri
         ))}
       </div>
       {/* Skeleton — insights + health */}
-      <div className="grid grid-cols-3 gap-4">
+      {/* FIX (UIUX-A T10): grid-cols-3 → grid-cols-1 sm:grid-cols-3 — skeleton
+          must mirror the real responsive grid so the loading pass doesn't
+          collapse to ~44px columns on mobile. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         {Array.from({ length: 3 }).map((_, i) => (
           <div key={i} className="rounded-xl border bg-card p-5 space-y-3 shadow-sm">
             <Skeleton className="h-5 w-32" />
@@ -135,7 +142,9 @@ export function LoadingState({ text = 'Memuat data analisis...' }: { text?: stri
         ))}
       </div>
       {/* Skeleton — top items tables */}
-      <div className="grid grid-cols-3 gap-4">
+      {/* FIX (UIUX-A T10): grid-cols-3 → grid-cols-1 sm:grid-cols-3 — same
+          mirror-the-real-grid rationale as the insights skeleton above. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         {Array.from({ length: 3 }).map((_, i) => (
           <div key={i} className="rounded-xl border bg-card p-5 space-y-2 shadow-sm">
             <Skeleton className="h-5 w-40" />

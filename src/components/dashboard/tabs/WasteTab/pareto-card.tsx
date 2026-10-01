@@ -48,6 +48,7 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ChevronRight, TrendingUp, TrendingDown, Minus, FlaskConical } from 'lucide-react';
 import { fmtDecimal, fmtIDR, fmtPct, fmtNum } from '@/lib/format';
+import { clickableRowProps } from '@/lib/a11y';
 import type {
   WasteFingerprintClass,
   WasteMetric,
@@ -321,8 +322,15 @@ export const WasteParetoCard = memo(function WasteParetoCard({
   });
 
   const items = data?.items || [];
-  const metricConf = METRICS.find((m) => m.value === metric) ?? METRICS[0];
-  const population = metricPopulation(data, metric);
+  // FIX (UIUX-C S6): presentation reads the payload's metric echo, not the
+  // local selector state — keepPreviousData keeps rendering the OLD metric's
+  // payload during refetch, so header/cols/parity/"teratas by X" must not
+  // claim the new metric early. The selector buttons + queryKey keep using
+  // `metric` (user intent + fetch key). Falls back to local state on stale
+  // pre-W11 caches without the echo field.
+  const activeMetric = data?.metric ?? metric;
+  const metricConf = METRICS.find((m) => m.value === activeMetric) ?? METRICS[0];
+  const population = metricPopulation(data, activeMetric);
   // BUGHUNT-R1 FIX 2: derive the sistematik month threshold from the
   // ACTUAL window size the server used (ceil(windowMonths/2)) instead of
   // the hardcoded "6 bulan" (the 12-month cap's half — wrong on the live
@@ -341,15 +349,15 @@ export const WasteParetoCard = memo(function WasteParetoCard({
   // FIX (UIUX-C S1): fmtDecimal (house Indonesian comma) — raw toFixed
   // rendered the only dot-decimal in the card ("1.8× waste" next to
   // "Rp 16,37M").
-  const parityText = wasteTotal > 0 && metric !== 'waste'
-    ? (metric === 'susut' ? `${fmtDecimal(susutTotal / wasteTotal, 1)}× waste` : `${fmtDecimal(trialTotal / wasteTotal, 2)}× waste`)
-    : wasteTotal > 0 && metric === 'waste' && susutTotal > 0
+  const parityText = wasteTotal > 0 && activeMetric !== 'waste'
+    ? (activeMetric === 'susut' ? `${fmtDecimal(susutTotal / wasteTotal, 1)}× waste` : `${fmtDecimal(trialTotal / wasteTotal, 2)}× waste`)
+    : wasteTotal > 0 && activeMetric === 'waste' && susutTotal > 0
       ? `susut ${fmtDecimal(susutTotal / wasteTotal, 1)}× waste`
       : null;
 
   const trialScreen = data?.trialScreen ?? [];
   const fingerprintSummary = data?.fingerprint;
-  const isWaste = metric === 'waste';
+  const isWaste = activeMetric === 'waste';
   // Column count for the expanded breakdown row's colSpan (trend +
   // #outlet/#bulan render waste-only).
   const colSpan = isWaste ? 10 : 7;
@@ -445,12 +453,17 @@ export const WasteParetoCard = memo(function WasteParetoCard({
               </TableHeader>
               <TableBody>
                 {items.map((it: WasteTopItemRow) => {
-                  const f = metricFields(it, metric);
+                  const f = metricFields(it, activeMetric);
                   return (
                     <Fragment key={it.itemId}>
+                      {/* FIX (UIUX-C S4): keyboard parity for the clickable row —
+                          house clickableRowProps (tabIndex + role=button +
+                          Enter/Space → same toggle as the mouse click) so the
+                          per-outlet breakdown is reachable without a mouse;
+                          aria-expanded stays on the row. */}
                       <TableRow
                         className="h-9 cursor-pointer hover:bg-muted/50 dark:hover:bg-zinc-800/40"
-                        onClick={() => setExpandedItem(expandedItem === it.itemId ? null : it.itemId)}
+                        {...clickableRowProps(() => setExpandedItem(expandedItem === it.itemId ? null : it.itemId))}
                         aria-expanded={expandedItem === it.itemId}
                       >
                         <TableCell className="w-8 p-0">
@@ -496,8 +509,10 @@ export const WasteParetoCard = memo(function WasteParetoCard({
                                 // W11: the breakdown line follows the ACTIVE
                                 // metric (the server sorts/caps the slice on
                                 // it); share-of-item is computed locally from
-                                // the same fields.
-                                const value = metric === 'susut' ? (b.susut ?? 0) : metric === 'trial' ? (b.trial ?? 0) : b.waste;
+                                // the same fields. FIX (UIUX-C S6): reads
+                                // activeMetric so it stays coherent with the
+                                // payload actually rendered.
+                                const value = activeMetric === 'susut' ? (b.susut ?? 0) : activeMetric === 'trial' ? (b.trial ?? 0) : b.waste;
                                 const itemTotal = f.nominal;
                                 const shareOfMetric = itemTotal > 0 ? value / itemTotal : 0;
                                 return (

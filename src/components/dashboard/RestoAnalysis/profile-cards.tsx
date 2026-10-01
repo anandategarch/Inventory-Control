@@ -25,8 +25,11 @@ export interface ProfileCardsProps {
 }
 
 export function ProfileCards({ profile, allItems }: ProfileCardsProps) {
+  // FIX (UIUX-D D1): grid-cols-3 → grid-cols-2 sm:grid-cols-3 — 3 profile cards
+  //     at ~100px each are unreadable at 375px; 2 columns on mobile, 3 at ≥sm.
+  //     Desktop unchanged.
   return profile ? (
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {/* 1. Performance */}
         <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
           <CardHeader className="pb-2 border-b"><CardTitle className="text-sm flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-md border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 shrink-0"><TrendingUp className="h-3 w-3" /></span>Performance</CardTitle></CardHeader>

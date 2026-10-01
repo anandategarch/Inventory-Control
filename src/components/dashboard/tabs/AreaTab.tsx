@@ -35,7 +35,10 @@ export const AreaTab = memo(function AreaTab({ data }: AreaTabProps) {
     <div className="space-y-4 min-w-0">
       {/* Section: Area Comparison + Outlet Health Ranking */}
       {/* FIX (UI-15): removed redundant sm:grid-cols-1 (default behavior). */}
-      <section className="grid grid-cols-2 gap-4 min-w-0">
+      {/* FIX (UIUX-D D1): grid-cols-2 → grid-cols-1 sm:grid-cols-2 — each card
+          holds a 5-6 column table (~155px wide at 375px); stack 1 column on
+          mobile, back to 2 columns at ≥sm. Desktop unchanged. */}
+      <section className="grid grid-cols-1 sm:grid-cols-2 gap-4 min-w-0">
         {/* FIX (BUG-HUNT A1): grid items must carry min-w-0 — without it the
             item min-width resolves to the table's min-content (~731px with
             realistic data) and blows the 375px viewport out to ~745px. */}

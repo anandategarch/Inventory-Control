@@ -17,7 +17,7 @@
 //  /api/ingest-process request/response contract unchanged.
 // ============================================================
 
-import type { Dispatch } from 'react';
+import { useRef, type Dispatch } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Upload, AlertCircle, Loader2, ArrowRight, XCircle } from 'lucide-react';
@@ -36,6 +36,10 @@ interface FileUploadDialogProps {
 }
 
 export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) {
+  // FIX (UIUX-B S3b): ref ke input nama manual (RenameModeSection) — dipakai
+  // guard Escape pada DialogContent di bawah agar Escape saat mengetik nama
+  // file manual tidak menutup dialog + me-reset file terpilih.
+  const manualNameInputRef = useRef<HTMLInputElement>(null);
   const {
     file,
     uploading,
@@ -70,7 +74,19 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       {/* FIX (UIUX-B S8): max-h + scroll internal (pola DataManagementDialog) */}
-      <DialogContent className="max-w-[600px] max-h-[85vh] flex flex-col overflow-hidden">
+      <DialogContent
+        className="max-w-[600px] max-h-[85vh] flex flex-col overflow-hidden"
+        onEscapeKeyDown={(e) => {
+          // FIX (UIUX-B S3b): listener Escape Radix berjalan di fase capture pada
+          // document SEBELUM handler input — tanpa guard ini, Escape saat mengetik
+          // nama file manual menutup dialog DAN me-reset file terpilih (handleClose
+          // → reset()). Cegah dismiss HANYA saat input nama manual sedang difokus;
+          // Escape saat fokus di tempat lain tetap menutup dialog seperti biasa.
+          if (renameMode === 'manual' && document.activeElement === manualNameInputRef.current) {
+            e.preventDefault();
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Upload className="h-5 w-5" />
@@ -107,6 +123,7 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
               manualValidation={manualValidation}
               numberLocale={numberLocale}
               onNumberLocaleChange={setNumberLocale}
+              inputRef={manualNameInputRef}
             />
           )}
 
