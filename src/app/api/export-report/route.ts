@@ -33,6 +33,7 @@ import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { errorResponse } from '@/lib/error-response';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 import { EarlyHttpResponse } from '@/lib/early-http-response';
+import { REPORT_DESIGN_VERSION } from '@/lib/report-version';
 import type { ReportParams } from './services/types';
 import { fetchReportData } from './services/data-fetcher';
 import { buildPdfReport } from './services/pdf/pdf-builder';
@@ -143,80 +144,17 @@ export async function GET(req: NextRequest) {
       // age is unbounded — after a report-design change the user kept
       // downloading the PREVIOUS design's PDF (old truncations included)
       // until a recompute landed. Version the key so every design change
-      // instantly forks a fresh cache namespace. Bump together with the
-      // `rv` param in useDashboardActions.ts handleExport.
+      // instantly forks a fresh cache namespace. GODSPLIT-W2-A: the version
+      // is REPORT_DESIGN_VERSION from src/lib/report-version.ts — the SAME
+      // const the client's `?rv=` URL param uses, so one bump forks both
+      // cache layers (full rv changelog lives there).
       extra: {
         sections: sections === null ? null : (sections.length > 0 ? [...sections].sort().join(',') : '__NONE__'),
-        // REFINE-3: design/content change (heat text fix, section 6 anomali,
-        // vs Rata-rata Area column, weekly composition + accumulation charts,
-        // section renumbering 6→7/7→8/8→9) — BUG-HUNT: this bump was MISSING
-        // when REFINE-3 landed, so users kept downloading the pre-REFINE-3
-        // PDF from the 5-min cache after a deploy. Bump together with the
-        // `rv` param in useDashboardActions.ts handleExport.
-        // REFINE-4: design/content change (Rata-rata Absolute columns +
-        // magnitude comparisons, section 6.2 flip detection, section 5
-        // signed cells + abs heat, section 9 per-pair grouping, 8.2 resto
-        // setara terms, plain-percent Selisih).
-        // HEAT-SIGN: section 5 heat cells now encode the SIGN — red ramp for
-        // the loss side, green ramp for the surplus side (magnitude still
-        // picks the step; scale still p90 of the abs cells).
-        // PEERTOP/PEERTOP-R1: NEW PDF section 8.3 (Top Item Resto Setara —
-        // bersama vs khusus) + revised columns (Ranking Resto di antara Resto
-        // yang Selevel per Item, QTY Deviasi signed, Rata-rata Absolute on
-        // |QTY deviasi| basis) + 8.4 removed. This bump was MISSING when
-        // PEERTOP/PEERTOP-R1 landed — the stale SWR row under the old key
-        // kept serving the PRE-PEERTOP PDF after the deploy (user: "kok di
-        // laporan PDF tidak ada perubahan?"). rv 7 → 8, both sides.
-        // PEERTOP-R2: 8.3 re-titled "Item di Resto lain (yang setara
-        // penjualan <nama resto>) jika dilihat dari TOP Item nya"; every
-        // header referencing the generic "target" now carries the outlet's
-        // own NAME ("Rangking KWGGAL" / "Nominal KWGGAL" / "QTY Deviasi
-        // (KWGGAL)" — user: "Ganti istilah target jadi nama resto target itu
-        // sendiri"); "Top di" shows the TOP-3 resto names by |nominal|
-        // (target included when it ranks among them). rv 8 → 9, both sides.
-        // PEERTOP-R3 (user: "ada bug di rangking. misal resto target 11/11
-        // tapi juga muncul di top di"): "Top di" kini basis RANK() yang
-        // SAMA dengan kolom "Rangking" (outlet dengan itemRank ≤ 3 di
-        // antara SEMUA outlet yang mencatat item) — nama target muncul
-        // persis ketika itemRank ≤ 3, jadi kedua kolom tak mungkin
-        // kontradiksi. rv 9 → 10, both sides (+ sv pada q-peer-topitems /
-        // top-items route).
-        // BUGHUNT-Q1: "Rata-rata Historical" di tabel 3.3-3.6 kini dihitung
-        // per periode (SUM per periode lalu AVG) — bukan AVG per baris mentah
-        // yang understated k× untuk pasangan multi-record per periode; angka
-        // kolom historis + persentase fmtVsHist berubah. rv 10 → 11, both
-        // sides (+ sv 2 pada q-hist-catavg).
-        // PDFCOLOR-1: minus-RED on VALUE columns (user: "terkait minus
-        // atau penurunan harusnya warna merah") — KPI hero cards, current/
-        // previous columns of sections 1/2/7, 3.3-3.6 QTY, 4.1/4.2 nominal,
-        // 6.1/6.2 signed columns, 8.2 QTY columns (8.3 already was). The
-        // trend table now agrees with its own red diverging bars. rv 11 →
-        // 12, both sides. Render-only (no data change) — no sv bump.
-        // PDFCOLOR-8: "Nominal Deviasi to Sales" change columns (S1/S2/
-        // cover) kini MAGNITUDE growth (calcGrowthAbs) — signed formula
-        // + goodUp=false membalik warna di sisi loss (rasio memburuk
-        // dicetak hijau ▼). Included in the same rv 12 bump.
-        // VAR10 (user: "item memburuk dan membaik nya kasih menjadi 10
-        // item dari yang sebelumnya 5 item"): tabel 4.1 Memburuk & 4.2
-        // Membaik di laporan PDF kini menampilkan 10 item per sisi (was 5)
-        // — q-variance sv 2→3 + SQL/jS caps 5→10. rv 12 → 13, both sides.
-        // VAR11 (user: "Akumulasi Mingguan — Total Deviasi apakah total
-        // abs? aku mau sum nilai asli / signed" + "section 9 selisihnya
-        // banyak, harusnya selisih dikit"): (a) chart Akumulasi Mingguan
-        // kini akumulasi SIGNED (nominalDeviasi, konvensi KPI — was
-        // absTotal magnitude); (b) section 9 Plus Minus kini re-ranked by
-        // pair BALANCE (disparityPct ASC — was riskScore order yang
-        // menampilkan Net besar seperti -41.335) + q-flip-rank limit
-        // 10 → 200 (limit termasuk cache key — sv tetap 2, row shape
-        // tak berubah). rv 13 → 14, both sides.
-        // VAR12 (user: "Analisis Pola item masukin juga ke pdf terutama
-        // bagian anomali item"): section 6.3 "Analisis Pola Item (Massal /
-        // Regional / Lokal)" — queryItemConsistency rows (query dipanggil
-        // langsung, tanpa namespace q-* baru — preseden analysis pipeline;
-        // ReportData +itemConsistency). rv 14 → 15, both sides. (Penghapusan
-        // "Peluang Perbaikan (Rp)" + "Action Plan" adalah perubahan dashboard
-        // — bukan bagian cache PDF.)
-        rv: '15',
+        // Report design version (GODSPLIT-W2-A): imported from
+        // src/lib/report-version.ts — single source of truth shared with
+        // the client's `?rv=` URL param; the full rv changelog (REFINE-3
+        // … VAR12, rv 5→15) lives there too.
+        rv: REPORT_DESIGN_VERSION,
         // FIX (STALE-PDF, systematic hardening — same incident as the missing
         // PEERTOP rv bump): the SWR store serves EXPIRED rows unbounded (see
         // swr.ts 3b), so a forgotten `rv` bump means a pre-deploy PDF can be

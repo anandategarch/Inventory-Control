@@ -24,6 +24,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import type { AnalysisData, StatusData } from '@/hooks/useAnalysis';
 import { invalidateAllData } from '@/lib/query-invalidation';
+import { REPORT_DESIGN_VERSION } from '@/lib/report-version';
 
 // P3-HYG-6: the open-dropdown DOM probe is only needed for the 1-8 tab
 // shortcuts — hoisted to module scope + only evaluated inside that branch
@@ -133,56 +134,14 @@ export function useDashboardActions({
       if (itemName) params.set('item', itemName);
       if (pic) params.set('pic', pic);
       params.set('sections', selectedSections.join(','));
-      // Report design version (busts the CDN/edge cache after a design
-      // change — keep in sync with the `rv` extra in /api/export-report's
-      // cache key). Ignored server-side (Zod strips unknown params).
-      // REFINE-3: rv 5 — heat text fix, section 6 anomali, vs Rata-rata
-      // Area column, weekly composition + accumulation charts, renumbering.
-      // REFINE-4: rv 6 — Rata-rata Absolute + magnitude comparisons, 6.2
-      // flip detection, section 5 signed cells + abs heat, section 9
-      // per-pair grouping, 8.2 resto setara terms, plain-percent Selisih.
-      // HEAT-SIGN: rv 7 — section 5 heat cells encode the SIGN (red ramp =
-      // loss side, green ramp = surplus side; magnitude picks the step).
-      // PEERTOP/PEERTOP-R1: rv 8 — NEW PDF section 8.3 (Top Item Resto
-      // Setara — bersama vs khusus; Ranking Resto di antara Resto yang
-      // Selevel per Item; QTY Deviasi signed; Rata-rata Absolute |QTY|) +
-      // 8.4 removed. This bump was MISSING when PEERTOP landed — same URL
-      // hit the CDN's old cached response AND the server's stale SWR row
-      // (user: "kok di laporan PDF tidak ada perubahan?").
-      // PEERTOP-R2: rv 9 — 8.3 re-titled "Item di Resto lain (yang setara
-      // penjualan <nama resto>) jika dilihat dari TOP Item nya"; headers
-      // pakai NAMA resto (Rangking/Nominal/QTY Deviasi (KWGGAL), 8.2 juga);
-      // "Top di" = top-3 resto by |nominal|, target ikut bila termasuk.
-      // PEERTOP-R3: rv 10 — bug fix "Top di" (user: "misal resto target
-      // 11/11 tapi juga muncul di top di"): basis kini RANK() yang sama
-      // dengan kolom Rangking — target muncul di Top di persis ketika
-      // itemRank ≤ 3.
-      // BUGHUNT-Q1: rv 11 — "Rata-rata Historical" tabel 3.3-3.6 kini
-      // per-periode (SUM per periode lalu AVG, bukan AVG per baris mentah
-      // yang understated k× untuk multi-record per periode); angka kolom
-      // historis + persentase fmtVsHist berubah.
-      // PDFCOLOR-1: rv 12 — minus-RED on VALUE columns (user: "terkait
-      // minus atau penurunan harusnya warna merah"): KPI hero cards,
-      // current/previous columns of sections 1/2/7, 3.3-3.6 QTY columns,
-      // 4.1/4.2 nominal columns, 6.1/6.2 signed columns, 8.2 QTY columns
-      // (8.3 already was minus-red). The S7 trend table now agrees with
-      // its own red diverging bars. Render-only — no data change.
-      // VAR10: rv 13 — tabel 4.1 Memburuk & 4.2 Membaik kini 10 item per
-      // sisi (was 5; user request). Data + render change (q-variance sv
-      // 2→3). Keep in sync with the rv extra in /api/export-report.
-      // VAR11: rv 14 — (a) chart "Akumulasi Mingguan — Total Deviasi" kini
-      // akumulasi SIGNED nominalDeviasi (user: "aku mau sum nilai asli /
-      // signed" — was absTotal magnitude); (b) section 9 Plus Minus kini
-      // re-ranked by pair BALANCE (disparityPct ASC — Net kecil, user:
-      // "harusnya selisih dikit") + q-flip-rank limit 10→200 (limit is in
-      // the cache key; sv stays 2). Keep in sync with the rv extra in
-      // /api/export-report.
-      // VAR12: rv 15 — section 6.3 "Analisis Pola Item (Massal / Regional /
-      // Lokal)" baru di PDF (user: "Analisis Pola item masukin juga ke pdf
-      // terutama bagian anomali item"; queryItemConsistency langsung — no
-      // new q-* namespace). Keep in sync with the rv extra in
-      // /api/export-report.
-      params.set('rv', '15');
+      // Report design version — busts the CDN/edge cache after a design
+      // change. GODSPLIT-W2-A: single source of truth is
+      // REPORT_DESIGN_VERSION in src/lib/report-version.ts — the server's
+      // /api/export-report cache-key `rv` extra imports the SAME const, so
+      // one bump forks both cache layers (no more manual two-site sync).
+      // Full rv changelog lives there. Ignored server-side (Zod strips
+      // unknown params).
+      params.set('rv', REPORT_DESIGN_VERSION);
 
       // FIX (BUG-3-b A3): AbortController + 120s timeout — a hung export no
       // longer spins forever; the fetch is aborted and the user gets a
