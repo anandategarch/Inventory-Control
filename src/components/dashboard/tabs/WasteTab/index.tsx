@@ -14,11 +14,13 @@
 //    5. LossDecompositionCard— explained (waste/susut/trial) vs residual
 //    6. WasteParetoCard      — item 80/20 + sistematik + breakdown
 //    7. WasteQuadrantCard    — W3: kuadran sistemik-vs-insiden (scatter)
-//    8. WasteAnomalyCard     — findings list ber-severity
+//    8. WasteRateLeagueCard  — W1: liga waste-rate per bahan (waste÷BOM)
+//    9. WasteAnomalyCard     — findings list ber-severity
 //  ONE /api/waste-series request feeds the props-driven cards (1, 2, 3, 4,
-//  5, 8 — HeatmapTab-style self-fetch — no `data` prop from page.tsx);
+//  5, 9 — HeatmapTab-style self-fetch — no `data` prop from page.tsx);
 //  the Pareto + Quadrant cards self-fetch /api/waste-top-items (shared
-//  queryKey → react-query dedups both into one request).
+//  queryKey → react-query dedups both into one request); the RateLeague
+//  card self-fetches /api/waste-rate-league.
 //  PERF-FE: memo — page.tsx re-renders on any Zustand change.
 // ============================================================
 
@@ -35,6 +37,7 @@ import { WasteMatrixCard } from './matrix-card';
 import { LossDecompositionCard } from './decomposition-card';
 import { WasteParetoCard } from './pareto-card';
 import { WasteQuadrantCard } from './quadrant-card';
+import { WasteRateLeagueCard } from './rate-league-card';
 import { WasteAnomalyCard } from './anomaly-card';
 import type { WasteSeriesResponse } from './types';
 
@@ -134,6 +137,13 @@ export const WasteTab = memo(function WasteTab() {
         pic={picParam}
       />
       <WasteQuadrantCard
+        monthLabel={monthLabel}
+        currentWeek={currentWeek}
+        area={areaParam}
+        kelompok={kelompokParam}
+        pic={picParam}
+      />
+      <WasteRateLeagueCard
         monthLabel={monthLabel}
         currentWeek={currentWeek}
         area={areaParam}

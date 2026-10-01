@@ -177,6 +177,10 @@ export async function invalidateAnalysisCache(): Promise<void> {
     // month rows, changed sales/waste sums, changed outlet sets via PIC)
     // must kill the 5-min TTL rows or the tab serves pre-mutation data.
     'waste-series', 'waste-top-items', 'waste-peer-zscore',
+    // W1 (Liga Waste-Rate): the league reads the SAME record tables
+    // (Σ|qtyWaste|/Σ|qtyBom| per item×outlet) — same rule: mutations must
+    // kill the 5-min TTL rows or the league serves pre-mutation rates.
+    'waste-rate-league',
     // DEEP-WASTE-1: the waste z-score rule pass (evaluateWasteRulesSql) —
     // cached under its own q-* row by run-queries (same rule as
     // 'q-rules' / 'q-hist-rules': mutations must kill it or the analysis
@@ -186,6 +190,12 @@ export async function invalidateAnalysisCache(): Promise<void> {
     // composition — same rule: mutations must kill these rows or the export
     // serves pre-mutation data for up to 30 min.
     'q-self-anom', 'q-week-comp',
+    // W10 — the export's waste-network projection (section 5 "Analisis
+    // Waste"): queryWasteNetwork reads the SAME record tables as the
+    // 'waste-series' route rows above, so mutations must kill this q-* row
+    // too or an export after an ingest embeds pre-mutation attribution
+    // (scenarios/deciles) for up to 30 min.
+    'q-waste-network',
     // PERF-AUDIT-1 (F1 — invalidation-coverage sweep): 'q-peer-topitems'
     // (the export PDF 8.3 query, TTL 30 min) was MISSING from this list
     // when PEERTOP-2-b landed — mutations never deleted its rows, so an
