@@ -9,6 +9,9 @@
 //  semua konsumen W2 wajib guard undefined).
 //  W10 (Atribusi + Skenario Sensitivitas Residual): field + tipe
 //  attribution ditambahkan ADDITIF (optional — guard cache lama).
+//  W11 (Paritas Susut & Trial): field susutSpikeMonths (waste-series)
+//  + field/tipe fingerprint & trial-screen & metric (waste-top-items)
+//  ditambahkan ADDITIF (optional — guard cache pra-W11).
 // ============================================================
 
 export interface WasteMonthMeta {
@@ -74,6 +77,11 @@ export interface WasteOutletRow {
   activeSpikeMonths?: number;
   /** KRONIS / EPISODIK / SEHAT / TERBATAS — always INDIKASI. */
   persistenceClass?: WastePersistenceClass;
+  // ---- W11 (Paritas Susut & Trial) — additive optional field ----
+  /** Months with susut/sales > mean + 2σ of the outlet's own valid months
+   *  (sales > 0; min 3, σ > 0 — the waste spike's discipline, metric-swapped
+   *  to susut). Absent on pre-W11 cached responses. */
+  susutSpikeMonths?: number;
 }
 
 export interface WasteKpis {
@@ -240,6 +248,10 @@ export interface WasteItemOutletBreakdown {
   waste: number;
   monthsActive: number;
   shareOfItem: number;
+  /** W11 (additive): per-outlet susut on the item (absent on pre-W11 caches). */
+  susut?: number;
+  /** W11 (additive): per-outlet trial on the item. */
+  trial?: number;
 }
 
 export interface WasteTopItemRow {
@@ -256,20 +268,103 @@ export interface WasteTopItemRow {
   prevMonthWaste: number;
   sistematik: boolean;
   byOutlet: WasteItemOutletBreakdown[];
+  // ---- W11 (Paritas Susut & Trial) — additive optional fields (the
+  // server fills them always; optional here for pre-W11 cached
+  // responses, 5-min TTL — consumers guard undefined). ----
+  /** Σ|nominalSusut| over the window. */
+  susutNominal?: number;
+  /** Σ|qtySusut| over the window. */
+  susutQty?: number;
+  /** Σ|nominalTrial| over the window. */
+  trialNominal?: number;
+  /** Σ|qtyTrial| over the window. */
+  trialQty?: number;
+  /** Σ|qtyBom| over the window (trial-screen ratio denominator). */
+  bomQty?: number;
+  /** Distinct months with trial > 0. */
+  trialMonthsActive?: number;
+  /** susutNominal / Σ|nominalSusut| scope. */
+  susutShare?: number;
+  /** trialNominal / Σ|nominalTrial| scope. */
+  trialShare?: number;
+  /** Running Σ susutShare in the metric order. */
+  susutCumulativeShare?: number;
+  /** Running Σ trialShare in the metric order. */
+  trialCumulativeShare?: number;
+  /** W/S/T fingerprint (shares of explained loss + class). */
+  fingerprint?: WasteItemFingerprint | null;
 }
 
 export interface WasteTopItemsResponse {
   success: boolean;
   week?: string;
   limit?: number;
+  /** W11: the ordering metric echo (default 'waste'). */
+  metric?: WasteMetric;
   items?: WasteTopItemRow[];
   populationTotal?: number;
+  /** W11: Σ|nominalSusut| across all items in scope (parity context). */
+  susutPopulationTotal?: number;
+  /** W11: Σ|nominalTrial| across all items in scope. */
+  trialPopulationTotal?: number;
   lastMonthKey?: string | null;
   prevMonthKey?: string | null;
   /** BUGHUNT-R1 FIX 2 (additive): ACTUAL months in the window (≤ 12) — the
    *  sistematik threshold is ceil(windowMonths/2), not the cap's 6. */
   windowMonths?: number;
+  /** W11: network-level fingerprint summary (class distribution). */
+  fingerprint?: WasteFingerprintSummary | null;
+  /** W11: trial-abuse screen rows over the returned items. */
+  trialScreen?: WasteTrialScreenItem[];
   error?: string;
+}
+
+// ------------------------------------------------------------
+// W11 — Paritas Susut & Trial: fingerprint + trial screen types
+// (mirror of the /api/waste-top-items additive fields; server source
+// of truth: src/lib/queries/waste/waste-top-items/{types,fingerprint}.ts)
+// ------------------------------------------------------------
+
+/** W11: the metric the top-N is ordered by. */
+export type WasteMetric = 'waste' | 'susut' | 'trial';
+
+/** W11: the dominant component of an item's explained loss (max-share). */
+export type WasteFingerprintClass = 'W-DOMINANT' | 'S-DOMINANT' | 'T-DOMINANT';
+
+/** W11: per-item W/S/T fingerprint (shares of the explained loss w+s+t). */
+export interface WasteItemFingerprint {
+  shareW: number;
+  shareS: number;
+  shareT: number;
+  explainedNominal: number;
+  /** Null when explained == 0 (TANPA EXPLAINED). */
+  fingerprintClass: WasteFingerprintClass | null;
+}
+
+/** W11: network-level fingerprint summary. */
+export interface WasteFingerprintSummary {
+  classCounts: {
+    wDominant: number;
+    sDominant: number;
+    tDominant: number;
+    tanpaExplained: number;
+  };
+  epistemicLabel: 'INDIKASI';
+}
+
+/** W11: one trial-abuse screen row (3 signals AND; always INDIKASI). */
+export interface WasteTrialScreenItem {
+  itemId: number;
+  itemName: string;
+  satuan: string | null;
+  trialNominal: number;
+  trialQty: number;
+  bomQty: number;
+  /** trialQty / bomQty; null when bomQty = 0 (no usage basis). */
+  trialToBom: number | null;
+  trialMonthsActive: number;
+  fingerprintClass: WasteFingerprintClass | null;
+  epistemicLabel: 'INDIKASI';
 }
 
 export interface WastePeerZScoreRow {

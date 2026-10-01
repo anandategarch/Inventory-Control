@@ -18,6 +18,13 @@
 // saja) sehingga aman di-import langsung oleh komponen client
 // (decomposition-card) tanpa menarik Prisma ke bundle browser.
 //
+// W11 (Paritas Susut & Trial): diperluas ADDITIF lagi (+1 fungsi
+// buildSusutSpike dari ./susut-spike.ts +1 tipe WasteOutletSusutSpike
+// dari ./types.ts) — pass murni keempat atas baris bulanan yang sama
+// (metric-swap twin detektor spike SQL); deep import
+// '@/lib/queries/waste/network/susut-spike' juga valid untuk test
+// pure-builder tanpa db-mock.
+//
 // Layout: query.ts (queryWasteNetwork + pipeline SQL 8-CTE; detektor
 // spike 2σ hidup di CTE outlet_stats/monthly_final) · builders.ts
 // (buildWasteMonthlyRows/buildWasteOutlets/buildWasteKpis — 3 detektor
@@ -27,7 +34,9 @@
 // (W2 Kronis-vs-Episodik: buildWastePersistence + fisherExact2x2 +
 // classifyWastePersistence — pass murni kedua atas baris bulanan) ·
 // attribution.ts (W10 Atribusi + Skenario Sensitivitas Residual:
-// buildWasteAttribution — pass murni ketiga atas kpis + outlets).
+// buildWasteAttribution — pass murni ketiga atas kpis + outlets) ·
+// susut-spike.ts (W11 Paritas Susut & Trial: buildSusutSpike — pass
+// murni keempat, metric-swap twin detektor spike SQL waste).
 // Konstanta window/ambang tetap di ../shared.ts (tidak disentuh).
 // Persiapan gelombang fitur W2 (persistensi) + W11 (metric-swap) yang
 // akan extend modul ini — pre-split menjaga god file tidak tumbuh
@@ -109,6 +118,10 @@ export {
   WASTE_ATTRIBUTION_DISCLOSURE,
   WASTE_ATTRIBUTION_SCENARIO_P,
 } from './attribution';
+// W11 (Paritas Susut & Trial) — additive: pure susut-spike pass (the
+// metric-swap twin of the SQL waste spike; constants stay in
+// ../shared.ts — WASTE_SPIKE_SIGMA / WASTE_SPIKE_MIN_MONTHS reused).
+export { buildSusutSpike } from './susut-spike';
 export { queryWasteNetwork } from './query';
 export type {
   WasteAttributionComponent,
@@ -124,6 +137,7 @@ export type {
   WasteNetworkResult,
   WasteOutletRow,
   WasteOutletPersistence,
+  WasteOutletSusutSpike,
   WastePersistenceBlock,
   WastePersistenceClass,
   WastePersistenceResult,

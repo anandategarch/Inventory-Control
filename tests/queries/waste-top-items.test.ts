@@ -71,6 +71,16 @@ function itemRow(overrides: Partial<Record<string, number | bigint | string | nu
     satuan: 'PCS',
     totalWaste: 100,
     wasteQty: 500,
+    // W11 (additive) — neutral defaults; individual tests override to
+    // build fingerprint/susut/trial fixtures.
+    totalSusut: 0,
+    susutQty: 0,
+    totalTrial: 0,
+    trialQty: 0,
+    bomQty: 0,
+    trialMonthsActive: 0,
+    susutPopulationTotal: 0,
+    trialPopulationTotal: 0,
     outletsActive: 3,
     monthsActive: 7,
     lastMonthWaste: 40,
@@ -163,6 +173,10 @@ describe('buildWasteTopItems', () => {
       outletName: `Outlet ${i}`,
       area: 'AREA',
       waste: 100 - i * 10,
+      // W11 (additive): per-outlet susut/trial companions (zeros — this
+      // test pins the DEFAULT waste sort + cap).
+      susut: 0,
+      trial: 0,
       monthsActive: 3,
     }));
     // OUT0 = 100 (top), OUT1 = 90, … OUT9 = 10 — cap keeps OUT0..OUT7.

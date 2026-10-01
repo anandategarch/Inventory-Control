@@ -44,13 +44,20 @@ export const wasteSeriesQuerySchema = z.object({
   outletCode: outletCodeSchema,
 });
 
-// /api/waste-top-items?month=&week=&area=&kelompok=&pic=&outletCode=&limit=
+// /api/waste-top-items?month=&week=&area=&kelompok=&pic=&outletCode=&limit=&metric=
 // DEEP-WASTE-1: Pareto of items by ΣABS nominalWaste over the same
 // window + sistematik columns (#outlet/#bulan) + per-outlet breakdown.
 // The optional outletCode scopes the view to ONE outlet (global outlet
 // filter parity with waste-series). limit is clamped in the route
 // (1..50, default 20) — bogus values must not reach the cache key (same
 // style as peer-comparison/top-items).
+//
+// W11 (Paritas Susut & Trial) — ADDITIVE param: `metric` selects the
+// top-N ORDERING metric ('waste' | 'susut' | 'trial', default 'waste').
+// The response ALWAYS carries all three metric aggregates + the W/S/T
+// fingerprint regardless of the ordering metric (parity context);
+// `sistematik` stays WASTE-semantic under every metric (generalizing it
+// is out of scope — documented in the query module).
 export const wasteTopItemsQuerySchema = z.object({
   month: monthLabelSchema,
   week: weekLabelSchema,
@@ -58,6 +65,7 @@ export const wasteTopItemsQuerySchema = z.object({
   kelompok: kelompokSchema,
   pic: picSchema,
   outletCode: outletCodeSchema,
+  metric: z.enum(['waste', 'susut', 'trial']).default('waste'),
 });
 
 // /api/waste-peer-zscore?outletCode=&month=&week=&kelompok=

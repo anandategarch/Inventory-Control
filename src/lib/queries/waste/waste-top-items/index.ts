@@ -18,8 +18,10 @@
 //  The named re-exports below match the pre-split export surface
 //  EXACTLY (grep '^export ' on the old file): 4 constants +
 //  3 types + 3 functions — PLUS the W3-EXEC additive names (3
-//  constants, 3 types, 4 quadrant builders) so the surface only
-//  grows, never shifts (house additive-only rule). WasteItemRawRow /
+//  constants, 3 types, 4 quadrant builders) and the W11-EXEC
+//  additive names (3 constants, 5 types, 3 fingerprint builders) so
+//  the surface only grows, never shifts (house additive-only rule).
+//  WasteItemRawRow /
 //  WasteItemOutletRawRow / WasteItemOutletDistributionRawRow
 //  moved to ./types.ts with an `export` keyword added (sibling
 //  sharing) and are deliberately NOT re-exported here; toNum
@@ -58,6 +60,10 @@ export {
   WASTE_QUADRANT_PREVALENCE_MIN,
   WASTE_QUADRANT_HHI_MIN_OUTLETS,
   WASTE_QUADRANT_PARETO_SHARE,
+  // W11 (additive): trial-abuse screen tunables — see ./constants.ts.
+  WASTE_TRIAL_SCREEN_BOM_RATIO,
+  WASTE_TRIAL_SCREEN_MIN_MONTHS,
+  WASTE_TRIAL_SCREEN_MIN_NOMINAL,
 } from './constants';
 export type {
   WasteItemOutletBreakdown,
@@ -67,9 +73,17 @@ export type {
   WasteQuadrantClass,
   WasteItemQuadrant,
   WasteQuadrantSummary,
+  // W11 (additive): paritas susut & trial types — see ./types.ts.
+  WasteMetric,
+  WasteFingerprintClass,
+  WasteItemFingerprint,
+  WasteFingerprintSummary,
+  WasteTrialScreenItem,
 } from './types';
 export { isSistematikWasteItem } from './sistematik';
 export { buildWasteTopItems } from './builders';
 // W3 (additive): pure quadrant builders (exported for vitest).
 export { buildQuadrant, classifyQuadrantClass, computeHhi, persistenceThresholdMonths, WASTE_QUADRANT_CLASSES } from './quadrant';
+// W11 (additive): pure fingerprint + trial-screen builders (vitest).
+export { buildFingerprint, buildTrialScreen, classifyFingerprintClass } from './fingerprint';
 export { queryWasteTopItems } from './query';

@@ -9,10 +9,20 @@
 //  W3-EXEC (additive): per-item `quadrant` fields (prevalence ×
 //  persistence class, HHI) + top-level `quadrant` summary block
 //  (adaptive persistence threshold, paretoK, class distribution).
-//  GET: ?month=Y&week=Z&area=&kelompok=&pic=&limit=
+//  W11-EXEC (additive): `metric` param ('waste'|'susut'|'trial',
+//  default 'waste') selects the top-N ORDERING metric + which nominal
+//  the rows lead with. The response ALWAYS carries all three metric
+//  aggregates + the W/S/T fingerprint (per-item + summary) + the
+//  trial-abuse screen, regardless of the ordering metric — the card
+//  shows the parity context under every selector position. Semantics
+//  kept waste-flavored under every metric (documented in the query
+//  module): `sistematik` + its #outlet/#bulan counts stay waste-based.
+//  GET: ?month=Y&week=Z&area=&kelompok=&pic=&limit=&metric=
 //  limit is clamped 1..50 (default 20) BEFORE the cache key — bogus
 //  values must not poison the cache (same style as the items route's
-//  topItems / peer-comparison/top-items).
+//  topItems / peer-comparison/top-items). metric is zod-validated
+//  (enum + default) and gains its own cache-key slot for the same
+//  reason.
 // ============================================================
 import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
@@ -71,13 +81,33 @@ export async function GET(req: NextRequest) {
       ? Math.min(Math.floor(rawLimit), WASTE_TOP_ITEMS_MAX_LIMIT)
       : WASTE_TOP_ITEMS_DEFAULT_LIMIT;
 
+    // W11: the ordering metric — zod-validated enum with a 'waste'
+    // default (absent param = pre-W11 behavior), read from the parsed
+    // data so the default handling lives in ONE place.
+    const metric = validation.success ? validation.data.metric : 'waste';
+
     const resolver = await getMonthResolver();
     month = resolveMonthLabel(month, resolver) || month;
 
     // Resolve PIC → outletCodes (shared logic — same as /api/pareto).
     const picOutletCodes = await resolvePICOutletCodes(pic);
     if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
-      return NextResponse.json({ success: true, items: [], populationTotal: 0, lastMonthKey: null, prevMonthKey: null, windowMonths: 0, quadrant: null });
+      return NextResponse.json({
+        success: true,
+        items: [],
+        populationTotal: 0,
+        lastMonthKey: null,
+        prevMonthKey: null,
+        windowMonths: 0,
+        quadrant: null,
+        // W11 additive (shape consistency on the early return — mirrors
+        // the W2/W10 early-return convention on waste-series).
+        metric,
+        susutPopulationTotal: 0,
+        trialPopulationTotal: 0,
+        fingerprint: null,
+        trialScreen: [],
+      });
     }
 
     // Same currentMonthKey derivation as /api/recommendations — window
@@ -107,7 +137,9 @@ export async function GET(req: NextRequest) {
       kelompok: kelompokParam,
       pic,
       outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
-      extra: { limit },
+      // W11: the ordering metric changes the RESULT (top-N selection),
+      // so it must change the CACHE KEY too.
+      extra: { limit, metric },
     });
 
     type WasteTopItemsData = Awaited<ReturnType<typeof queryWasteTopItems>>;
@@ -120,7 +152,7 @@ export async function GET(req: NextRequest) {
           kelompok: kelompokParam,
           outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
           picOutletCodes,
-        }, limit);
+        }, limit, metric);
       },
     );
 
@@ -128,8 +160,14 @@ export async function GET(req: NextRequest) {
       success: true,
       week,
       limit,
+      // W11: echoes the ordering metric (default 'waste').
+      metric,
       items: topItemsData.items,
       populationTotal: topItemsData.populationTotal,
+      // W11 (additive): the two parity population totals — the card's
+      // "Σ Susut / Σ Trial scope" context regardless of the selector.
+      susutPopulationTotal: topItemsData.susutPopulationTotal,
+      trialPopulationTotal: topItemsData.trialPopulationTotal,
       lastMonthKey: topItemsData.lastMonthKey,
       prevMonthKey: topItemsData.prevMonthKey,
       // BUGHUNT-R1 FIX 2 (additive): the ACTUAL window size behind the
@@ -139,6 +177,11 @@ export async function GET(req: NextRequest) {
       // W3-EXEC (additive): network-level quadrant summary — null only on
       // empty windows/slices; per-item quadrant fields ride inside `items`.
       quadrant: topItemsData.quadrant,
+      // W11-EXEC (additive): network-level fingerprint summary (class
+      // distribution, INDIKASI) + the trial-abuse screen rows; the
+      // per-item fingerprints ride inside `items`.
+      fingerprint: topItemsData.fingerprint,
+      trialScreen: topItemsData.trialScreen,
       ...(cached ? { cached: true } : {}),
       ...(stale ? { stale: true } : {}),
     }, { headers: CACHE_ANALYSIS });

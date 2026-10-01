@@ -16,6 +16,12 @@
 //  SEHAT/TERBATAS + tooltip "bulan di atas median X/Y" INDIKASI) —
 //  data berasal dari field ADDITIF /api/waste-series; respons cache
 //  pra-W2 tidak memilikinya → render em-dash (pola kolom Flag).
+//
+//  W11 (Paritas Susut & Trial): +1 badge detektor "S2σ×n" (susut
+//  spike) di kolom Flag — twin metric-swap dari badge 2σ×n waste
+//  (susut/sales > mean+2σ riwayat sendiri, bulan sales>0 saja);
+//  hanya dirender saat susutSpikeMonths > 0 (field ADDITIF — cache
+//  pra-W11 tidak memilikinya).
 // ============================================================
 
 import { memo, useState } from 'react';
@@ -138,6 +144,20 @@ export const WasteProfileTable = memo(function WasteProfileTable({
                               2σ×{o.spikeMonths}
                             </Badge>
                           )}
+                          {/* W11 (Paritas Susut & Trial) — additive badge: the
+                              metric-swap twin of the waste 2σ spike, computed
+                              server-side as a pure pass over the same monthly
+                              rows. Only rendered when > 0 (absent field =
+                              pre-W11 cached response → treated as 0). */}
+                          {(o.susutSpikeMonths ?? 0) > 0 && (
+                            <Badge
+                              variant="outline"
+                              title={`${o.susutSpikeMonths} bulan lonjakan SUSUT/sales > mean + 2σ vs riwayat window sendiri (bulan sales > 0 saja, min. 3 bulan) — twin metric-swap dari detektor spike waste; indikasi masalah penyimpanan/cold-chain, bukan bukti`}
+                              className="text-[9px] font-normal text-sky-700 dark:text-sky-400 border-sky-300/70 dark:border-sky-800/70 bg-sky-50/60 dark:bg-sky-950/30 h-4 px-1.5 cursor-help"
+                            >
+                              S2σ×{o.susutSpikeMonths}
+                            </Badge>
+                          )}
                           {o.underRecording && (
                             <Badge variant="outline" className="text-[9px] font-normal text-yellow-700 dark:text-yellow-400 border-yellow-300/70 dark:border-yellow-800/70 bg-yellow-50/60 dark:bg-yellow-950/30 h-4 px-1.5">
                               UR
@@ -148,7 +168,7 @@ export const WasteProfileTable = memo(function WasteProfileTable({
                               RD
                             </Badge>
                           )}
-                          {!o.zeroWasteBigLoss && o.spikeMonths === 0 && !o.underRecording && !o.residualDominant && (
+                          {!o.zeroWasteBigLoss && o.spikeMonths === 0 && (o.susutSpikeMonths ?? 0) === 0 && !o.underRecording && !o.residualDominant && (
                             <span className="text-[10px] text-muted-foreground">—</span>
                           )}
                         </div>
@@ -175,6 +195,7 @@ export const WasteProfileTable = memo(function WasteProfileTable({
             )}
             <p className="px-4 py-2.5 text-[10px] text-muted-foreground border-t">
               Flag: W0 = waste ≈ 0 dengan loss &gt; ambang P1 · 2σ×n = n bulan lonjakan waste/sales &gt; 2σ vs riwayat window sendiri ·
+              S2σ×n = n bulan lonjakan SUSUT/sales &gt; 2σ vs riwayat window sendiri (metric-swap detektor waste — indikasi penyimpanan/cold-chain) ·
               UR = waste/sales &lt; 0,1% (≥ 2 bulan, under-recording) · RD = residual &gt; 80% loss dan waste menjelaskan &lt; 10%.
               Kelas (W2, INDIKASI): KRONIS = ≥ 60% bulan aktif di atas median network per bulan (min. 6 bulan aktif) ·
               EPISODIK = ada lonjakan 2σ tanpa persistensi kronis · SEHAT = lainnya · TERBATAS = &lt; 6 bulan aktif —

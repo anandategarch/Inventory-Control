@@ -26,6 +26,11 @@
 //  queryWasteNetwork, seperti persistence) + 6 tipe baru + 2 tipe
 //  input struktural (lihat ./attribution.ts untuk kontrak + logika
 //  keputusan + disclosure identitas residual).
+//
+//  W11 (Paritas Susut & Trial): ditambahkan ADDITIF — field optional
+//  susutSpikeMonths pada WasteOutletRow (di-merge queryWasteNetwork
+//  dari ./susut-spike.ts; buildWasteOutlets tidak menghitungnya) +
+//  tipe WasteOutletSusutSpike. Tidak ada nama/field lama yang berubah.
 // ============================================================
 
 // ------------------------------------------------------------
@@ -120,6 +125,18 @@ export interface WasteOutletRow {
   activeSpikeMonths?: number;
   /** KRONIS / EPISODIK / SEHAT / TERBATAS — always INDIKASI (see persistence.ts). */
   persistenceClass?: WastePersistenceClass;
+  // ----------------------------------------------------------
+  // W11 (Paritas Susut & Trial) — ADDITIVE optional field, merged onto
+  // each outlet row by queryWasteNetwork via ./susut-spike.ts (the
+  // metric-swap twin of the SQL waste spike, computed as a pure second
+  // pass over the SAME monthly rows). Optional because
+  // buildWasteOutlets (the base builder) does not compute it — consumers
+  // must treat it as possibly-absent (old cached payloads).
+  // ----------------------------------------------------------
+  /** Months where susut/sales > mean + 2σ of the outlet's own valid months
+   *  (sales > 0; min 3 months, σ > 0 — the waste spike's exact discipline,
+   *  metric-swapped). 0 when the guard rejects the outlet. */
+  susutSpikeMonths?: number;
 }
 
 export interface WasteMonthMeta {
@@ -254,6 +271,23 @@ export interface WastePersistenceResult {
   outlets: WasteOutletPersistence[];
   medians: WasteMonthMedian[];
   summary: WastePersistenceSummary;
+}
+
+// ------------------------------------------------------------
+// W11 — Paritas Susut & Trial: susut spike types (additive)
+// ------------------------------------------------------------
+
+/**
+ * W11: per-outlet susut spike metrics — the metric-swap twin of the SQL
+ * waste spike detector (susutToSales vs wasteToSales; see
+ * ./susut-spike.ts for the methodology + guards).
+ */
+export interface WasteOutletSusutSpike {
+  outletCode: string;
+  /** Months with susut/sales > mean + 2σ of the outlet's own valid months. */
+  susutSpikeMonths: number;
+  /** Valid months (sales > 0) the spike baseline was computed over — the n. */
+  susutRatioMonths: number;
 }
 
 // ------------------------------------------------------------

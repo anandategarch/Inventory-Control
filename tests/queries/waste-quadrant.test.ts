@@ -51,6 +51,19 @@ function item(overrides: Partial<Record<string, number | string | null>> = {}): 
     sistematik: true,
     byOutlet: [],
     quadrant: null,
+    // W11 (additive) — required fields with neutral values; the quadrant
+    // math never reads them (fingerprint-agnostic).
+    susutNominal: 0,
+    susutQty: 0,
+    trialNominal: 0,
+    trialQty: 0,
+    bomQty: 0,
+    trialMonthsActive: 0,
+    susutShare: 0,
+    trialShare: 0,
+    susutCumulativeShare: 0,
+    trialCumulativeShare: 0,
+    fingerprint: null,
     ...overrides,
   } as WasteTopItemRow;
 }

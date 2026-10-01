@@ -28,6 +28,11 @@
 // (pure builder atribusi; deep import
 // '@/lib/queries/waste/network/attribution' juga valid). Permukaan
 // lama tidak berubah.
+//
+// W11 (Paritas Susut & Trial): diperluas ADDITIF — +1 fungsi
+// buildSusutSpike +1 tipe WasteOutletSusutSpike dari ./network
+// (deep import '@/lib/queries/waste/network/susut-spike' juga valid
+// untuk test pure-builder tanpa db-mock). Permukaan lama tidak berubah.
 
 export {
   buildWasteKpis,
@@ -44,6 +49,8 @@ export {
   WASTE_ATTRIBUTION_DECILE_P,
   WASTE_ATTRIBUTION_DISCLOSURE,
   WASTE_ATTRIBUTION_SCENARIO_P,
+  // W11 (additive): susut spike — metric-swap twin detektor spike SQL.
+  buildSusutSpike,
 } from './network';
 export type {
   // W10 (additive): tipe block `attribution` + input struktural.
@@ -60,6 +67,7 @@ export type {
   WasteNetworkResult,
   WasteOutletRow,
   WasteOutletPersistence,
+  WasteOutletSusutSpike,
   WastePersistenceBlock,
   WastePersistenceClass,
   WastePersistenceResult,

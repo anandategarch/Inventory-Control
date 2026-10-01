@@ -20,6 +20,11 @@
 //  dihitung pipeline ini (tanpa round-trip SQL tambahan) → block
 //  `attribution` network-level. ADDITIF — tidak ada field lama
 //  yang diubah/dihapus.
+//
+//  W11 (Paritas Susut & Trial): pass murni keempat ./susut-spike.ts
+//  atas baris bulanan yang SAMA (metric-swap twin detektor spike SQL):
+//  field optional susutSpikeMonths per outlet, di-merge bersama field
+//  W2 di bawah. ADDITIF — tanpa round-trip SQL tambahan.
 // ============================================================
 import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../../shared';
 import {
@@ -31,6 +36,7 @@ import {
 import { buildWasteAttribution } from './attribution';
 import { buildWasteKpis, buildWasteMonthlyRows, buildWasteOutlets } from './builders';
 import { buildWastePersistence } from './persistence';
+import { buildSusutSpike } from './susut-spike';
 import type { WasteMonthMeta, WasteMonthlyRawRow, WasteNetworkResult } from './types';
 
 // ------------------------------------------------------------
@@ -190,12 +196,21 @@ export async function queryWasteNetwork(
   // `persistence` block. No extra SQL round-trip.
   const persistence = buildWastePersistence(monthly);
   const persistenceByCode = new Map(persistence.outlets.map((p) => [p.outletCode, p]));
+  // W11 (Paritas Susut & Trial) — pure fourth pass over the SAME monthly
+  // rows: per-outlet susut spike months (the metric-swap twin of the SQL
+  // waste spike detector). No extra SQL round-trip; merged below TOGETHER
+  // with the W2 fields (one map, additive spreads — base fields keep
+  // their exact value+order).
+  const susutSpikeByCode = new Map(buildSusutSpike(monthly).map((s) => [s.outletCode, s]));
   const outletsWithPersistence = outlets.map((o) => {
     const p = persistenceByCode.get(o.outletCode);
-    // p spreads the W2 optional fields (activeMonths, persistenceClass,
-    // …) onto the row; every base field keeps its exact value+order —
-    // additive merge, nothing renamed/removed.
-    return p ? { ...o, ...p } : o;
+    const s = susutSpikeByCode.get(o.outletCode);
+    // p spreads the W2 optional fields (activeMonths, persistenceClass, …)
+    // and s the W11 susutSpikeMonths onto the row; every base field keeps
+    // its exact value+order — additive merge, nothing renamed/removed.
+    return p || s
+      ? { ...o, ...(p ?? {}), ...(s ? { susutSpikeMonths: s.susutSpikeMonths } : {}) }
+      : o;
   });
 
   // Month metadata: derived from the monthly rows (keeps ONE SQL round
