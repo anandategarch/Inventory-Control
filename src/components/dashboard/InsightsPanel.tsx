@@ -1,41 +1,44 @@
 'use client';
 
-import { memo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useDashboard } from '@/hooks/useDashboard';
-import { fmtIDR, fmtPct, formatByPreset } from '@/lib/format';
 import type { AnalysisData } from '@/hooks/useAnalysis';
+// GODSPLIT-W2-B: buildInsights (9-rule derivation engine) + the Insight
+// contract now live in '@/lib/insights' — pure, unit-testable
+// (tests/lib/insights.test.ts), and memoized at the call site below.
+import { buildInsights, type Insight, type InsightIcon } from '@/lib/insights';
 import {
   Lightbulb, TrendingUp, TrendingDown, AlertTriangle, Coins,
   MapPin, Package, ShieldAlert, Zap, ArrowRight, ChevronDown, ChevronUp,
 } from 'lucide-react';
 
 // ============================================================
-//  Insight type & severity styling
+//  Insight presentation spec (view-side)
 //  VH-3 (spec §4 L4): callout-style cards — border-left only +
 //  prose (Gestalt similarity: two shapes, two meanings — data
 //  cards keep the full border, insights read as annotations).
 //  critical border-red-500 bg-red-500/5, warning border-amber-400
 //  bg-amber-50/40, positive emerald, info zinc.
 // ============================================================
-interface Insight {
-  id: string;
-  icon: React.ReactNode;
-  severity: 'critical' | 'warning' | 'info' | 'positive';
-  /** SPEC-1 (upload spec §6.1/§20): certainty level — presentation-layer
-   *  epistemic label, NOT a new calculation. TERUKUR = the finding states
-   *  directly verifiable values/concentrations from the payload; INDIKASI
-   *  = a strong measured pattern that is not a root cause; HIPOTESIS = a
-   *  possible cause that still needs validation (none generated today —
-   *  §27-6 forbids adding new root-cause claims). */
-  certainty: 'TERUKUR' | 'INDIKASI' | 'HIPOTESIS';
-  title: string;
-  body: string;
-  action?: string;
-  actionTarget?: { type: 'area' | 'item'; value: string };
-}
+
+// GODSPLIT-W2-B: the engine emits icon KEYS (InsightIcon) so that
+// lib/insights.ts stays JSX-free and unit-testable in node vitest;
+// this map renders each key with the exact same `h-4 w-4` lucide
+// element buildInsights used to inline into the data.
+const INSIGHT_ICONS: Record<InsightIcon, React.ReactNode> = {
+  'shield-alert': <ShieldAlert className="h-4 w-4" />,
+  'alert-triangle': <AlertTriangle className="h-4 w-4" />,
+  lightbulb: <Lightbulb className="h-4 w-4" />,
+  zap: <Zap className="h-4 w-4" />,
+  'map-pin': <MapPin className="h-4 w-4" />,
+  coins: <Coins className="h-4 w-4" />,
+  package: <Package className="h-4 w-4" />,
+  'trending-down': <TrendingDown className="h-4 w-4" />,
+  'trending-up': <TrendingUp className="h-4 w-4" />,
+};
 
 // SPEC-1 (§6.1): hover explanations for each certainty level.
 const CERTAINTY_TOOLTIPS: Record<Insight['certainty'], string> = {
@@ -77,202 +80,9 @@ const SEVERITY_STYLES: Record<Insight['severity'], {
 const MAX_VISIBLE = 5;
 
 // ============================================================
-//  buildInsights — auto-generate up to 10 textual insights
-// ============================================================
-function buildInsights(data: AnalysisData): Insight[] {
-  const out: Insight[] = [];
-  const hs = data.healthStatus;
-  const total = hs.normal + hs.warning + hs.abnormal;
-  const abnormalPct = total > 0 ? (hs.abnormal / total) * 100 : 0;
-  const g = data.growthComparison || {};
-
-  // ----- 1. Health verdict -----
-  if (abnormalPct > 20) {
-    out.push({
-      id: 'health',
-      icon: <ShieldAlert className="h-4 w-4" />,
-      severity: 'critical',
-      certainty: 'TERUKUR',
-      title: 'Kondisi Inventory KRITIS',
-      body: `${fmtPct(abnormalPct / 100, false, 1)} record abnormal (>20%). ${hs.abnormal.toLocaleString('id-ID')} dari ${total.toLocaleString('id-ID')} record memerlukan investigasi segera.`,
-    });
-  } else if (abnormalPct > 5) {
-    out.push({
-      id: 'health',
-      icon: <AlertTriangle className="h-4 w-4" />,
-      severity: 'warning',
-      certainty: 'TERUKUR',
-      title: 'Kondisi Inventory Perlu Perhatian',
-      body: `${fmtPct(abnormalPct / 100, false, 1)} record abnormal (5-20%). ${hs.abnormal.toLocaleString('id-ID')} dari ${total.toLocaleString('id-ID')} record perlu monitoring.`,
-    });
-  } else {
-    out.push({
-      id: 'health',
-      icon: <Lightbulb className="h-4 w-4" />,
-      severity: 'positive',
-      certainty: 'TERUKUR',
-      title: 'Kondisi Inventory Sehat',
-      body: `Hanya ${fmtPct(abnormalPct / 100, false, 1)} record abnormal (<5%). ${hs.normal.toLocaleString('id-ID')} dari ${total.toLocaleString('id-ID')} record dalam kondisi normal.`,
-    });
-  }
-
-  // ----- 2. Growth mismatch (DEVIASI tumbuh jauh melebihi Sales) -----
-  if (g.salesGrowth != null && g.salesGrowth > 0 && g.nominalDeviasiGrowth != null
-      && g.nominalDeviasiGrowth > 2 * g.salesGrowth) {
-    out.push({
-      id: 'growth-mismatch',
-      icon: <Zap className="h-4 w-4" />,
-      severity: 'critical',
-      certainty: 'INDIKASI',
-      title: 'Pertumbuhan DEVIASI Tidak Proporsional',
-      body: `Sales tumbuh ${fmtPct(g.salesGrowth, true, 1)} tetapi |NOMINAL DEVIASI| tumbuh ${fmtPct(g.nominalDeviasiGrowth, true, 1)} (>2× sales). Indikasi cost leak yang tidak mengikuti pertumbuhan revenue.`,
-    });
-  }
-
-  // ----- 3. RESIDUAL dominance -----
-  const b = data.deviationBreakdown;
-  const totalDev = b.total || 1;
-  const residualPct = b.residual / totalDev;
-  if (residualPct > 0.5) {
-    out.push({
-      id: 'residual',
-      icon: <AlertTriangle className="h-4 w-4" />,
-      severity: 'warning',
-      certainty: 'TERUKUR',
-      title: 'RESIDUAL Dominan',
-      body: `${fmtPct(residualPct, false, 1)} QTY Deviasi tidak terjelaskan oleh Waste/Susut/Trial. Perlu validasi actual usage vs SOC dan sampling fisik.`,
-    });
-  }
-
-  // ----- 4. Worst area -----
-  const areas = data.areaAnalysis || [];
-  if (areas.length >= 2) {
-    const sorted = [...areas].sort((a, b) => (b.lossToSales ?? 0) - (a.lossToSales ?? 0));
-    const worst = sorted[0];
-    const best = sorted[sorted.length - 1];
-    const worstPct = (worst.lossToSales ?? 0) * 100;
-    const bestPct = (best.lossToSales ?? 0) * 100;
-    // ppt gap between the worst and best area (percent points, not a ratio).
-    const delta = worstPct - bestPct;
-    const sev: Insight['severity'] = worstPct > 10 ? 'critical' : worstPct > 5 ? 'warning' : 'info';
-    out.push({
-      id: 'area-worst',
-      icon: <MapPin className="h-4 w-4" />,
-      severity: sev,
-      certainty: 'TERUKUR',
-      title: `Area Terburuk: ${worst.area}`,
-      body: `LOSS/PENJUALAN ${fmtPct(worst.lossToSales ?? 0, false, 2)} (vs ${best.area} ${fmtPct(best.lossToSales ?? 0, false, 2)}). Selisih ${delta > 0 ? '+' : ''}${formatByPreset(delta, 'num2')} ppt. ${worst.outletCount} outlet di area ini.`,
-      action: `Fokus ke ${worst.area}`,
-      actionTarget: { type: 'area', value: worst.area },
-    });
-  }
-
-  // ----- 5. Cost impact -----
-  const ci = data.costImpact;
-  if (ci) {
-    const pct = (ci.pctOfSales ?? 0) * 100;
-    const sev: Insight['severity'] = pct > 5 ? 'critical' : pct > 2 ? 'warning' : 'info';
-    out.push({
-      id: 'cost-impact',
-      icon: <Coins className="h-4 w-4" />,
-      severity: sev,
-      certainty: 'TERUKUR',
-      title: 'Biaya Bocor',
-      body: `Total |NOMINAL DEVIASI| ${fmtIDR(ci.totalCost)} setara ${fmtPct(ci.pctOfSales ?? 0, false, 2)} dari PENJUALAN. LOSS ${fmtIDR(ci.lossNominal)} · SURPLUS ${fmtIDR(ci.surplusNominal)}.`,
-    });
-  }
-
-  // ----- 6. Massal item (was "Systemic") -----
-  const consistency = data.itemConsistencyAnalysis;
-  if (consistency && consistency.systemic.length > 0) {
-    const top = consistency.systemic[0];
-    out.push({
-      id: 'systemic',
-      icon: <Package className="h-4 w-4" />,
-      severity: 'critical',
-      certainty: 'INDIKASI',
-      title: `Item Massal: ${top.itemName}`,
-      body: `${top.itemName} muncul dengan deviation signifikan di ${top.occurrences} outlet. Pola recurring — kemungkinan masalah struktural (SOC/recipe/receiving).`,
-      action: 'Drill-down item',
-      actionTarget: { type: 'item', value: top.itemName },
-    });
-  }
-
-  // ----- 7. Net cost trend -----
-  const nct = data.netCostTrend || [];
-  if (nct.length >= 2) {
-    const first = nct[0];
-    const last = nct[nct.length - 1];
-    const delta = (last.netCostRatio - first.netCostRatio) * 100;
-    if (delta > 0.5) {
-      out.push({
-        id: 'nct-worsening',
-        icon: <TrendingDown className="h-4 w-4" />,
-        severity: 'warning',
-        certainty: 'TERUKUR',
-        title: 'Tren Biaya Neto Memburuk',
-        body: `Net cost ratio naik dari ${fmtPct(first.netCostRatio, false, 2)} → ${fmtPct(last.netCostRatio, false, 2)} (+${formatByPreset(delta, 'num2')} ppt). LOSS meningkat lebih cepat dari SURPLUS.`,
-      });
-    } else if (delta < -0.5) {
-      out.push({
-        id: 'nct-improving',
-        icon: <TrendingUp className="h-4 w-4" />,
-        severity: 'positive',
-        certainty: 'TERUKUR',
-        title: 'Tren Biaya Neto Membaik',
-        // SPEC-1 (§6.2): hedged — the improvement CAUSE is unverified.
-        body: `Net cost ratio turun dari ${fmtPct(first.netCostRatio, false, 2)} → ${fmtPct(last.netCostRatio, false, 2)} (${formatByPreset(delta, 'num2')} ppt). Investigasi apakah mitigasi berhasil atau SURPLUS naik.`,
-      });
-    }
-  }
-
-  // ----- 8. LOSS/SURPLUS balance -----
-  const lvs = data.lossVsSurplus;
-  const totalLS = lvs.lossNominal + lvs.surplusNominal;
-  if (totalLS > 0) {
-    const lossShare = lvs.lossNominal / totalLS;
-    if (lossShare > 0.70) {
-      out.push({
-        id: 'loss-dominance',
-        icon: <TrendingDown className="h-4 w-4" />,
-        severity: 'warning',
-        certainty: 'TERUKUR',
-        title: 'Dominasi LOSS',
-        body: `${fmtPct(lossShare, false, 1)} nominal deviation adalah LOSS (pemakaian aktual > SOC). Hanya ${fmtPct(1 - lossShare, false, 1)} SURPLUS. Fokus pada pencegahan over-usage.`,
-      });
-    } else if (lossShare < 0.40) {
-      out.push({
-        id: 'surplus-dominance',
-        icon: <TrendingUp className="h-4 w-4" />,
-        severity: 'warning',
-        certainty: 'TERUKUR',
-        title: 'Dominasi SURPLUS',
-        body: `${fmtPct(1 - lossShare, false, 1)} nominal deviation adalah SURPLUS (pemakaian aktual < SOC). Hanya ${fmtPct(lossShare, false, 1)} LOSS. Periksa apakah SOC terlalu tinggi atau ada under-reporting.`,
-      });
-    }
-  }
-
-  // ----- 9. Historical anomaly -----
-  const histAnalysis = g.historicalAnalysis;
-  if (histAnalysis && histAnalysis.criticalItems.length > 0) {
-    const top = histAnalysis.criticalItems[0];
-    out.push({
-      id: 'historical-anomaly',
-      icon: <AlertTriangle className="h-4 w-4" />,
-      severity: 'critical',
-      certainty: 'TERUKUR',
-      title: `Anomali Historical: ${top.outletCode}`,
-      body: `${top.itemName} di ${top.outletCode} (${top.area}) memiliki z-score ${formatByPreset(top.zScore, 'num2')} vs rata-rata historical. Current Dev/BOM ${fmtPct(top.currentDevBom, false, 1)} vs rata-rata ${fmtPct(top.historicalAvg, false, 1)}.`,
-      action: 'Drill-down item',
-      actionTarget: { type: 'item', value: top.itemName },
-    });
-  }
-
-  return out;
-}
-
-// ============================================================
 //  InsightsPanel — main component
+//  (GODSPLIT-W2-B: the 190-LOC buildInsights derivation engine moved
+//  to src/lib/insights.ts — see that file's header.)
 // ============================================================
 export const InsightsPanel = memo(function InsightsPanel({ data }: { data: AnalysisData }) {
   const setArea = useDashboard((s) => s.setArea);
@@ -290,7 +100,9 @@ export const InsightsPanel = memo(function InsightsPanel({ data }: { data: Analy
   // for the rest.
   const [showAll, setShowAll] = useState(false);
 
-  const insights = buildInsights(data);
+  // GODSPLIT-W2-B: memoized on the single data dependency — previously
+  // the ~190-LOC 9-rule pipeline recomputed on EVERY render.
+  const insights = useMemo(() => buildInsights(data), [data]);
   const counts = {
     critical: insights.filter((i) => i.severity === 'critical').length,
     warning: insights.filter((i) => i.severity === 'warning').length,
@@ -371,7 +183,7 @@ export const InsightsPanel = memo(function InsightsPanel({ data }: { data: Analy
                   key={insight.id}
                   className={`rounded-r-lg border-l-4 p-3 pl-4 flex items-start gap-2.5 ${style.container}`}
                 >
-                  <span className={`shrink-0 mt-0.5 ${style.icon}`}>{insight.icon}</span>
+                  <span className={`shrink-0 mt-0.5 ${style.icon}`}>{INSIGHT_ICONS[insight.icon]}</span>
                   <div className="flex-1 min-w-0">
                     {/* SPEC-1 (§20): CERTAINTY → FINDING → EVIDENCE → ACTION —
                         the certainty eyebrow rides above the title so the
