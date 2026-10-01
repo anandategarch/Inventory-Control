@@ -47,7 +47,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ChevronRight, TrendingUp, TrendingDown, Minus, FlaskConical } from 'lucide-react';
-import { fmtIDR, fmtPct, fmtNum } from '@/lib/format';
+import { fmtDecimal, fmtIDR, fmtPct, fmtNum } from '@/lib/format';
 import type {
   WasteFingerprintClass,
   WasteMetric,
@@ -232,7 +232,11 @@ function TrialScreenTable({ rows }: { rows: WasteTrialScreenItem[] }) {
                 )}
               </TableCell>
               <TableCell className="text-right text-xs tabular-nums text-violet-600 dark:text-violet-400">{fmtIDR(r.trialNominal)}</TableCell>
-              <TableCell className="text-right text-xs tabular-nums text-muted-foreground">{fmtNum(r.trialQty, r.satuan || '')}</TableCell>
+              <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+                {/* FIX (UIUX-C S2): leading space in the unit arg — fmtNum fuses
+                    compact suffix + unit ("1,53JtGR" reads as milligram). */}
+                {fmtNum(r.trialQty, r.satuan ? ` ${r.satuan}` : '')}
+              </TableCell>
               <TableCell
                 className={`text-right text-xs tabular-nums ${r.trialToBom != null && r.trialToBom >= 0.1 ? 'font-semibold text-red-600 dark:text-red-400' : ''}`}
                 title={r.trialToBom != null
@@ -334,10 +338,13 @@ export const WasteParetoCard = memo(function WasteParetoCard({
   const wasteTotal = data?.populationTotal ?? 0;
   const susutTotal = data?.susutPopulationTotal ?? 0;
   const trialTotal = data?.trialPopulationTotal ?? 0;
+  // FIX (UIUX-C S1): fmtDecimal (house Indonesian comma) — raw toFixed
+  // rendered the only dot-decimal in the card ("1.8× waste" next to
+  // "Rp 16,37M").
   const parityText = wasteTotal > 0 && metric !== 'waste'
-    ? (metric === 'susut' ? `${(susutTotal / wasteTotal).toFixed(1)}× waste` : `${(trialTotal / wasteTotal).toFixed(2)}× waste`)
+    ? (metric === 'susut' ? `${fmtDecimal(susutTotal / wasteTotal, 1)}× waste` : `${fmtDecimal(trialTotal / wasteTotal, 2)}× waste`)
     : wasteTotal > 0 && metric === 'waste' && susutTotal > 0
-      ? `susut ${(susutTotal / wasteTotal).toFixed(1)}× waste`
+      ? `susut ${fmtDecimal(susutTotal / wasteTotal, 1)}× waste`
       : null;
 
   const trialScreen = data?.trialScreen ?? [];
@@ -458,7 +465,8 @@ export const WasteParetoCard = memo(function WasteParetoCard({
                           )}
                         </TableCell>
                         <TableCell className={`text-right text-xs tabular-nums ${metricConf.nominalClass}`}>{fmtIDR(f.nominal)}</TableCell>
-                        <TableCell className="text-right text-xs tabular-nums text-muted-foreground">{fmtNum(f.qty, it.satuan || '')}</TableCell>
+                        {/* FIX (UIUX-C S2): idem — "418,08M GR", bukan "418,08MGR". */}
+                        <TableCell className="text-right text-xs tabular-nums text-muted-foreground">{fmtNum(f.qty, it.satuan ? ` ${it.satuan}` : '')}</TableCell>
                         <TableCell className="text-right text-xs tabular-nums">{fmtPct(f.share, false, 1)}</TableCell>
                         <TableCell className={`text-right text-xs tabular-nums ${f.cumulative >= 0.8 ? 'font-semibold text-red-600 dark:text-red-400' : ''}`}>
                           {fmtPct(f.cumulative, false, 1)}

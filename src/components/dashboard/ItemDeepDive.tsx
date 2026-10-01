@@ -13,7 +13,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { useDrilldown } from '@/hooks/useAnalysis';
-import { fmtIDR, fmtNum, fmtPctAbs, directionColor } from '@/lib/format';
+import { fmtIDR, fmtNum, fmtPctAbs, fmtDecimal, directionColor } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import type { AnalysisData, DrilldownRecord, TopItemByNominal } from '@/hooks/useAnalysis';
 import { X, Package, TrendingDown, TrendingUp } from 'lucide-react';
@@ -255,7 +255,9 @@ export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: Analysi
                               ? (
                                 <div className="rounded-md border bg-background p-2 shadow-md text-xs">
                                   <p className="font-medium">{payload[0].payload?.name ?? ''}</p>
-                                  <p className="text-muted-foreground">{Number(payload[0].payload?.value ?? 0).toLocaleString()} outlet</p>
+                                  {/* FIX (UIUX-D D4): locale id-ID eksplisit — pemisah ribuan
+                                      konsisten antar-browser ("1.234"), bukan default en-US. */}
+                                  <p className="text-muted-foreground">{Number(payload[0].payload?.value ?? 0).toLocaleString('id-ID')} outlet</p>
                                 </div>
                               )
                               : null
@@ -346,12 +348,15 @@ export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: Analysi
                         <CartesianGrid strokeDasharray="3 3" className="stroke-muted/30" />
                         <XAxis dataKey="weekLabel" tick={{ fontSize: 9 }} interval={0} angle={-45} textAnchor="end" height={30} />
                         <YAxis tick={{ fontSize: 9 }} tickFormatter={(v) => `${v.toFixed(0)}%`} />
+                        {/* FIX (UIUX-D D4): desimal titik → koma via fmtDecimal —
+                            paritas format dengan 8 tab non-Waste lain; devBom
+                            (dan histAvgDevBom) sudah skala persen. */}
                         <Tooltip
                           contentStyle={{ fontSize: '11px', padding: '4px 8px' }}
-                          formatter={(value: number) => [`${value.toFixed(1)}%`, 'Dev/BOM']}
+                          formatter={(value: number) => [`${fmtDecimal(value, 1)}%`, 'Dev/BOM']}
                           labelFormatter={(label) => `Periode: ${label}`}
                         />
-                        <ReferenceLine y={histAvgDevBom} stroke="var(--chart-surplus, #10b981)" strokeDasharray="5 5" label={{ value: `Avg: ${histAvgDevBom.toFixed(1)}%`, fontSize: 9, fill: 'var(--chart-surplus, #10b981)' }} />
+                        <ReferenceLine y={histAvgDevBom} stroke="var(--chart-surplus, #10b981)" strokeDasharray="5 5" label={{ value: `Avg: ${fmtDecimal(histAvgDevBom, 1)}%`, fontSize: 9, fill: 'var(--chart-surplus, #10b981)' }} />
                         {/* PERF (AUDIT-FE): isAnimationActive={false} — ~1.5s entrance
                             animation replays on every dialog open (Dialog unmounts on close)
                             and on every period-change refetch; the double-fetch fix removed
@@ -365,7 +370,7 @@ export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: Analysi
                       <div key={i} className="flex items-center justify-between text-[11px] rounded-md border px-3 py-1.5">
                         <span className="text-muted-foreground">{t.weekLabel}</span>
                         <div className="flex items-center gap-3">
-                          <span className="text-muted-foreground tabular-nums">{t.devBom.toFixed(1)}%</span>
+                          <span className="text-muted-foreground tabular-nums">{fmtDecimal(t.devBom, 1)}%</span>
                           <span className="font-semibold">{fmtIDR(t.nominal)}</span>
                         </div>
                       </div>

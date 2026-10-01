@@ -331,7 +331,13 @@ export default function DashboardPage() {
                     under the header's z-40 — layered sticky, no sticky-ception
                     beyond these two. bg-background/85 + backdrop-blur keeps
                     scrolled content readable behind the strip. */}
-                <TabsList className="w-full justify-start h-auto bg-background/85 backdrop-blur p-1 gap-1 rounded-xl border border-border/60 shadow-sm shadow-black/5 dark:shadow-black/20 sticky top-[var(--dashboard-header-h,104px)] z-30">
+                {/* FIX (UIUX-A T1): overflow-x-auto + flex-nowrap — strip 8 tab
+                    discroll sendiri di viewport sempit, bukan halaman yang
+                    bergeser horizontal (di 375px dulu doc scrollWidth 678 vs
+                    viewport 375 — 4 tab off-screen). Scrollbar tipis otomatis
+                    dari globals.css (rule *::-webkit-scrollbar global). Sticky
+                    dock di bawah header tetap utuh. */}
+                <TabsList className="w-full justify-start overflow-x-auto flex-nowrap h-auto bg-background/85 backdrop-blur p-1 gap-1 rounded-xl border border-border/60 shadow-sm shadow-black/5 dark:shadow-black/20 sticky top-[var(--dashboard-header-h,104px)] z-30">
                     <TabsTrigger value="area" className={tabTriggerClass}>
                       <MapPin className="h-3.5 w-3.5" /> Area
                     </TabsTrigger>

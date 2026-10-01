@@ -69,7 +69,8 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-[600px]">
+      {/* FIX (UIUX-B S8): max-h + scroll internal (pola DataManagementDialog) */}
+      <DialogContent className="max-w-[600px] max-h-[85vh] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Upload className="h-5 w-5" />
@@ -80,7 +81,9 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
+        {/* FIX (UIUX-B S8): body wrapper — all phases (upload/confirm/result)
+            scroll here; DialogFooter stays OUTSIDE so buttons stay visible. */}
+        <div className="space-y-4 flex-1 overflow-y-auto min-h-0">
           {/* File Drop Zone — hidden once confirmation or result is shown */}
           {!result && !showConfirm && (
             <FileDropZone

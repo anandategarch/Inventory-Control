@@ -25,8 +25,12 @@ export interface FilterActionsProps {
 }
 
 export function FilterActions({ ingesting, onIngest, onOpenSettings, onOpenDataMgmt, onOpenPicMgmt }: FilterActionsProps) {
+  // FIX (UIUX-A T2): shrink-0 → min-w-0 — cluster kini boleh menyusut agar
+  // flex-wrap membungkus tombol ke baris kedua di viewport sempit (dulu
+  // lebar alami ±480px terkunci oleh shrink-0 → scroll horizontal permanen
+  // di 375px bahkan saat loading).
   return (
-    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+    <div className="flex flex-wrap items-center gap-1.5 min-w-0">
       {/* Secondary icon-only buttons with tooltips */}
       <Tooltip>
         <TooltipTrigger asChild>

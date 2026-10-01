@@ -369,10 +369,12 @@ export const WasteRateLeagueCard = memo(function WasteRateLeagueCard({
                             {r.robustZ != null ? fmtDecimal(r.robustZ, 2) : '—'}
                           </TableCell>
                           <TableCell className="text-right text-xs tabular-nums text-amber-600 dark:text-amber-400">
-                            {fmtNum(r.wasteQty, selected.satuan || '')}
+                            {/* FIX (UIUX-C S2): leading space in the unit arg — fmtNum fuses
+                                compact suffix + unit ("1,53JtGR" reads as milligram). */}
+                            {fmtNum(r.wasteQty, selected.satuan ? ` ${selected.satuan}` : '')}
                           </TableCell>
                           <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
-                            {fmtNum(r.bomQty, selected.satuan || '')}
+                            {fmtNum(r.bomQty, selected.satuan ? ` ${selected.satuan}` : '')}
                           </TableCell>
                         </TableRow>
                       ))}

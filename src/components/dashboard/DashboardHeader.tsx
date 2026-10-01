@@ -223,10 +223,13 @@ export function DashboardHeader({
             <TooltipContent side="bottom" align="end" className="max-w-xs p-3">
               <p className="text-xs font-semibold mb-1.5">Keyboard Shortcuts</p>
               <ul className="space-y-1 text-[11px]">
-                <li className="flex items-center justify-between gap-3"><span>Export Word</span><kbd className="font-mono">⌘/Ctrl + E</kbd></li>
+                <li className="flex items-center justify-between gap-3"><span>Export PDF</span><kbd className="font-mono">⌘/Ctrl + E</kbd></li>
                 <li className="flex items-center justify-between gap-3"><span>Refresh data</span><kbd className="font-mono">⌘/Ctrl + R</kbd></li>
-                {/* VH-2: 7 deep-analysis tabs — remapped from the old 1-5
-                    (spec §6.8: keyboard 1-7 + tooltip updated to match). */}
+                {/* VH-2: 8 deep-analysis tabs — remapped from the old 1-5
+                    (spec §6.8: keyboard 1-8 + tooltip updated to match).
+                    FIX (UIUX-A T5): entry Tab Waste/8 ditambahkan — shortcut-nya
+                    sudah ada & berfungsi sejak BUGHUNT-R2 (tabMap '8': 'waste'),
+                    tapi help ini belum mendokumentasikannya. */}
                 <li className="flex items-center justify-between gap-3"><span>Tab Area</span><kbd className="font-mono">1</kbd></li>
                 <li className="flex items-center justify-between gap-3"><span>Tab Resto</span><kbd className="font-mono">2</kbd></li>
                 <li className="flex items-center justify-between gap-3"><span>Tab Item</span><kbd className="font-mono">3</kbd></li>
@@ -234,6 +237,7 @@ export function DashboardHeader({
                 <li className="flex items-center justify-between gap-3"><span>Tab Pareto</span><kbd className="font-mono">5</kbd></li>
                 <li className="flex items-center justify-between gap-3"><span>Tab Historical</span><kbd className="font-mono">6</kbd></li>
                 <li className="flex items-center justify-between gap-3"><span>Tab Heatmap</span><kbd className="font-mono">7</kbd></li>
+                <li className="flex items-center justify-between gap-3"><span>Tab Waste</span><kbd className="font-mono">8</kbd></li>
                 <li className="flex items-center justify-between gap-3"><span>Tutup dialog</span><kbd className="font-mono">Esc</kbd></li>
               </ul>
             </TooltipContent>

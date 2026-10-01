@@ -30,6 +30,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { CalendarClock } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
+import { LoadingChart } from '@/components/dashboard/shared';
 import { WasteKpiStrip } from './kpi-strip';
 import { WasteProfileTable } from './profile-table';
 import { WastePersistenceCard } from './persistence-card';
@@ -98,13 +99,10 @@ export const WasteTab = memo(function WasteTab() {
   }
 
   if (isLoading) {
-    return (
-      <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
-        <CardContent className="py-10 text-center text-sm text-muted-foreground">
-          Memuat analisis waste multi-bulan…
-        </CardContent>
-      </Card>
-    );
+    // FIX (UIUX-C S3): house loading convention (HeatmapTab/RestoTab) —
+    // LoadingChart Skeleton min-h-[520px] reserves the 9-card layout
+    // instead of a small text card (anti-layout-shift).
+    return <LoadingChart />;
   }
 
   if (error) {

@@ -116,7 +116,8 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleCloseDialog(); else onOpenChange(v); }}>
-      <DialogContent className="max-w-[600px]">
+      {/* FIX (UIUX-B S8): max-h + scroll internal (pola DataManagementDialog) */}
+      <DialogContent className="max-w-[600px] max-h-[85vh] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <CloudDownload className="h-5 w-5" />
@@ -127,102 +128,108 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="file">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="file" className="text-xs gap-1.5"><FileSpreadsheet className="h-3.5 w-3.5" /> File</TabsTrigger>
-            <TabsTrigger value="folder" className="text-xs gap-1.5"><Folder className="h-3.5 w-3.5" /> Folder</TabsTrigger>
-            <TabsTrigger value="sheets" className="text-xs gap-1.5"><FileSpreadsheet className="h-3.5 w-3.5" /> Sheets</TabsTrigger>
-          </TabsList>
-          <TabsContent value="file" className="space-y-3 mt-3">
-            <div className="space-y-2">
-              <Label className="text-xs">URL Google Drive File</Label>
-              <Input
-                value={driveUrl}
-                onChange={(e) => setDriveUrl(e.target.value)}
-                placeholder="https://drive.google.com/file/d/.../view"
-                className="h-9 text-xs"
-              />
-            </div>
-          </TabsContent>
-          <TabsContent value="folder" className="space-y-3 mt-3">
-            <div className="space-y-2">
-              <Label className="text-xs">URL Google Drive Folder</Label>
-              <Input
-                value={driveUrl}
-                onChange={(e) => setDriveUrl(e.target.value)}
-                placeholder="https://drive.google.com/drive/folders/..."
-                className="h-9 text-xs"
-              />
-            </div>
-          </TabsContent>
-          <TabsContent value="sheets" className="space-y-3 mt-3">
-            <div className="space-y-2">
-              <Label className="text-xs">URL Google Sheets</Label>
-              <Input
-                value={driveUrl}
-                onChange={(e) => setDriveUrl(e.target.value)}
-                placeholder="https://docs.google.com/spreadsheets/d/.../edit"
-                className="h-9 text-xs"
-              />
-            </div>
-          </TabsContent>
-        </Tabs>
+        {/* FIX (UIUX-B S8): body wrapper — the input phase (tabs/rename/locale)
+            scrolls here; the Batal/Import row stays OUTSIDE so buttons stay
+            visible. The result block (below the buttons) already has its own
+            internal max-h-48 scroll. */}
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-4">
+          <Tabs defaultValue="file">
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="file" className="text-xs gap-1.5"><FileSpreadsheet className="h-3.5 w-3.5" /> File</TabsTrigger>
+              <TabsTrigger value="folder" className="text-xs gap-1.5"><Folder className="h-3.5 w-3.5" /> Folder</TabsTrigger>
+              <TabsTrigger value="sheets" className="text-xs gap-1.5"><FileSpreadsheet className="h-3.5 w-3.5" /> Sheets</TabsTrigger>
+            </TabsList>
+            <TabsContent value="file" className="space-y-3 mt-3">
+              <div className="space-y-2">
+                <Label className="text-xs">URL Google Drive File</Label>
+                <Input
+                  value={driveUrl}
+                  onChange={(e) => setDriveUrl(e.target.value)}
+                  placeholder="https://drive.google.com/file/d/.../view"
+                  className="h-9 text-xs"
+                />
+              </div>
+            </TabsContent>
+            <TabsContent value="folder" className="space-y-3 mt-3">
+              <div className="space-y-2">
+                <Label className="text-xs">URL Google Drive Folder</Label>
+                <Input
+                  value={driveUrl}
+                  onChange={(e) => setDriveUrl(e.target.value)}
+                  placeholder="https://drive.google.com/drive/folders/..."
+                  className="h-9 text-xs"
+                />
+              </div>
+            </TabsContent>
+            <TabsContent value="sheets" className="space-y-3 mt-3">
+              <div className="space-y-2">
+                <Label className="text-xs">URL Google Sheets</Label>
+                <Input
+                  value={driveUrl}
+                  onChange={(e) => setDriveUrl(e.target.value)}
+                  placeholder="https://docs.google.com/spreadsheets/d/.../edit"
+                  className="h-9 text-xs"
+                />
+              </div>
+            </TabsContent>
+          </Tabs>
 
-        {/* Rename mode */}
-        <div className="space-y-2">
-          <Label className="text-xs">Mode Rename</Label>
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-              <input
-                type="radio"
-                checked={driveRenameMode === 'auto'}
-                onChange={() => setDriveRenameMode('auto')}
-                className="h-3.5 w-3.5"
+          {/* Rename mode */}
+          <div className="space-y-2">
+            <Label className="text-xs">Mode Rename</Label>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                <input
+                  type="radio"
+                  checked={driveRenameMode === 'auto'}
+                  onChange={() => setDriveRenameMode('auto')}
+                  className="h-3.5 w-3.5"
+                />
+                Auto (dari nama file)
+              </label>
+              <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                <input
+                  type="radio"
+                  checked={driveRenameMode === 'manual'}
+                  onChange={() => setDriveRenameMode('manual')}
+                  className="h-3.5 w-3.5"
+                />
+                Manual
+              </label>
+            </div>
+            {driveRenameMode === 'manual' && (
+              <Input
+                value={driveManualName}
+                onChange={(e) => setDriveManualName(e.target.value)}
+                placeholder="contoh: 17.MEI 2026.xlsx"
+                className="h-9 text-xs"
               />
-              Auto (dari nama file)
-            </label>
-            <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-              <input
-                type="radio"
-                checked={driveRenameMode === 'manual'}
-                onChange={() => setDriveRenameMode('manual')}
-                className="h-3.5 w-3.5"
-              />
-              Manual
-            </label>
+            )}
           </div>
-          {driveRenameMode === 'manual' && (
-            <Input
-              value={driveManualName}
-              onChange={(e) => setDriveManualName(e.target.value)}
-              placeholder="contoh: 17.MEI 2026.xlsx"
-              className="h-9 text-xs"
-            />
-          )}
-        </div>
 
-        {/* Number locale */}
-        <div className="space-y-2">
-          <Label className="text-xs">Format Angka</Label>
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-              <input
-                type="radio"
-                checked={driveNumberLocale === 'us'}
-                onChange={() => setDriveNumberLocale('us')}
-                className="h-3.5 w-3.5"
-              />
-              US (1,234.56)
-            </label>
-            <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-              <input
-                type="radio"
-                checked={driveNumberLocale === 'id'}
-                onChange={() => setDriveNumberLocale('id')}
-                className="h-3.5 w-3.5"
-              />
-              ID (1.234,56)
-            </label>
+          {/* Number locale */}
+          <div className="space-y-2">
+            <Label className="text-xs">Format Angka</Label>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                <input
+                  type="radio"
+                  checked={driveNumberLocale === 'us'}
+                  onChange={() => setDriveNumberLocale('us')}
+                  className="h-3.5 w-3.5"
+                />
+                US (1,234.56)
+              </label>
+              <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                <input
+                  type="radio"
+                  checked={driveNumberLocale === 'id'}
+                  onChange={() => setDriveNumberLocale('id')}
+                  className="h-3.5 w-3.5"
+                />
+                ID (1.234,56)
+              </label>
+            </div>
           </div>
         </div>
 

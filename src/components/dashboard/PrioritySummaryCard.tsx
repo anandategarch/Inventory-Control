@@ -2,7 +2,7 @@
 
 // ============================================================
 //  PrioritySummaryCard — shows WHY this outlet is priority
-//  Displays: Priority Score + Level + 8 signal badges + analysis
+//  Displays: Priority Score + Level + 9 signal badges + analysis
 //  bullets.
 //
 //  UX-DRILLDOWN-1 (user request 2025-12): per-signal drill-down
@@ -111,7 +111,7 @@ export const PrioritySummaryCard = memo(function PrioritySummaryCard({
           </div>
         </div>
 
-        {/* Signal Badges — 8 key signals */}
+        {/* Signal Badges — 9 key signals (FIX UIUX-D S2: 10 → 9, twin removed) */}
         <div className="flex flex-wrap gap-1.5">
           <Badge variant="outline" className={`text-xs ${r.metrics.direction === 'LOSS' ? 'text-red-600 border-red-200 dark:text-red-400 dark:border-red-900' : 'text-emerald-600 border-emerald-200 dark:text-emerald-400 dark:border-emerald-900'}`}>
             {r.metrics.direction}
@@ -151,11 +151,11 @@ export const PrioritySummaryCard = memo(function PrioritySummaryCard({
               Tanpa Tol: {r.signals.noToleranceItems}
             </Badge>
           )}
-          {r.signals.benchmarkHighCount > 0 && (
-            <Badge variant="outline" className="text-xs text-amber-600 border-amber-200 dark:text-amber-400 dark:border-amber-900">
-              Bench Tinggi: {r.signals.benchmarkHighCount}
-            </Badge>
-          )}
+          {/* FIX (UIUX-D S2): badge kembar dihapus — satu SQL satu sinyal (paritas
+              naratif). benchmarkHighCount ≡ highDevBomCount (predikat identik,
+              outlet-agg-scan.ts:156/:161) — dua badge amber+merah untuk satu angka
+              menyesatkan; hanya "Deviasi >50% BOM" (dipakai bobot prioritas) yang
+              tetap dirender. Field tetap di payload demi legacy shape. */}
           {r.signals.highDevBomCount > 0 && (
             <Badge variant="outline" className="text-xs text-red-600 border-red-200 dark:text-red-400 dark:border-red-900">
               {/* H-13: honest label — this count is a fixed |Dev/BOM| > 50% threshold,

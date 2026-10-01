@@ -180,10 +180,19 @@ export function DrillDownDrawer() {
                 </Button>
               </div>
 
+              {/* FIX (UIUX-B S4): empty state paritas SourceDataModal — tanpa ini,
+                  filter 0-record hanya menampilkan badge "0 record" + tabel kosong
+                  (header saja). */}
+              {allRecords.length === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-6">
+                  Tidak ada data sumber untuk filter ini.
+                </p>
+              )}
+
               {/* FIX M2 (AUDIT-6): Use raw <table> instead of shadcn <Table> wrapper.
                   The wrapper's overflow-x-auto div breaks position:sticky on thead.
                   FIX M8 (AUDIT-6): Enable measureElement for dynamic row heights. */}
-              <VirtualizedDrawerTable records={allRecords} />
+              {allRecords.length > 0 && <VirtualizedDrawerTable records={allRecords} />}
 
               {/* FIX M1 (AUDIT-6): Load More button — consumes cursor pagination. */}
               {nextCursor && (

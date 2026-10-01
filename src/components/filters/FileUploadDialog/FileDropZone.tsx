@@ -19,9 +19,27 @@ interface FileDropZoneProps {
 
 export function FileDropZone({ file, isBusy, fileInputRef, onFileSelect, onDrop, onClearFile }: FileDropZoneProps) {
   return (
+    // FIX (UIUX-B T1): drop zone keyboard-accessible (role/tabIndex/Enter-Space)
+    // FIX (UIUX-B R5b bonus): isBusy now reflected as cursor-not-allowed +
+    // opacity-60 (clicks were already blocked by the !isBusy guard below —
+    // the always-on cursor-pointer was misleading during upload).
     <div
-      className="border-2 border-dashed border-muted-foreground/30 rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
+      role="button"
+      tabIndex={0}
+      aria-label="Pilih file Excel/CSV"
+      className={`border-2 border-dashed border-muted-foreground/30 rounded-lg p-8 text-center hover:border-primary/50 transition-colors ${
+        isBusy ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+      }`}
       onClick={() => !isBusy && fileInputRef.current?.click()}
+      onKeyDown={(e) => {
+        // Only when the drop zone itself has focus — Enter/Space on the nested
+        // "Ganti file" button must keep activating that button, not the picker.
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          if (!isBusy) fileInputRef.current?.click();
+        }
+      }}
       onDrop={onDrop}
       onDragOver={(e) => e.preventDefault()}
     >

@@ -65,7 +65,7 @@ export const LossDecompositionCard = memo(function LossDecompositionCard({
   // interaction as showAll above.
   const [showAttribution, setShowAttribution] = useState(false);
 
-  const { chartData, totalExplained, totalResidual, totalOutlets } = useMemo(() => {
+  const { chartData, totalOutlets } = useMemo(() => {
     const byOutlet = new Map<string, { waste: number; susut: number; trial: number; residual: number; totalLoss: number }>();
     for (const r of monthly) {
       const agg = byOutlet.get(r.outletCode) ?? { waste: 0, susut: 0, trial: 0, residual: 0, totalLoss: 0 };
@@ -80,13 +80,16 @@ export const LossDecompositionCard = memo(function LossDecompositionCard({
       .map(([code, v]) => ({ name: code, ...v }))
       .sort((a, b) => b.totalLoss - a.totalLoss);
     const sliced = showAll ? sorted : sorted.slice(0, INITIAL_OUTLETS);
-    const te = sorted.reduce((a, o) => a + o.waste + o.susut + o.trial, 0);
-    const tr = sorted.reduce((a, o) => a + o.residual, 0);
     // FIX (BUGHUNT-R2): expose sorted.length — the expand button below must
     // show the TOTAL outlet count, not the sliced list's (was "Tampilkan
     // semua outlet (10)" with 343 outlets), and must hide when there is
     // nothing to expand (sibling cards gate on fullLength > INITIAL_ROWS).
-    return { chartData: sliced, totalExplained: te, totalResidual: tr, totalOutlets: sorted.length };
+    // FIX (UIUX-C T1): the totalExplained/totalResidual window aggregates are
+    // REMOVED — the subtitle below now reads attribution.explainedShare
+    // (denominator totalLoss, the SAME value as the W10 meter); the old
+    // W+S+T÷(W+S+T+residual) share was a second "loss terjelaskan" number
+    // in this card (33,0% vs 49,3% live — "two truths").
+    return { chartData: sliced, totalOutlets: sorted.length };
   }, [monthly, showAll]);
 
   // ------------------------------------------------------------
@@ -123,10 +126,6 @@ export const LossDecompositionCard = memo(function LossDecompositionCard({
     );
   }, [monthly]);
 
-  const explainedShare = totalExplained + totalResidual > 0
-    ? totalExplained / (totalExplained + totalResidual)
-    : 0;
-
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
@@ -139,7 +138,8 @@ export const LossDecompositionCard = memo(function LossDecompositionCard({
         <p className="text-xs text-muted-foreground ml-9">
           Loss yang terjelaskan peluruhan (waste + susut + trial) vs residual (tak terjelaskan) per outlet —
           {showAll ? ` semua ${chartData.length} outlet` : ` ${Math.min(INITIAL_OUTLETS, chartData.length)} outlet dengan loss terbesar`}.
-          Window: {fmtPctId(explainedShare)} loss terjelaskan.
+          {/* FIX (UIUX-C T1): subtitle pakai explainedShare (denominator totalLoss) — konsisten meter W10. */}
+          Window: {fmtPctId(attribution.explainedShare)} loss terjelaskan.
         </p>
       </CardHeader>
       <CardContent>
