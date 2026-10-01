@@ -14,6 +14,12 @@
 //  (tanpa round-trip SQL tambahan): field optional per-outlet +
 //  block `persistence` network-level pada hasil. ADDITIF — tidak
 //  ada field lama yang diubah/dihapus.
+//
+//  W10 (Atribusi + Skenario Sensitivitas Residual): pass murni
+//  ketiga ./attribution.ts atas kpis + outlets DASAR yang sudah
+//  dihitung pipeline ini (tanpa round-trip SQL tambahan) → block
+//  `attribution` network-level. ADDITIF — tidak ada field lama
+//  yang diubah/dihapus.
 // ============================================================
 import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../../shared';
 import {
@@ -22,6 +28,7 @@ import {
   WASTE_SPIKE_SIGMA,
   WASTE_WINDOW_MONTHS,
 } from '../shared';
+import { buildWasteAttribution } from './attribution';
 import { buildWasteKpis, buildWasteMonthlyRows, buildWasteOutlets } from './builders';
 import { buildWastePersistence } from './persistence';
 import type { WasteMonthMeta, WasteMonthlyRawRow, WasteNetworkResult } from './types';
@@ -168,6 +175,14 @@ export async function queryWasteNetwork(
   const outlets = buildWasteOutlets(monthly, highLossNominal);
   const kpis = buildWasteKpis(monthly, outlets);
 
+  // W10 (Atribusi + Skenario Sensitivitas Residual) — pure third pass
+  // over the ALREADY-COMPUTED kpis + BASE outlet rows (no extra SQL
+  // round-trip; the persistence merge below only adds optional fields,
+  // so passing either row set yields identical attribution numbers):
+  // measured loss-side composition + HIPOTESIS scenario grid + the
+  // decile-shift index + the mandatory structural disclosure.
+  const attribution = buildWasteAttribution(kpis, outlets);
+
   // W2 (Kronis vs Episodik) — pure second pass over the SAME monthly
   // rows: per-outlet persistence metrics (merged ADDITIVELY onto the
   // profile rows; buildWasteOutlets stays untouched — it cannot compute
@@ -205,5 +220,7 @@ export async function queryWasteNetwork(
     outlets: outletsWithPersistence,
     kpis,
     persistence: { summary: persistence.summary, medians: persistence.medians },
+    // W10 — additive network-level attribution block (see ./attribution.ts).
+    attribution,
   };
 }

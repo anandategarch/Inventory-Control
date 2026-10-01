@@ -24,7 +24,7 @@ export function assembleReport(
 ): FetchedReport {
   const {
     month, prevWeek, prevMonth, historicalPeriods, varianceAnalysis,
-    topNominal, topDevBom, itemTrendMatrixRes, selfAnomalyRes, flipRankingRes, consistencyRows,
+    topNominal, topDevBom, itemTrendMatrixRes, selfAnomalyRes, flipRankingRes, consistencyRows, wasteRes,
   } = ctx;
   const { week, area, kelompok, outletCode, itemName, pic, sections, startedAt } = ctx.params;
   const { topWaste, topSusut, topTrial, topLossSurplus, execSummary, trend, weeklyComposition } = derived;
@@ -62,6 +62,11 @@ export function assembleReport(
     peerComparison,
     // REFINE-1 — section 'flip' (null when off).
     flipRanking: flipRankingRes,
+    // W10 — section 'waste' (null when off): the q-waste-network
+    // projection (months + kpis + attribution). The 5.3 top-waste
+    // snapshot rides topItemsByWaste above (q-topcat gate widened to
+    // needTopItems || needWaste).
+    wasteAttribution: wasteRes,
     durationMs: Date.now() - startedAt,
   };
 

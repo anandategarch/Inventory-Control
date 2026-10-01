@@ -1,6 +1,7 @@
 // ============================================================
-//  9 — ITEM YANG KEMUNGKINAN PLUS MINUS ANTAR PERIODE  (REFINE-1 — NEW;
-//       REFINE-3: was 8)
+//  10 — ITEM YANG KEMUNGKINAN PLUS MINUS ANTAR PERIODE  (REFINE-1 — NEW;
+//       REFINE-3: was 8; W10 renumber: was 9 — section 5 "Analisis
+//       Waste" inserted above)
 //  --------------------------------------------------------
 //  User: "Tambahkan juga item yang flip flop namun ganti istilah nya
 //  menjadi Item yang kemungkinan Plus Minus antar Periode".
@@ -35,7 +36,7 @@ import type { SectionEnv } from '../section-context';
 export function drawFlipSection(env: SectionEnv): void {
   const { rpt, data, hasSection } = env;
   if (!hasSection('flip')) return;
-  rpt.sectionHeader(9, 'Item yang Kemungkinan Plus Minus antar Periode');
+  rpt.sectionHeader(10, 'Item yang Kemungkinan Plus Minus antar Periode');
   const fr = data.flipRanking;
   // VAR11: rank by BALANCE, not risk volume. fr.items arrives sorted by
   // riskScore DESC (the query's/frontend's convention — left untouched);
@@ -80,7 +81,7 @@ export function drawFlipSection(env: SectionEnv): void {
     // BUG-HUNT #7 class ('≥' → '?'): U+2192 (→) is NOT WinAnsi-encodable
     // either — sanitizePdfText maps it to '?'. En dash U+2013 IS in the
     // WINANSI_EXTRA set; "Jul W1 – Agu W1" reads the same.
-    rpt.subhead(`9.${subNo} ${p1} \u2013 ${p2}`, { size: 8.5 });
+    rpt.subhead(`10.${subNo} ${p1} \u2013 ${p2}`, { size: 8.5 });
     rpt.table({
       cols: [
         { header: '#', align: 'center' },

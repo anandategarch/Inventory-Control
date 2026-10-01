@@ -1,16 +1,17 @@
 // ============================================================
-//  8 — RESTO DENGAN PENJUALAN KURANG LEBIH SAMA  (REFINE-1 — NEW;
-//       REFINE-3: was 7)
+//  9 — RESTO DENGAN PENJUALAN KURANG LEBIH SAMA  (REFINE-1 — NEW;
+//       REFINE-3: was 7; W10 renumber: was 8 — section 5 "Analisis
+//       Waste" inserted above)
 //  --------------------------------------------------------
 //  User: "Tambahkan section Peer to Peer tapi ganti istilah nya menjadi
 //  'Dengan Total Penjualan yang kurang lebih sama Resto lain menghasilkan
 //  nominal deviasi ini dan ada break down per item nya berapa secara
 //  kuantiti, % to bom'".
-//  8.1 = the similar-sales restos and the nominal deviations they produce
+//  9.1 = the similar-sales restos and the nominal deviations they produce
 //  (peer band = sales within ±10% of the target — same-period mode).
-//  8.2 = the per-item breakdown for the target's top items: kuantitas +
+//  9.2 = the per-item breakdown for the target's top items: kuantitas +
 //        % to BOM, vs the peer average.
-//  8.3 (PEERTOP, revised PEERTOP-R1 + PEERTOP-R2) = the cross-peer union
+//  9.3 (PEERTOP, revised PEERTOP-R1 + PEERTOP-R2) = the cross-peer union
 //        of top items — which items are a SHARED top item at many resto
 //        setara (bersama) vs only at the target (khusus), plus target
 //        blind spots (top at peers, absent at the target → rank cell
@@ -18,7 +19,7 @@
 //        PEERTOP-R2 (user): "Ganti istilah target jadi nama resto target
 //        itu sendiri" — every header that referenced the generic "target"
 //        now carries the outlet's own NAME ("Rangking KWGGAL", "Nominal
-//        KWGGAL", "QTY Deviasi (KWGGAL)", 8.2's "QTY Deviasi (KWGGAL)"
+//        KWGGAL", "QTY Deviasi (KWGGAL)", 9.2's "QTY Deviasi (KWGGAL)"
 //        / "% Deviasi To BOM (KWGGAL)" — user example: "QTY DEVIASI
 //        (SBMOTI) jadi ada nama resto nya langsung"); the subhead became
 //        the user's wording "Item di Resto lain (yang setara penjualan
@@ -27,9 +28,9 @@
 //        "TOP DI ini isi top 3 aja resto aja dan jika resto target
 //        termasuk masukan juga") — the target's name appears exactly
 //        when it ranks among the top 3.
-//  8.4 was REMOVED in PEERTOP-R1 (user: "Hapus 8.4 Top Item per Resto
-//        Setara (masing-masing sampai 5 item) di laporan PDF") — the FE
-//        Peer Table expand-row keeps the per-outlet view.
+//  8.4 (now 9.4) was REMOVED in PEERTOP-R1 (user: "Hapus 8.4 Top Item per
+//        Resto Setara (masing-masing sampai 5 item) di laporan PDF") — the
+//        FE Peer Table expand-row keeps the per-outlet view.
 //  SALES SECRECY: no sales nominal is ever printed here.
 // ============================================================
 import { fmtIDR, fmtNum, fmtPct } from '../../format-helpers';
@@ -40,7 +41,7 @@ import type { SectionEnv } from '../section-context';
 export function drawPeerSection(env: SectionEnv): void {
   const { rpt, data, hasSection } = env;
   if (!hasSection('peer')) return;
-  rpt.sectionHeader(8, 'Resto dengan Penjualan Kurang Lebih Sama');
+  rpt.sectionHeader(9, 'Resto dengan Penjualan Kurang Lebih Sama');
   const pc = data.peerComparison;
   if (!pc || pc.peers.length === 0) {
     rpt.noteBox('Data pembanding tidak tersedia untuk filter ini \u2014 pilih satu resto pada Filter Resto (tab Resto Analysis) lalu export ulang.');
@@ -49,18 +50,18 @@ export function drawPeerSection(env: SectionEnv): void {
   const targetLabel = `${pc.targetOutlet.name} (${pc.targetOutlet.code})`;
   // PEERTOP-R2 (user: "Ganti istilah target jadi nama resto target itu
   // sendiri ... Misal aku lagi filter kwggal berarti pakai nama kwggal
-  // aja daripada Resto"): every 8.x header/subhead that referenced the
+  // aja daripada Resto"): every 9.x header/subhead that referenced the
   // generic "target" carries the outlet's own NAME instead — short form
   // (no code) so the headers stay narrow.
   const tn = pc.targetOutlet.name;
-  // 8.1 — peers' nominal deviations, biggest first; the target row is
+  // 9.1 — peers' nominal deviations, biggest first; the target row is
   // bold (named in the subhead — factual, no legend needed).
   // PEERTOP-R2: the subhead uses the outlet's NAME only (no code — the
-  // 8.1 table rows carry "KWGGAL (1042.KWGGAL)" anyway) + a compact
+  // 9.1 table rows carry "KWGGAL (1042.KWGGAL)" anyway) + a compact
   // auto-target note, so it renders at full size (the old code-label +
   // note combo overflowed the page width — see SUBHEAD-FIT).
   const sortedPeers = [...pc.peers].sort((a, b) => Math.abs(b.nominalDeviasi) - Math.abs(a.nominalDeviasi));
-  rpt.subhead(`8.1 Nominal Deviasi per Resto (penjualan kurang lebih sama dengan ${tn}${pc.autoTarget ? ' \u2014 terpilih otomatis (deviasi terbesar)' : ''})`, { size: 8.5 });
+  rpt.subhead(`9.1 Nominal Deviasi per Resto (penjualan kurang lebih sama dengan ${tn}${pc.autoTarget ? ' \u2014 terpilih otomatis (deviasi terbesar)' : ''})`, { size: 8.5 });
   rpt.table({
     cols: [
       { header: '#', align: 'center' },
@@ -91,7 +92,7 @@ export function drawPeerSection(env: SectionEnv): void {
   // what "setara" means; the subhead spells it out in the user's own
   // words — omzet tidak jauh berbeda).
   if (pc.items.length > 0) {
-    rpt.subhead(`8.2 Breakdown per Item (kuantitas, % to BOM) \u2014 ${targetLabel} vs rata-rata resto dengan omzet tidak jauh berbeda`, { size: 8.5 });
+    rpt.subhead(`9.2 Breakdown per Item (kuantitas, % to BOM) \u2014 ${targetLabel} vs rata-rata resto dengan omzet tidak jauh berbeda`, { size: 8.5 });
     rpt.table({
       cols: [
         { header: 'Item' },
@@ -117,7 +118,7 @@ export function drawPeerSection(env: SectionEnv): void {
       // PDFCOLOR-1 (user: "terkait minus atau penurunan harusnya warna
       // merah"): the QTY Deviasi columns print SIGNED SUM(qtyDeviasi)
       // (target AND peer average — both sides can sit on the loss side).
-      // They were neutral ink while 8.3's identically-named "QTY Deviasi
+      // They were neutral ink while 9.3's identically-named "QTY Deviasi
       // (<tn>)" column was already minus-red (PEERTOP-R1: "langsung aja
       // jika nilai minus merah") — an intra-section contradiction.
       // The % Dev/BOM columns are ABS/ABS — negColor is a no-op there.
@@ -125,16 +126,17 @@ export function drawPeerSection(env: SectionEnv): void {
     });
   }
 
-  // 8.3 — PEERTOP (user: "tambahkan top item tiap resto setara ke section
+  // 9.3 — PEERTOP (user: "tambahkan top item tiap resto setara ke section
   // peer DAN PDF"), revised PEERTOP-R1 per user feedback, re-titled
   // PEERTOP-R2 (user: "8.3 Item di Resto lain (yang setara penjualan Resto
   // Target) jika dilihat dari TOP Item nya" — with "Resto Target" itself
-  // replaced by the outlet's name per the same feedback). The cross-peer
+  // replaced by the outlet's name per the same feedback; the subhead's
+  // number updated 8.3 → 9.3 by the W10 renumber). The cross-peer
   // union — items that are top at MANY resto setara (bersama) vs top only
   // at the target (khusus). Rows are server-sorted (peerTopCount desc →
   // target absNominal desc → …), so they render in arrival order; the
   // target is a COLUMN here, not a row (no rowBold). Same guard style as
-  // 8.2. Column notes (PEERTOP-R2):
+  // 9.2. Column notes (PEERTOP-R2):
   //   - "Top di": the TOP-3 resto NAMES by |nominal deviasi| of the item
   //     (target included when it ranks among them — user: "TOP DI ini isi
   //     top 3 aja resto aja dan jika resto target termasuk masukan
@@ -156,7 +158,7 @@ export function drawPeerSection(env: SectionEnv): void {
   //     the (QTY Deviasi) suffix never blows the column width.
   if (pc.topItems && pc.topItems.length > 0) {
     const topItems = pc.topItems;
-    rpt.subhead(`8.3 Item di Resto lain (yang setara penjualan ${tn}) jika dilihat dari TOP Item nya`, { size: 8.5 });
+    rpt.subhead(`9.3 Item di Resto lain (yang setara penjualan ${tn}) jika dilihat dari TOP Item nya`, { size: 8.5 });
     rpt.table({
       cols: [
         { header: '#', align: 'center' },

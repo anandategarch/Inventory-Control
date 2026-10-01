@@ -30,7 +30,12 @@ import {
 // antar Periode).
 // REFINE-3: + 'anomali' (section 6 — Item Anomali vs Riwayat Sendiri);
 // trend renumbered 6→7, peer 7→8, flip 8→9 (keys unchanged).
-const EXPORT_SECTION_KEYS = ['exec', 'growth', 'topItems', 'variance', 'itemTrend', 'anomali', 'trend', 'peer', 'flip'] as const;
+// W10 (Atribusi + Skenario Sensitivitas Residual): + 'waste' (section 5
+// — Analisis Waste: atribusi loss W/S/T vs residual + skenario p +
+// decile-shift + top-waste snapshot), inserted after the variance
+// context; REFINE-3 precedent renumber: itemTrend 5→6, anomali 6→7,
+// trend 7→8, peer 8→9, flip 9→10 (keys unchanged).
+const EXPORT_SECTION_KEYS = ['exec', 'growth', 'topItems', 'variance', 'waste', 'itemTrend', 'anomali', 'trend', 'peer', 'flip'] as const;
 export const exportReportQuerySchema = z.object({
   month: monthLabelSchema,
   week: weekLabelSchema,

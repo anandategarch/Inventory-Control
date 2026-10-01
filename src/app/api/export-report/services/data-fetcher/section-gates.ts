@@ -27,7 +27,11 @@ export function computeSectionGates(sections: ReportParams['sections']): Section
   // Minus antar Periode).
   // REFINE-3 (user request): + 'anomali' (section 6 — Item Anomali vs
   // Riwayat Sendiri; trend renumbered 6→7, peer 7→8, flip 8→9).
-  const ALL_EXPORT_SECTIONS = ['exec', 'growth', 'topItems', 'variance', 'itemTrend', 'anomali', 'trend', 'peer', 'flip'] as const;
+  // W10 (Atribusi + Skenario Sensitivitas Residual): + 'waste'
+  // (section 5 — Analisis Waste, inserted after the variance context;
+  // REFINE-3 precedent renumber: itemTrend 5→6, anomali 6→7, trend 7→8,
+  // peer 8→9, flip 9→10 — keys unchanged).
+  const ALL_EXPORT_SECTIONS = ['exec', 'growth', 'topItems', 'variance', 'waste', 'itemTrend', 'anomali', 'trend', 'peer', 'flip'] as const;
   const need = new Set<string>(sections ?? ALL_EXPORT_SECTIONS);
   // Section → data dependencies (verified against pdf-builder.ts, not
   // assumed; EXPORT-TRIM: only the 6 kept sections): exec renders
@@ -37,8 +41,11 @@ export function computeSectionGates(sections: ReportParams['sections']): Section
   // q-topcat + prev q-topcat + 4× q-hist-catavg + REFINE-1 q-area-catavg);
   // variance → q-variance; itemTrend → q-item-trend-matrix; trend → q-trend;
   // REFINE-1: peer → q-peer-cmp + q-peer-cmp-items (serial wave — the target
-  // must be resolved first); flip → q-flip-rank. The header/footer need
-  // metadata only (no SQL).
+  // must be resolved first); flip → q-flip-rank. W10: waste → q-waste-network
+  // (the queryWasteNetwork projection) + the q-topcat current-period row
+  // (gate widened to needTopItems || needWaste — the 5.3 snapshot reuses the
+  // topItems section's cached rows; one shared cache row when both are on).
+  // The header/footer need metadata only (no SQL).
   const needExec = need.has('exec');
   const needGrowth = need.has('growth');
   const needTopItems = need.has('topItems');
@@ -50,15 +57,18 @@ export function computeSectionGates(sections: ReportParams['sections']): Section
   // 'coverage' removed — their need* gates + fetches went with them (see
   // the section map above). 'flip' + 'peer' are BACK (REFINE-1).
   const needItemTrend = need.has('itemTrend');
-  // REFINE-3 — section 6 "Item Anomali vs Riwayat Sendiri".
+  // REFINE-3 — section 6 "Item Anomali vs Riwayat Sendiri" (renumbered 7
+  // by W10).
   const needAnomali = need.has('anomali');
+  // W10 — section 5 "Analisis Waste".
+  const needWaste = need.has('waste');
   // The kpis row feeds executiveSummary (exec + growth sections + the cover
   // KPI cards). Cheap: shared cached q-* row.
   const needKpis = needExec || needGrowth;
   const needPrevSummary = needExec || needGrowth;
   return {
     needExec, needGrowth, needTopItems, needVariance, needTrend, needPeer, needFlip,
-    needItemTrend, needAnomali, needKpis, needPrevSummary,
+    needItemTrend, needAnomali, needWaste, needKpis, needPrevSummary,
   };
 }
 
@@ -73,6 +83,8 @@ export interface SectionGates {
   needFlip: boolean;
   needItemTrend: boolean;
   needAnomali: boolean;
+  /** W10 — section 'waste' (Analisis Waste). */
+  needWaste: boolean;
   needKpis: boolean;
   needPrevSummary: boolean;
 }

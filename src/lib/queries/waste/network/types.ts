@@ -20,6 +20,12 @@
 //  WasteNetworkResult.persistence + 5 tipe baru (semuanya murni
 //  tambahan; tidak ada nama lama yang diubah/dihapus; lihat
 //  ./persistence.ts untuk kontrak + logika keputusan).
+//
+//  W10 (Atribusi + Skenario Sensitivitas Residual): ditambahkan
+//  ADDITIF — block WasteNetworkResult.attribution (selalu dihitung
+//  queryWasteNetwork, seperti persistence) + 6 tipe baru + 2 tipe
+//  input struktural (lihat ./attribution.ts untuk kontrak + logika
+//  keputusan + disclosure identitas residual).
 // ============================================================
 
 // ------------------------------------------------------------
@@ -157,6 +163,16 @@ export interface WasteNetworkResult {
    * it under the same key. Older consumers ignore it.
    */
   persistence: WastePersistenceBlock;
+  /**
+   * W10 (Atribusi + Skenario Sensitivitas Residual) — ADDITIVE
+   * network-level attribution block: measured loss-side composition
+   * (W/S/T shares + residualShare, TERUKUR), the p ∈ {0,30,50,70}%
+   * scenario table (HIPOTESIS) and the p=50% decile-shift index,
+   * plus the mandatory residual ≈ NET-loss-by-construction
+   * disclosure. Always present; older consumers ignore it.
+   * Source of truth: ./attribution.ts.
+   */
+  attribution: WasteAttributionResult;
 }
 
 // ------------------------------------------------------------
@@ -238,4 +254,108 @@ export interface WastePersistenceResult {
   outlets: WasteOutletPersistence[];
   medians: WasteMonthMedian[];
   summary: WastePersistenceSummary;
+}
+
+// ------------------------------------------------------------
+// 3. W10 — Atribusi + Skenario Sensitivitas Residual types
+//    (additive; server source of truth: ./attribution.ts)
+// ------------------------------------------------------------
+
+/**
+ * W10 structural KPI input — the subset of WasteKpis the attribution
+ * math reads. Declared as a PICK (not WasteKpis itself) so the
+ * decomposition card can feed window aggregates it builds itself
+ * from the monthly rows while the server feeds the real WasteKpis.
+ */
+export interface WasteAttributionKpisInput {
+  waste: number;
+  susut: number;
+  trial: number;
+  /** Loss-side residual (Σ|residualNominal| over loss records). */
+  residual: number;
+  totalLoss: number;
+  sales: number;
+}
+
+/**
+ * W10 structural outlet input — the per-outlet window aggregates the
+ * decile-shift index re-ranks. WasteOutletRow satisfies this
+ * structurally (outletCode/sales/waste/residual are base fields).
+ */
+export interface WasteAttributionOutletInput {
+  outletCode: string;
+  sales: number;
+  waste: number;
+  residual: number;
+}
+
+/** W10: one measured component of the loss-side composition. */
+export interface WasteAttributionComponent {
+  key: 'waste' | 'susut' | 'trial';
+  label: string;
+  /** Window Σ|nominal| of the component (measured). */
+  nominal: number;
+  /** nominal / totalLoss (0 when totalLoss = 0). */
+  shareOfLoss: number;
+  /** Measured aggregate (house epistemic convention from insights.ts). */
+  epistemicLabel: 'TERUKUR';
+}
+
+/** W10: one hypothesis row of the p-grid — never a measurement. */
+export interface WasteAttributionScenario {
+  /** Fraction of the loss-side residual assumed to be unrecorded waste. */
+  p: number;
+  /** W + p·residual (the assumed true waste). */
+  trueWaste: number;
+  /** trueWaste / sales (0 when sales = 0) — implied waste/sales. */
+  impliedWasteToSales: number;
+  /** trueWaste / totalLoss (0 when totalLoss = 0) — implied share of loss. */
+  impliedWasteShareOfLoss: number;
+  /** Outlets moving ≥ 1 decile of wasteToSales when waste is re-estimated at p. */
+  decileShifts: number;
+  /** Hypothesis, not measurement (house epistemic convention). */
+  epistemicLabel: 'HIPOTESIS';
+}
+
+/** W10: the headline decile-shift index (the p = 50% scenario row). */
+export interface WasteAttributionDecile {
+  p: number;
+  /** Ranking population = outlets with sales > 0 (ratio defined). */
+  outletsRanked: number;
+  /** Outlets excluded from the deciles (sales = 0 — ratio undefined). */
+  outletsExcluded: number;
+  /** Outlets whose decile changed at this p. */
+  outletsMoved: number;
+  /** outletsMoved / outletsRanked (0 when no ranked outlets). */
+  movedShare: number;
+  /** Derived from the scenario hypothesis — never a measurement. */
+  epistemicLabel: 'HIPOTESIS';
+}
+
+/** W10: the top-level `attribution` response block. */
+export interface WasteAttributionResult {
+  // ---- Measured composition (TERUKUR) ----
+  sales: number;
+  waste: number;
+  susut: number;
+  trial: number;
+  residual: number;
+  totalLoss: number;
+  /** W + S + T. */
+  explainedNominal: number;
+  /** (W+S+T) / totalLoss (0 when totalLoss = 0). */
+  explainedShare: number;
+  /** residual / totalLoss (0 when totalLoss = 0) — ≈ 1 BY CONSTRUCTION on loss rows. */
+  residualShare: number;
+  components: WasteAttributionComponent[];
+  // ---- Hypotheses (HIPOTESIS) ----
+  /** p ∈ {0, 0.3, 0.5, 0.7} — WASTE_ATTRIBUTION_SCENARIO_P order. */
+  scenarios: WasteAttributionScenario[];
+  decile: WasteAttributionDecile;
+  /**
+   * Mandatory structural disclosure (residual ≈ NET loss by
+   * construction; W/S/T explain GROSS, not NET) — every surface that
+   * renders this block must render this string too.
+   */
+  disclosure: string;
 }

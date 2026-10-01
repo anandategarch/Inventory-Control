@@ -39,6 +39,8 @@ import type { queryWeeklyComposition } from '@/lib/queries/weekly-composition';
 import type { queryFlipRanking } from '@/lib/queries/items/flip-ranking';
 // VAR12 — section 6.3 "Analisis Pola Item" (queryItemConsistency's rows).
 import type { queryItemConsistency } from '@/lib/queries';
+// W10 — section 5 "Analisis Waste": the projected queryWasteNetwork row.
+import type { WasteSectionData } from '../types';
 import type { ReportParams } from '../types';
 import type { SectionGates } from './section-gates';
 
@@ -136,6 +138,9 @@ export interface FetcherContext extends SetupFields {
   // VAR12 — section 6.3 "Analisis Pola Item" ([] when the anomali
   // section is off).
   consistencyRows: Awaited<ReturnType<typeof queryItemConsistency>>;
+  // W10 — section 5 "Analisis Waste": the q-waste-network projection
+  // (null when the waste section is off).
+  wasteRes: WasteSectionData | null;
   areaCatAvgMap: Map<string, AreaCategoryAvg>;
 }
 
@@ -172,6 +177,9 @@ export function createFetcherContext(
     weeklyCompRes: { rows: [] },
     flipRankingRes: null,
     consistencyRows: [],
+    // W10 — off-section placeholder (never rendered: hasSection gates
+    // rendering with the SAME sections list that gated the fetch).
+    wasteRes: null,
     areaCatAvgMap: new Map<string, AreaCategoryAvg>(),
   };
 }

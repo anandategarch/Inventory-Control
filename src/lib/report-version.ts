@@ -27,7 +27,7 @@
  * (both were the literal '15' before GODSPLIT-W2-A) — both sites must
  * keep producing the identical string.
  */
-export const REPORT_DESIGN_VERSION = '15';
+export const REPORT_DESIGN_VERSION = '16';
 
 // ============================================================
 //  rv changelog — full history (GODSPLIT-W2-A moved it here so the
@@ -86,3 +86,12 @@ export const REPORT_DESIGN_VERSION = '15';
 // terutama bagian anomali item"; queryItemConsistency langsung — no
 // new q-* namespace). (Penghapusan "Peluang Perbaikan (Rp)" +
 // "Action Plan" adalah perubahan dashboard — bukan bagian cache PDF.)
+// W10: rv 16 — NEW PDF section 5 "Analisis Waste" (atribusi loss W/S/T
+// vs residual + skenario p HIPOTESIS + decile-shift + snapshot top waste
+// dari q-topcat) + sat baris atribusi di ExecutiveStatus; tail renumbered
+// (itemTrend 5→6, anomali 6→7, trend 7→8, peer 8→9, flip 9→10 — keys
+// unchanged). Data + render change (new q-waste-network sv 1; q-topcat sv
+// stays 2 — row shape unchanged, only the fetch gate widened).
+// GODSPLIT-W2-A: bumping THIS ONE const forks both cache layers (the
+// client's ?rv= param + the server cache-key extra import the SAME const
+// — the old two-site "keep in sync" ritual IS this module).

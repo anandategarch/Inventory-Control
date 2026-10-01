@@ -234,11 +234,16 @@
 //     2 growth      — Perubahan vs <periode pembanding>          sections/growth.ts
 //     3 topItems    — Item Prioritas (6 sub-tables)              sections/top-items.ts
 //     4 variance    — Perubahan Item: Memburuk / Membaik         sections/variance.ts
-//     5 itemTrend   — Trend Item Multi-Periode (heat matrix)     sections/trend-matrix.ts
-//     6 anomali     — Item Anomali vs Riwayat Sendiri            sections/anomaly.ts
-//     7 trend       — Trend Antar Periode (table + 4 charts)     sections/trend.ts
-//     8 peer        — Resto dengan Penjualan Kurang Lebih Sama   sections/peer.ts
-//     9 flip        — Item yang Kemungkinan Plus Minus           sections/flip.ts
+//     5 waste       — Analisis Waste (W10: atribusi loss W/S/T   sections/waste.ts
+//                     vs residual + skenario p + decile + top-
+//                     waste snapshot; tail renumbered itemTrend
+//                     5→6, anomali 6→7, trend 7→8, peer 8→9,
+//                     flip 9→10 — keys unchanged)
+//     6 itemTrend   — Trend Item Multi-Periode (heat matrix)     sections/trend-matrix.ts
+//     7 anomali     — Item Anomali vs Riwayat Sendiri            sections/anomaly.ts
+//     8 trend       — Trend Antar Periode (table + 4 charts)     sections/trend.ts
+//     9 peer        — Resto dengan Penjualan Kurang Lebih Sama   sections/peer.ts
+//    10 flip        — Item yang Kemungkinan Plus Minus           sections/flip.ts
 //
 //  Content rule (user request, EXPAND-1): EVERY rendered line is a SQL
 //  aggregate, a factual label, or a formula definition — no generated
@@ -257,6 +262,9 @@ import { drawExecSection } from './sections/exec';
 import { drawGrowthSection } from './sections/growth';
 import { drawTopItemsSection } from './sections/top-items';
 import { drawVarianceSection } from './sections/variance';
+// W10 — section 5 "Analisis Waste" (inserted after the variance context;
+// the tail renumbered per the REFINE-3 precedent).
+import { drawWasteSection } from './sections/waste';
 import { drawTrendMatrixSection } from './sections/trend-matrix';
 import { drawAnomalySection } from './sections/anomaly';
 import { drawTrendSection } from './sections/trend';
@@ -339,9 +347,10 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   drawGrowthSection(env);       // 2 — Perubahan vs <pembanding dinamai>
   drawTopItemsSection(env);     // 3 — Item Prioritas (3.1-3.6)
   drawVarianceSection(env);     // 4 — Perubahan Item (Memburuk/Membaik)
-  drawTrendMatrixSection(env);  // 5 — Trend Item Multi-Periode (heat)
-  drawAnomalySection(env);      // 6 — Item Anomali vs Riwayat Sendiri
-  drawTrendSection(env);        // 7 — Trend Antar Periode
-  drawPeerSection(env);         // 8 — Resto dengan Penjualan Kurang Lebih Sama
-  drawFlipSection(env);         // 9 — Item yang Kemungkinan Plus Minus
+  drawWasteSection(env);        // 5 — Analisis Waste (W10: atribusi + skenario)
+  drawTrendMatrixSection(env);  // 6 — Trend Item Multi-Periode (heat)
+  drawAnomalySection(env);      // 7 — Item Anomali vs Riwayat Sendiri
+  drawTrendSection(env);        // 8 — Trend Antar Periode
+  drawPeerSection(env);         // 9 — Resto dengan Penjualan Kurang Lebih Sama
+  drawFlipSection(env);         // 10 — Item yang Kemungkinan Plus Minus
 }

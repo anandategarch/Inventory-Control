@@ -49,6 +49,11 @@ import type { WeeklyCompositionRow } from '@/lib/queries/weekly-composition';
 // rows (queryItemConsistency's return shape, named here because the query
 // returns an anonymous inline type).
 import type { queryItemConsistency } from '@/lib/queries';
+// W10 — section 5 "Analisis Waste": the projected queryWasteNetwork result
+// (window months + network KPIs + the attribution block). Type-only import
+// (erased at compile — no runtime coupling), same convention as the
+// imports above.
+import type { WasteAttributionResult, WasteKpis, WasteMonthMeta } from '@/lib/queries/waste/network';
 
 // PERF-CACHE-06: helper used to short-circuit the cache wrapper for early-return
 // error paths (404 No records found). Throwing this error propagates through
@@ -292,6 +297,24 @@ export interface PeerComparisonData {
   topItems?: PeerTopItemRow[];
 }
 
+// ============================================================
+// W10 — section 5 "Analisis Waste" payload (findings-DEEPWASTE2-B §3
+// item 3: the deferred Fase-3 PDF piece). A PROJECTION of the
+// queryWasteNetwork result — months + kpis + attribution only: the
+// heavy monthly/outlets arrays stay in the /api/waste-series route's
+// own cache; the q-waste-network row keeps repeat exports cheap.
+// ============================================================
+
+/** W10: the waste section's data (null when the section is off). */
+export interface WasteSectionData {
+  /** Window month metadata (same-week months — the provenance paragraph). */
+  months: WasteMonthMeta[];
+  /** Network KPIs (outlet count for the provenance paragraph). */
+  kpis: WasteKpis;
+  /** The attribution block (composition + scenarios + decile + disclosure). */
+  attribution: WasteAttributionResult;
+}
+
 // trend row — derived at route.ts:600-603 from trendAggRows (queryTrendAgg).
 // `sortKey` is stripped by the destructure `({ sortKey, ...rest }) => rest`.
 // EXPAND-1: + lossNominal / surplusNominal (TrendAggRow already carries them —
@@ -361,6 +384,12 @@ export interface ReportData {
   peerComparison: PeerComparisonData | null;
   // REFINE-1 — section 'flip' (null when off).
   flipRanking: FlipRankResult | null;
+  // W10 — section 'waste' (null when off): loss attribution + residual
+  // sensitivity scenarios + decile-shift index + the structural
+  // disclosure. The 5.3 top-waste snapshot rides the existing
+  // topItemsByWaste rows (q-topcat — fetch gate widened to
+  // needTopItems || needWaste).
+  wasteAttribution: WasteSectionData | null;
   durationMs: number;
 }
 

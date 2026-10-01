@@ -23,10 +23,13 @@ import {
   // EXPORT-PDF: the item-trend matrix section query (re-exported via the
   // queries barrel).
   queryItemTrendMatrix,
-  // VAR12 — section 6.3 "Analisis Pola Item" (dashboard's
-  // ItemConsistencyAnalysis widget carried into the PDF; re-exported via
-  // the queries barrel).
+  // VAR12 — section 6.3 "Analisis Pola Item" (renumbered 7.3 by W10; the
+  // dashboard's ItemConsistencyAnalysis widget carried into the PDF;
+  // re-exported via the queries barrel).
   queryItemConsistency,
+  // W10 — section 5 "Analisis Waste": queryWasteNetwork (re-exported via
+  // the queries barrel).
+  queryWasteNetwork,
 } from '@/lib/queries';
 // REFINE-1: section 8 flip items (renamed "Item yang Kemungkinan Plus Minus
 // antar Periode") — not in the queries barrel; direct module import.
@@ -39,12 +42,13 @@ import type { SelfHistoryAnomalyRow } from '@/lib/queries/items/self-history-ano
 import type { WeeklyCompositionRow } from '@/lib/queries/weekly-composition';
 import { cachedSharedQuery, cachedSharedQueryMap, histPeriodsKeyParts } from '@/lib/queries/query-cache';
 import type { AreaCategoryAvg } from '@/lib/queries/items/top-items';
+import type { WasteSectionData } from '../types';
 import type { FetcherContext } from './context';
 
 export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
   const { thresholds, month, prevWeek, prevMonth, filterOpts, historicalPeriods, gates } = ctx;
   const { week } = ctx.params;
-  const { needKpis, needPrevSummary, needTopItems, needTrend, needItemTrend, needAnomali, needFlip } = gates;
+  const { needKpis, needPrevSummary, needTopItems, needTrend, needItemTrend, needAnomali, needFlip, needWaste } = gates;
 
   const topNItems = thresholds.TOP_N_ITEMS || 10;
 
@@ -77,19 +81,22 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
     // the trend section's composition + accumulation charts; empty when
     // the trend section is off).
     weeklyCompRes,
-    // REFINE-1 — "Item yang Kemungkinan Plus Minus antar Periode" (section 9 after REFINE-3):
+    // REFINE-1 — "Item yang Kemungkinan Plus Minus antar Periode" (section 10 after the W10 renumber):
     // flip ranking scoped to the exported week + month (null when off).
     flipRankingRes,
     // REFINE-1 — per-(item, area) category averages for the "Rata-rata
     // Area" column in 3.3-3.6 (empty Map when topItems is off).
     areaCatAvgMap,
-    // VAR12 — section 6.3 "Analisis Pola Item": per-item outlet-count
-    // pattern rows. Called DIRECTLY (uncached) — the exact precedent of
-    // the analysis pipeline (run-queries.ts runs queryItemConsistency
-    // uncached too: one light GROUP BY). No new q-* namespace → no
-    // invalidation-array coupling; the route-level rv-keyed PDF cache
-    // already dedupes repeat exports.
+    // VAR12 — section 6.3 "Analisis Pola Item" (renumbered 7.3 by W10):
+    // per-item outlet-count pattern rows. Called DIRECTLY (uncached) — the
+    // exact precedent of the analysis pipeline (run-queries.ts runs
+    // queryItemConsistency uncached too: one light GROUP BY). No new q-*
+    // namespace → no invalidation-array coupling; the route-level rv-keyed
+    // PDF cache already dedupes repeat exports.
     consistencyRows,
+    // W10 — section 5 "Analisis Waste": the q-waste-network projection
+    // (null when the waste section is off).
+    wasteRes,
   ] = await Promise.all([
     // PERF (TAHAP-2 / P2-9): kpis + trendAgg + category tops use the shared
     // per-query cache (same queryIds as the analysis pipeline).
@@ -135,11 +142,15 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
           () => queryTopItemsByDevBom(week, month, filterOpts, topNItems),
         )
       : Promise.resolve([]),
-    needTopItems
+    needTopItems || needWaste
       ? cachedSharedQuery(
           'q-topcat',
           // REFINE-1: sv — row shape gained `area` (drives the "Rata-rata
           // Area" lookup); see the q-top-nominal note above.
+          // W10: fetch gate widened to needTopItems || needWaste — the
+          // "Analisis Waste" section's 5.3 top-waste snapshot reuses this
+          // SAME row (identical key = one shared cache row when both
+          // sections are on; a waste-only export fetches it once itself).
           { month, week, filters: filterOpts, extra: { limit: topNItems, sv: 2 } },
           () => queryTopItemsByAllCategories(week, month, filterOpts, topNItems),
         )
@@ -268,11 +279,44 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
       { month, week, filters: { area: filterOpts.area }, extra: {} },
       () => queryAreaCategoryAvg(week, month, filterOpts.area),
     ) : Promise.resolve(new Map<string, AreaCategoryAvg>()),
-    // VAR12 — section 6.3 "Analisis Pola Item": the full pattern ranking
+    // VAR12 — section 6.3 "Analisis Pola Item" (renumbered 7.3 by W10):
+    // the full pattern ranking
     // (ALL items with a deviation in the period — the query has no limit
     // param; the PDF section slices its own top rows). Gated on the
-    // anomali section because 6.3 renders inside section 6.
+    // anomali section because 7.3 renders inside section 7.
     needAnomali ? queryItemConsistency(week, month, filterOpts) : Promise.resolve([]),
+    // W10 — section 5 "Analisis Waste": the queryWasteNetwork projection
+    // under its own q-* row (30-min TTL, mutation-invalidated via the
+    // 'q-waste-network' prefix in invalidateAnalysisCache — see
+    // aggregation-cache/invalidate.ts). Key notes:
+    //   - month = the EXPORTED month: it bounds the 12-month same-week
+    //     window INCLUSIVELY (queryWasteNetwork's currentMonthKey — same
+    //     semantics as /api/waste-series).
+    //   - itemName is stripped (the waste network is outlet-grain — same
+    //     convention as q-item-trend-matrix's filters).
+    //   - sv 1 forks a fresh namespace for the projected row shape.
+    //   - The computeFn caches ONLY the W10 projection (months + kpis +
+    //     attribution): the full result's monthly/outlets arrays (~MBs of
+    //     JSON) stay in the /api/waste-series route's own 5-min cache —
+    //     the q-row keeps repeat exports cheap without duplicating them.
+    needWaste ? cachedSharedQuery<WasteSectionData>(
+      'q-waste-network',
+      { month, week, filters: { ...filterOpts, itemName: null }, extra: { weekLabel: week, sv: 1 } },
+      async () => {
+        // currentMonthKey from the setup phase's monthLabel→monthKey map
+        // (the same lookup /api/waste-series does via sourceFile.findFirst;
+        // the month label case was already resolved). Null = no upper bound
+        // — unreachable in practice: the 404 guard proved the month exists.
+        const currentMonthKey = ctx.monthKeyByLabel.get(month) ?? null;
+        const r = await queryWasteNetwork(
+          week,
+          currentMonthKey,
+          { ...filterOpts, itemName: null },
+          thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
+        );
+        return { months: r.months, kpis: r.kpis, attribution: r.attribution };
+      },
+    ) : Promise.resolve(null),
   ]);
 
   ctx.kpis = kpis;
@@ -292,4 +336,5 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
   ctx.flipRankingRes = flipRankingRes;
   ctx.areaCatAvgMap = areaCatAvgMap;
   ctx.consistencyRows = consistencyRows;
+  ctx.wasteRes = wasteRes;
 }

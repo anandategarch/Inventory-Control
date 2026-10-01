@@ -26,15 +26,21 @@
 // ============================================================
 
 import { memo } from 'react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Card } from '@/components/ui/card';
 import { TrendingUp, TrendingDown, Minus, ArrowRight } from 'lucide-react';
 import { fmtIDR, fmtNum, fmtPct, numberColorNeg } from '@/lib/format';
+import { useShallow } from 'zustand/shallow';
+import { useDashboard } from '@/hooks/useDashboard';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { useRecommendations } from '@/hooks/useRecommendations';
 import { InfoTooltip } from '@/components/dashboard/InfoTooltip';
 import { DeltaBar } from '@/components/dashboard/shared/DeltaBar';
 import { QuickSettings } from '@/components/dashboard/QuickSettings';
 import { classifyDelta, deltaTypeColor } from '@/components/dashboard/shared/TargetComparison';
+// W10 — type-only import (erased at compile, no runtime lib→component edge —
+// the same house pattern as insights.ts importing AnalysisData).
+import type { WasteAttributionResult } from '@/lib/queries/waste/waste-series';
 
 // Per-KPI formula tooltips (carried over verbatim from the old
 // ExecutiveSummary KPI_TOOLTIPS so the wording stays identical).
@@ -44,6 +50,10 @@ const KPI_TOOLTIPS = {
   deviationBom: 'Volume-weighted: SUM(|qtyDeviasi|) / SUM(|qtyBom|).',
   health: 'Skor Kondisi Inventory = normal / total record × 100. KRITIS saat abnormal >20%, PERLU PERHATIAN saat abnormal >5% atau warning >15%.',
   cascade: 'Kaskade deviasi (Master Context §50): GROSS (Stok Fisik − Sistem) → dijelaskan oleh Waste+Susut+Trial → NET yang belum terjelaskan. Angka QTY.',
+  // W10 — the attribution line's tooltip carries the MANDATORY structural
+  // disclosure (residual ≈ NET loss by construction) so the exec surface
+  // teaches the correct reading of the cascade's NET figure too.
+  attribution: 'Atribusi loss window (W/S/T vs residual). Residual ≈ NET loss secara konstruksi (residual = tanda × max(0, |deviasi| − (|W|+|S|+|T|))): W/S/T menjelaskan porsi GROSS deviasi, bukan NET loss — residualShare mendekati 1 adalah properti struktur data, bukan bukti loss hilang. Sensitivitas p=50% adalah HIPOTESIS, bukan pengukuran.',
 };
 
 // ------------------------------------------------------------
@@ -148,6 +158,63 @@ export const ExecutiveStatus = memo(function ExecutiveStatus({ data }: { data: A
   // cached response without the field) fall back to the capped length.
   const { data: recsResp } = useRecommendations(null);
   const priorityRestoCount = recsResp?.priorityCount ?? recsResp?.recommendations?.length ?? 0;
+
+  // W10 (Atribusi + Skenario Sensitivitas Residual) — ONE additive
+  // narrative line under the cascade. Self-fetch of the SAME
+  // /api/waste-series payload the Waste tab uses: identical queryKey
+  // ⇒ TanStack dedups (opening the Waste tab reuses this row; no
+  // second request), 5-min staleTime matches the tab's convention.
+  // `select` keeps ONLY the attribution block + window length so the
+  // big monthly/outlets arrays never re-render this component.
+  // Precedent: useRecommendations above (the exec surface already
+  // self-fetches a second query with a shared key).
+  const { monthLabel: scopeMonth, currentWeek: scopeWeek, area: scopeArea, kelompok: scopeKelompok, pic: scopePic } = useDashboard(
+    useShallow((s) => ({
+      monthLabel: s.monthLabel,
+      currentWeek: s.currentWeek,
+      area: s.area,
+      kelompok: s.kelompok,
+      pic: s.pic,
+    })),
+  );
+  // Normalize 'all' → null ONCE (same convention as the routes + the
+  // WasteTab key builder — raw 'all' would fork the cache key).
+  const scopeAreaParam = scopeArea && scopeArea !== 'all' ? scopeArea : null;
+  const scopeKelompokParam = scopeKelompok && scopeKelompok !== 'all' ? scopeKelompok : null;
+  const scopePicParam = scopePic && scopePic !== 'all' ? scopePic : null;
+  // (Three-generic v5 form: TQueryFnData = the raw /api/waste-series slice
+  // the queryFn resolves; TData = the select projection — a single generic
+  // would force queryFn to return the SELECTED shape.)
+  const { data: attributionLine } = useQuery<
+    { attribution?: WasteAttributionResult; months?: unknown[] },
+    Error,
+    { attr: WasteAttributionResult; windowMonths: number } | null
+  >({
+    queryKey: ['waste-series', scopeMonth, scopeWeek, scopeAreaParam, scopeKelompokParam, scopePicParam],
+    queryFn: async () => {
+      const p = new URLSearchParams();
+      p.set('month', scopeMonth || '');
+      p.set('week', scopeWeek || '');
+      if (scopeAreaParam) p.set('area', scopeAreaParam);
+      if (scopeKelompokParam) p.set('kelompok', scopeKelompokParam);
+      if (scopePicParam) p.set('pic', scopePicParam);
+      const res = await fetch(`/api/waste-series?${p.toString()}`);
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) throw new Error(`Server error (HTTP ${res.status})`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<{ attribution?: WasteAttributionResult; months?: unknown[] }>;
+    },
+    enabled: Boolean(scopeMonth && scopeWeek),
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
+    placeholderData: keepPreviousData,
+    // Keep only the exec line's inputs — the response's monthly/outlets
+    // arrays (MBs) never trigger re-renders here.
+    select: (d) => (d && d.attribution ? { attr: d.attribution, windowMonths: Array.isArray(d.months) ? d.months.length : 0 } : null),
+  });
+  // The p=50% sensitivity row (fallback: no line on shapes without it).
+  const attribution = attributionLine?.attr;
+  const scenarioP50 = attribution?.scenarios.find((s) => s.p === attribution.decile.p);
 
   // Health score + verdict — same fields + thresholds as the old HealthAlert.
   const total = hs.normal + hs.warning + hs.abnormal;
@@ -292,6 +359,35 @@ export const ExecutiveStatus = memo(function ExecutiveStatus({ data }: { data: A
           NET {fmtNum(netQty, '')}
         </span>
       </div>
+
+      {/* W10 — ONE additive line under the cascade: window-level loss
+          attribution sensitivity (findings-DEEPWASTE2-B §3 item 3: "satu
+          baris di naratif eksekutif"). The line is hidden until the
+          attribution payload arrives and the scope has loss; a failed
+          fetch degrades to nothing (the cascade above is untouched). */}
+      {attribution && attribution.totalLoss > 0 && scenarioP50 && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs">
+          <span className="flex items-center gap-1 font-medium text-muted-foreground">
+            Atribusi Loss (window {attributionLine?.windowMonths ?? 0} bulan)
+            <InfoTooltip content={KPI_TOOLTIPS.attribution} />
+          </span>
+          <span className="font-semibold tabular-nums text-foreground" title="(W+S+T) / total loss — window, TERUKUR">
+            W/S/T {fmtPct(attribution.explainedShare, false, 1)}
+          </span>
+          <ArrowRight className="h-3 w-3 text-muted-foreground/50" aria-hidden />
+          <span className="tabular-nums text-muted-foreground" title="Bila 50% residual adalah waste tak tercatat: trueWaste = W + 0,5 × residual">
+            sensitivitas residual: +{fmtIDR(scenarioP50.trueWaste - attribution.waste)} waste bila p=50%
+          </span>
+          {/* Epistemic guard: the p=50% figure is a HYPOTHESIS, never a
+              measurement (spec W10 guard). */}
+          <span
+            title="Angka hasil asumsi p = 50% × residual dianggap waste tak tercatat — bukan pengukuran."
+            className="inline-flex items-center rounded-full bg-amber-100/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700 dark:bg-amber-950/40 dark:text-amber-400"
+          >
+            HIPOTESIS
+          </span>
+        </div>
+      )}
     </div>
   );
 });

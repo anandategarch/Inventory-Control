@@ -1,5 +1,6 @@
 // ============================================================
-//  5 — TREND ITEM MULTI-PERIODE  (EXPORT-PDF — NEW; EXPORT-TRIM: was 9)
+//  6 — TREND ITEM MULTI-PERIODE  (EXPORT-PDF — NEW; EXPORT-TRIM: was 9;
+//      W10 renumber: was 5 — section 5 "Analisis Waste" inserted above)
 // ============================================================
 import { fmtIDR } from '../../format-helpers';
 import { C, MK_UP, markOf, stripMark } from '../pdf-primitives';
@@ -11,8 +12,8 @@ export function drawTrendMatrixSection(env: SectionEnv): void {
   if (!hasSection('itemTrend')) return;
   // BUG-HUNT (numbering continuity): an empty matrix used to skip the
   // whole section → the numbers jumped (…4 → 6…). Header + factual note
-  // instead (convention of sections 6/8/9).
-  rpt.sectionHeader(5, 'Trend Item Multi-Periode');
+  // instead (convention of the empty-state sections).
+  rpt.sectionHeader(6, 'Trend Item Multi-Periode');
   if (data.itemTrendMatrix.length === 0) {
     rpt.noteBox('Tidak ada data trend item multi-periode pada scope ini.');
     return;

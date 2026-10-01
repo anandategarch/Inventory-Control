@@ -19,12 +19,20 @@
 //  route only RESHAPES the query result into explicit keys, so the
 //  new block is forwarded here; nothing existing was renamed or
 //  removed (old clients keep working).
+//
+//  W10 (Atribusi + Skenario Sensitivitas Residual) — ADDITIVE
+//  response field: top-level `attribution` block (komposisi loss
+//  W/S/T vs residual TERUKUR + tabel skenario p HIPOTESIS + indeks
+//  pergeseran decile + disclosure identitas residual). Forwarded
+//  from the same query result; the early-return __NO_MATCH__ path
+//  builds the empty block with the SAME pure builder (single source
+//  of truth — mirrors the W2 persistence convention).
 // ============================================================
 import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
-import { buildWastePersistence, queryWasteNetwork } from '@/lib/queries';
+import { buildWasteAttribution, buildWastePersistence, queryWasteNetwork, type WasteKpis } from '@/lib/queries';
 import { validateQuery, wasteSeriesQuerySchema } from '@/lib/validation';
 import { getRuntimeThresholds } from '@/lib/settings';
 import { db } from '@/lib/db';
@@ -84,13 +92,22 @@ export async function GET(req: NextRequest) {
       // the empty persistence block is built by the SAME pure builder
       // (single source of truth, zeroed summary + null statistics).
       const emptyPersistence = buildWastePersistence([]);
+      // W10: same convention for the attribution block — the zeroed
+      // block still carries the mandatory structural disclosure so every
+      // consumer (card/PDF) can render the footer on empty scopes too.
+      // (Typed const, not an inline literal — the attribution input is a
+      // Pick of WasteKpis and excess-property checks only fire on literals.)
+      const emptyKpis: WasteKpis = { outlets: 0, months: 0, sales: 0, waste: 0, susut: 0, trial: 0, residual: 0, totalLoss: 0, totalSurplus: 0, wasteToSales: 0, zeroWasteBigLossOutlets: 0, underRecordingOutlets: 0, residualDominantOutlets: 0, spikeCells: 0 };
+      const emptyAttribution = buildWasteAttribution(emptyKpis, []);
       return NextResponse.json({
         success: true,
         months: [],
         monthly: [],
         outlets: [],
-        kpis: { outlets: 0, months: 0, sales: 0, waste: 0, susut: 0, trial: 0, residual: 0, totalLoss: 0, totalSurplus: 0, wasteToSales: 0, zeroWasteBigLossOutlets: 0, underRecordingOutlets: 0, residualDominantOutlets: 0, spikeCells: 0 },
+        kpis: emptyKpis,
         persistence: { summary: emptyPersistence.summary, medians: emptyPersistence.medians },
+        // W10 — additive: zeroed attribution block (disclosure intact).
+        attribution: emptyAttribution,
       });
     }
 
@@ -154,6 +171,11 @@ export async function GET(req: NextRequest) {
       // per-month medians (outlet rows above already carry the
       // per-outlet persistence fields).
       persistence: wasteData.persistence,
+      // W10 (Atribusi + Skenario Sensitivitas Residual) — additive
+      // block: measured loss-side composition (W/S/T vs residual) +
+      // HIPOTESIS scenario table + decile-shift index + the mandatory
+      // residual ≈ NET-loss-by-construction disclosure.
+      attribution: wasteData.attribution,
       ...(cached ? { cached: true } : {}),
       ...(stale ? { stale: true } : {}),
     }, { headers: CACHE_ANALYSIS });

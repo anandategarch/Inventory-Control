@@ -1,5 +1,6 @@
 // ============================================================
-//  7 — TREND ANTAR PERIODE  (EXPORT-TRIM: was 12; REFINE-3: was 6)
+//  8 — TREND ANTAR PERIODE  (EXPORT-TRIM: was 12; REFINE-3: was 6;
+//      W10 renumber: was 7 — section 5 "Analisis Waste" inserted above)
 //  REFINE-1: Loss / Surplus table columns REMOVED (user: "Trend antar
 //  periode hapuss kolom loss dan surplus") — the loss-vs-surplus line
 //  chart below still carries that composition per period.
@@ -18,7 +19,7 @@ export function drawTrendSection(env: SectionEnv): void {
   if (!hasSection('trend')) return;
   // BUG-HUNT (numbering continuity): empty trend data used to skip the
   // whole section → the numbers jumped. Header + factual note instead.
-  rpt.sectionHeader(7, 'Trend Antar Periode');
+  rpt.sectionHeader(8, 'Trend Antar Periode');
   if (data.trend.length === 0) {
     rpt.noteBox('Tidak ada data trend antar periode pada scope ini.');
     return;

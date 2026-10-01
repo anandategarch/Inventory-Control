@@ -1,5 +1,6 @@
 // ============================================================
-//  6 — ITEM ANOMALI VS RIWAYAT SENDIRI  (REFINE-3 — NEW)
+//  7 — ITEM ANOMALI VS RIWAYAT SENDIRI  (REFINE-3 — NEW; W10 renumber:
+//      was 6 — section 5 "Analisis Waste" inserted above)
 //  --------------------------------------------------------
 //  User: "Section Item Anomali vs Riwayat Sendiri". Items whose current
 //  QTY deviasi departs most from their OWN same-week historical average
@@ -17,12 +18,13 @@ import type { SectionEnv } from '../section-context';
 export function drawAnomalySection(env: SectionEnv): void {
   const { rpt, data, ctx, hasSection, currCol } = env;
   if (!hasSection('anomali')) return;
-  rpt.sectionHeader(6, 'Item Anomali vs Riwayat Sendiri');
+  rpt.sectionHeader(7, 'Item Anomali vs Riwayat Sendiri');
   const an = data.selfHistoryAnomaly;
   // VAR12: the old early `return` here also skipped 6.2 AND would have
   // skipped the new 6.3 — whose data (current-period consistency) does
   // NOT depend on historical periods. 6.1 + 6.2 now sit in the else
-  // branch (identical render behavior) so 6.3 always renders.
+  // branch (identical render behavior) so 6.3 always renders. (Numbers
+  // since renumbered 7.1/7.2/7.3 by W10.)
   if (an.length === 0) {
     // BUG-HUNT (found in render test): '≥' is NOT WinAnsi-encodable —
     // sanitizePdfText maps it to '?' in the PDF. Plain wording instead.
@@ -34,7 +36,7 @@ export function drawAnomalySection(env: SectionEnv): void {
     // REFINE-4 (user: "di laporan di beri keterangan Rata-Rata Absolute"):
     // the benchmark column is the ABSOLUTE average of the item's own
     // same-week history — stated in both the subhead and the header.
-    rpt.subhead(`6.1 Kuantitas vs Rata-rata Riwayat Sendiri (same-week, maks ${nBulan} bulan; rata-rata absolute)`, { size: 8.5 });
+    rpt.subhead(`7.1 Kuantitas vs Rata-rata Riwayat Sendiri (same-week, maks ${nBulan} bulan; rata-rata absolute)`, { size: 8.5 });
     rpt.table({
       cols: [
         { header: '#', align: 'center' },
@@ -82,15 +84,15 @@ export function drawAnomalySection(env: SectionEnv): void {
       },
     });
 
-    // 6.2 — REFINE-4 (user: "apakah sudah bisa deteksi yang biasanya loss
+    // 7.2 — REFINE-4 (user: "apakah sudah bisa deteksi yang biasanya loss
     // tapi sekarang surplus? kalau belum tambahkan"): items whose
     // direction REVERSED vs their own same-week history. "Rata-rata
     // Riwayat" here is the SIGNED average (it shows the usual direction,
-    // e.g. -12.3 = loss side) — a different lens from 6.1's absolute
+    // e.g. -12.3 = loss side) — a different lens from 7.1's absolute
     // benchmark, hence its own column name. Eligibility (engine):
     // history predominantly one direction + a material current side.
     const flips = data.selfHistoryFlips;
-    rpt.subhead('6.2 Item Berganti Arah \u2014 biasanya loss, kini surplus (atau sebaliknya)', { size: 8.5 });
+    rpt.subhead('7.2 Item Berganti Arah \u2014 biasanya loss, kini surplus (atau sebaliknya)', { size: 8.5 });
     if (flips.length === 0) {
       rpt.noteBox('Tidak ada item yang berganti arah (loss menjadi surplus atau sebaliknya) dibanding riwayatnya sendiri pada scope ini.');
     } else {
@@ -138,7 +140,7 @@ export function drawAnomalySection(env: SectionEnv): void {
     }
   }
 
-  // 6.3 — VAR12 (user: "Analisis Pola item masukin juga ke pdf terutama
+  // 7.3 — VAR12 (user: "Analisis Pola item masukin juga ke pdf terutama
   // bagian anomali item"): the dashboard's "Analisis Pola Item" widget
   // (ItemConsistencyAnalysis) carried into the PDF. Per-item outlet-count
   // pattern for the CURRENT period: Massal (10+ outlet) = indikasi
@@ -149,7 +151,7 @@ export function drawAnomalySection(env: SectionEnv): void {
   // Top 15 rows by |Nominal Deviasi| (the query's own ranking); the
   // subhead carries the full-population tier counts.
   const ic = data.itemConsistency;
-  rpt.subhead('6.3 Analisis Pola Item (Massal / Regional / Lokal)', { size: 8.5 });
+  rpt.subhead('7.3 Analisis Pola Item (Massal / Regional / Lokal)', { size: 8.5 });
   if (ic.length === 0) {
     rpt.noteBox('Tidak ada item dengan deviasi pada scope ini.');
   } else {

@@ -12,6 +12,12 @@
 // dan ./types.ts) — 9 nama asli tidak berubah; semua import path
 // lama tetap valid.
 //
+// W10 (Atribusi + Skenario Sensitivitas Residual): diperluas
+// ADDITIF lagi (+1 fungsi +3 konstanta +8 tipe dari ./attribution.ts
+// dan ./types.ts). ./attribution.ts adalah modul PURE (import tipe
+// saja) sehingga aman di-import langsung oleh komponen client
+// (decomposition-card) tanpa menarik Prisma ke bundle browser.
+//
 // Layout: query.ts (queryWasteNetwork + pipeline SQL 8-CTE; detektor
 // spike 2σ hidup di CTE outlet_stats/monthly_final) · builders.ts
 // (buildWasteMonthlyRows/buildWasteOutlets/buildWasteKpis — 3 detektor
@@ -19,7 +25,9 @@
 // verbatim di buildWasteOutlets, bukan fungsi mandiri) · types.ts
 // (WasteMonthlyRawRow internal + 5 tipe publik) · persistence.ts
 // (W2 Kronis-vs-Episodik: buildWastePersistence + fisherExact2x2 +
-// classifyWastePersistence — pass murni kedua atas baris bulanan).
+// classifyWastePersistence — pass murni kedua atas baris bulanan) ·
+// attribution.ts (W10 Atribusi + Skenario Sensitivitas Residual:
+// buildWasteAttribution — pass murni ketiga atas kpis + outlets).
 // Konstanta window/ambang tetap di ../shared.ts (tidak disentuh).
 // Persiapan gelombang fitur W2 (persistensi) + W11 (metric-swap) yang
 // akan extend modul ini — pre-split menjaga god file tidak tumbuh
@@ -90,8 +98,25 @@ export {
   WASTE_KRONIS_MIN_MONTHS,
   WASTE_KRONIS_SHARE,
 } from './persistence';
+// W10 (Atribusi + Skenario Sensitivitas Residual) — additive: pure
+// attribution pass + the frozen scenario grid + the headline decile
+// p + the mandatory structural disclosure (constants live in
+// attribution.ts, NOT ../shared.ts — same conflict-free-footprint
+// reasoning as W2 above).
+export {
+  buildWasteAttribution,
+  WASTE_ATTRIBUTION_DECILE_P,
+  WASTE_ATTRIBUTION_DISCLOSURE,
+  WASTE_ATTRIBUTION_SCENARIO_P,
+} from './attribution';
 export { queryWasteNetwork } from './query';
 export type {
+  WasteAttributionComponent,
+  WasteAttributionDecile,
+  WasteAttributionKpisInput,
+  WasteAttributionOutletInput,
+  WasteAttributionResult,
+  WasteAttributionScenario,
   WasteKpis,
   WasteMonthMedian,
   WasteMonthMeta,
