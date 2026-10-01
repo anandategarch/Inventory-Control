@@ -5,6 +5,8 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { buildSqlFilters, DIRECTION_FROM_SUM_SQL, withStatementTimeout } from '../shared';
+// GODSPLIT-W4: ±10% band predicate — shared builder (was inline text here).
+import { peerBandPredicate } from './peer-band';
 
 export interface PeerComparisonRow {
   outletCode: string;
@@ -224,7 +226,7 @@ export async function queryPeerComparison(
     LEFT JOIN top_items ti ON oa."outletId" = ti."outletId"
     CROSS JOIN target_combined t
     WHERE COALESCE(sm.sales, 0) > 0
-      AND ABS(COALESCE(sm.sales, 0) - t.sales) <= CASE WHEN t.sales > 0 THEN t.sales * 0.1 ELSE 999999999 END
+      ${peerBandPredicate('sm.sales', 't.sales', { unboundedFallback: true })}
       ${peerKelompokFilter}
     ORDER BY ABS(COALESCE(sm.sales, 0) - t.sales)
     LIMIT ${limit + 1}

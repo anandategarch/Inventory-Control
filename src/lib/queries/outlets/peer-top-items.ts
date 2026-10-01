@@ -49,6 +49,9 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { DIRECTION_FROM_SUM_SQL, withStatementTimeout } from '../shared';
+// GODSPLIT-W4: ±10% band predicate — shared builder (was inline text here;
+// unbounded-fallback variant — this query has the target_fallback CTE).
+import { peerBandPredicate } from './peer-band';
 
 /** One item in an outlet's top-N (magnitude + direction). */
 export interface PeerTopItemEntry {
@@ -246,7 +249,7 @@ export async function queryPeerTopItems(
       JOIN sales_mode sm ON o.id = sm."outletId"
       CROSS JOIN target_combined t
       WHERE COALESCE(sm.sales, 0) > 0
-        AND ABS(COALESCE(sm.sales, 0) - t.sales) <= CASE WHEN t.sales > 0 THEN t.sales * 0.1 ELSE 999999999 END
+        ${peerBandPredicate('sm.sales', 't.sales', { unboundedFallback: true })}
         ${peerKelompokFilter}
       ORDER BY ABS(COALESCE(sm.sales, 0) - t.sales)
       LIMIT ${limit + 1}

@@ -41,6 +41,9 @@ import { Prisma } from '@prisma/client';
 import { withStatementTimeout } from '../shared';
 import { monthWindowBound, toNum } from '../waste/shared';
 import { OUTLET_MONTHLY_SERIES_WINDOW_MONTHS } from './monthly-series';
+// GODSPLIT-W4: ±10% band predicate — shared builder (was inline text
+// here; strict targetSales-alias variant).
+import { peerBandPredicate } from './peer-band';
 
 // ------------------------------------------------------------
 // 2. Peer track record — types
@@ -218,7 +221,7 @@ export async function queryPeerTrackRecord(
         ON s."outletCode" = m."outletCode"
         AND s."monthKey" = m."monthKey"
       WHERE COALESCE(s.sales, 0) > 0
-        AND ABS(COALESCE(s.sales, 0) - ts."targetSales") <= ts."targetSales" * 0.1
+        ${peerBandPredicate('s.sales', 'ts."targetSales"')}
     ),
     band_stats AS (
       SELECT

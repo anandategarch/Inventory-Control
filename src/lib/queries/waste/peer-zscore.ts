@@ -24,6 +24,9 @@
 import { Prisma } from '@prisma/client';
 import { withStatementTimeout } from '../shared';
 import { monthWindowBound, toNum, WASTE_WINDOW_MONTHS, WASTE_ZSCORE_MIN_BAND } from './shared';
+// GODSPLIT-W4: ±10% band predicate — shared builder (was inline text
+// here; strict targetSales-alias variant, same as outlets/peer-track-record).
+import { peerBandPredicate } from '../outlets/peer-band';
 
 // ------------------------------------------------------------
 // 2. Peer waste z-score — types
@@ -218,7 +221,7 @@ export async function queryWastePeerZScore(
         ON s."outletCode" = m."outletCode"
         AND s."monthKey" = m."monthKey"
       WHERE COALESCE(s.sales, 0) > 0
-        AND ABS(COALESCE(s.sales, 0) - ts."targetSales") <= ts."targetSales" * 0.1
+        ${peerBandPredicate('s.sales', 'ts."targetSales"')}
     ),
     band_ratio AS (
       SELECT b.*,

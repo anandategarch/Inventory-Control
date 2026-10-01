@@ -21,6 +21,10 @@
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { withStatementTimeout } from '../shared';
+// GODSPLIT-W4: ±10% band predicate — shared builder (was inline text here;
+// STRICT variant — no target_fallback CTE in this query, band width 0
+// when target sales = 0).
+import { peerBandPredicate } from './peer-band';
 
 // P3-HYG-3: hoisted to module scope (was inside the GET handler of
 // /api/peer-comparison/items, then at route module scope — MERGE-1-a moved
@@ -163,7 +167,7 @@ export async function queryPeerComparisonItems(
         JOIN sales_mode sm ON o.id = sm."outletId"
         CROSS JOIN target t
         WHERE COALESCE(sm.sales, 0) > 0
-          AND ABS(COALESCE(sm.sales, 0) - t.sales) <= t.sales * 0.1
+          ${peerBandPredicate('sm.sales', 't.sales')}
           ${peerKelompokFilter}
       ),
       target_top_items AS (
