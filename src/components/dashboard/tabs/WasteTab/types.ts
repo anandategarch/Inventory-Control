@@ -12,6 +12,10 @@
 //  W11 (Paritas Susut & Trial): field susutSpikeMonths (waste-series)
 //  + field/tipe fingerprint & trial-screen & metric (waste-top-items)
 //  ditambahkan ADDITIF (optional — guard cache pra-W11).
+//  FIX (AUDIT-B M2/M3): mirror additive — ratioSignal/ratioThreshold pada
+//  WasteTrialScreenItem (screen trial dua-tier) + susutRatioMonths pada
+//  WasteOutletRow (baseline n spike susut); semua optional (guard cache
+//  pra-fix, 5-min TTL).
 // ============================================================
 
 export interface WasteMonthMeta {
@@ -82,6 +86,11 @@ export interface WasteOutletRow {
    *  (sales > 0; min 3, σ > 0 — the waste spike's discipline, metric-swapped
    *  to susut). Absent on pre-W11 cached responses. */
   susutSpikeMonths?: number;
+  /** FIX (AUDIT-B M3, additive): valid months (sales > 0) the susut-spike
+   *  baseline was computed over — the transparency n for the S2σ badge
+   *  tooltip ("dari N bulan ber-sales, min. 3"). Absent on pre-fix cached
+   *  responses — consumers must not render it unguarded. */
+  susutRatioMonths?: number;
 }
 
 export interface WasteKpis {
@@ -363,6 +372,17 @@ export interface WasteTrialScreenItem {
   /** trialQty / bomQty; null when bomQty = 0 (no usage basis). */
   trialToBom: number | null;
   trialMonthsActive: number;
+  /**
+   * FIX (AUDIT-B M2, additive): which signal-1 tier fired — 'BLATAN'
+   * (absolute bar ≥ 5%) or 'OUTLIER' (≥ median + 3×1,4826×MAD of the
+   * BOM-basis item population on the slice). Optional: absent on pre-fix
+   * cached responses (the badge simply doesn't render).
+   */
+  ratioSignal?: 'BLATAN' | 'OUTLIER';
+  /** FIX (AUDIT-B M2, additive): the signal-1 threshold the item passed
+   *  (the absolute bar for BLATAN; the computed robust threshold for
+   *  OUTLIER). Optional — stale-cache guard. */
+  ratioThreshold?: number | null;
   fingerprintClass: WasteFingerprintClass | null;
   epistemicLabel: 'INDIKASI';
 }

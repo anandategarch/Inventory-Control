@@ -67,11 +67,16 @@
 //    0. month derivation (cheapest) — window monthKeys;
 //    1. per-item aggregate (totalWaste for the Pareto door-in +
 //       wasteQty + bomQty) with the top-N LIMIT, optionally
-//       pinned to ONE item by exact name (the `item` param);
+//       pinned to ONE item by exact name (the `item` param — applied
+//       in the OUTER wrapper AFTER the population window, so
+//       populationTotal stays the full-network Pareto 100% in
+//       item-pin mode too — FIX AUDIT-D F2);
 //    2. per-(item, outlet) breakdown for the selected item ids —
-//       Σ|qtyWaste| + Σ|qtyBom| + Outlet join (code/name/area),
-//       the same GROUP BY shape as waste-top-items round 2 with
-//       the BOM column added.
+//       Σ|qtyWaste| + Σ|qtyBom| + Outlet join (code/name/AREA from
+//       the Outlet MASTER — FIX AUDIT-D F1; see the round-2 block
+//       comment for why the record-level area label must never
+//       re-enter this grain), grouped so one physical outlet =
+//       exactly ONE population row per item.
 //  Rounds 1-2 filter on the materialized IN list — identical
 //  month set to a per-round CTE without rebuilding it. All
 //  ranking/median/MAD/z math lives in the PURE builder
@@ -146,6 +151,12 @@ export interface WasteRateOutletRawRow {
   itemId: number;
   outletCode: string;
   outletName: string;
+  /**
+   * Area from the Outlet MASTER (stable per outlet — FIX AUDIT-D
+   * F1). The denormalized per-record InventoryRecord.area label must
+   * never re-enter the league grain: it splits outlets that moved
+   * area mid-window into two population rows.
+   */
   area: string;
   /** Σ|qtyWaste| over the window for this (item, outlet). */
   wasteQty: number | bigint;
@@ -356,17 +367,40 @@ export function buildRateLeague(
   const populationTotal = toNum(itemRows[0].populationTotal);
 
   // Group the league grain by item ONCE.
-  const byItemOutlets = new Map<number, WasteRateOutletRawRow[]>();
+  //
+  // FIX (AUDIT-D F1 — defensive belt): raw rows sharing
+  // (itemId, outletCode) are MERGED — wasteQty + bomQty summed,
+  // name/area labels taken from the FIRST occurrence (they are
+  // Outlet-master fields, constant per outletCode, so any
+  // occurrence is correct). The fixed round-2 SQL can no longer
+  // produce such duplicates (one row per (item, outlet)), but this
+  // keeps the median/MAD/min-outlet-guard population honest even
+  // if a future SQL regression re-introduces a record-level area
+  // split or another caller hands in unmerged rows: one physical
+  // outlet = ONE population slot, always (pinned by test).
+  const byItemOutlets = new Map<number, Map<string, WasteRateOutletRawRow>>();
   for (const r of outletRows) {
-    const list = byItemOutlets.get(r.itemId) ?? [];
-    list.push(r);
-    byItemOutlets.set(r.itemId, list);
+    let byOutlet = byItemOutlets.get(r.itemId);
+    if (!byOutlet) {
+      byOutlet = new Map<string, WasteRateOutletRawRow>();
+      byItemOutlets.set(r.itemId, byOutlet);
+    }
+    const prev = byOutlet.get(r.outletCode);
+    if (!prev) {
+      byOutlet.set(r.outletCode, { ...r });
+    } else {
+      byOutlet.set(r.outletCode, {
+        ...prev,
+        wasteQty: toNum(prev.wasteQty) + toNum(r.wasteQty),
+        bomQty: toNum(prev.bomQty) + toNum(r.bomQty),
+      });
+    }
   }
 
   const items: WasteRateLeagueItem[] = itemRows.map((r) => {
     const wasteQty = toNum(r.wasteQty);
     const bomQty = toNum(r.bomQty);
-    const rows = byItemOutlets.get(r.itemId) ?? [];
+    const rows = [...(byItemOutlets.get(r.itemId)?.values() ?? [])];
 
     // Partition the (item, outlet) grain.
     const population: Array<{ row: WasteRateOutletRawRow; rate: number; wasting: boolean }> = [];
@@ -535,39 +569,77 @@ export async function queryWasteRateLeague(
   // name (case-sensitive; the card passes names straight from
   // this response, and an exact match keeps the cache key 1:1
   // with the response — no LIKE wildcards on the wire).
-  const itemFilter = item ? Prisma.sql`WHERE i.name = ${item}` : Prisma.empty;
-  const itemRows = await withStatementTimeout((tx) => tx.$queryRaw<WasteRateItemRawRow[]>`
-    WITH item_agg AS (
-      SELECT
-        ir."itemId",
-        COALESCE(SUM(ABS(ir."nominalWaste")), 0) as "totalWaste",
-        COALESCE(SUM(ABS(ir."qtyWaste")), 0) as "wasteQty",
-        COALESCE(SUM(ABS(ir."qtyBom")), 0) as "bomQty"
-      FROM "InventoryRecord" ir
-      JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
-      WHERE ir."weekLabel" = ${week}
-        AND sf."monthKey" IN (${monthInList})
-        ${f}
-      GROUP BY ir."itemId"
-    )
-    SELECT
-      ia."itemId",
-      i.name as "itemName",
-      i.satuan,
-      ia."totalWaste",
-      ia."wasteQty",
-      ia."bomQty",
-      SUM(ia."totalWaste") OVER () as "populationTotal"
-    FROM item_agg ia
-    JOIN "Item" i ON ia."itemId" = i.id
-    ${itemFilter}
-    ORDER BY ia."totalWaste" DESC, i.name ASC
-    LIMIT ${boundedLimit}
-  `);
+  //
+  // FIX (AUDIT-D F2): the pin used to be applied BEFORE the
+  // population window (`WHERE i.name = ...` under
+  // `SUM(ia."totalWaste") OVER ()`), so in `?item=` mode
+  // populationTotal degenerated to the pinned item's OWN
+  // totalWaste — the documented "Pareto 100%" field lied
+  // (share-of-network read 100% for every single-item response).
+  // Restructured: the window is computed inside the `populated`
+  // CTE over ALL in-scope items (pre-filter, pre-LIMIT), and the
+  // pin moves to the OUTER wrapper, referencing the OUTPUT alias
+  // `"itemName"`. Default mode (no item) is semantically
+  // unchanged: window over all rows, then ORDER BY + LIMIT.
+  // `runItemRound` is reused by the no-match branch below so the
+  // population total always comes from the SAME SQL (single
+  // source of truth).
+  const itemFilter = item ? Prisma.sql`WHERE "itemName" = ${item}` : Prisma.empty;
+  const runItemRound = (filter: Prisma.Sql, limit: number) =>
+    withStatementTimeout((tx) => tx.$queryRaw<WasteRateItemRawRow[]>`
+      WITH item_agg AS (
+        SELECT
+          ir."itemId",
+          COALESCE(SUM(ABS(ir."nominalWaste")), 0) as "totalWaste",
+          COALESCE(SUM(ABS(ir."qtyWaste")), 0) as "wasteQty",
+          COALESCE(SUM(ABS(ir."qtyBom")), 0) as "bomQty"
+        FROM "InventoryRecord" ir
+        JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
+        WHERE ir."weekLabel" = ${week}
+          AND sf."monthKey" IN (${monthInList})
+          ${f}
+        GROUP BY ir."itemId"
+      ),
+      populated AS (
+        SELECT
+          ia."itemId",
+          i.name as "itemName",
+          i.satuan,
+          ia."totalWaste",
+          ia."wasteQty",
+          ia."bomQty",
+          SUM(ia."totalWaste") OVER () as "populationTotal"
+        FROM item_agg ia
+        JOIN "Item" i ON ia."itemId" = i.id
+      )
+      SELECT * FROM populated
+      ${filter}
+      ORDER BY "totalWaste" DESC, "itemName" ASC
+      LIMIT ${limit}
+    `);
+  const itemRows = await runItemRound(itemFilter, boundedLimit);
 
   if (itemRows.length === 0) {
+    // Default mode: the population itself is empty — populationTotal
+    // 0 is the honest value.
+    //
+    // FIX (AUDIT-D F2) — item-pin mode: an empty round 1 means "item
+    // name not found in scope", NOT "empty population". The window
+    // total of the FULL population is still the honest Pareto 100%,
+    // so read it from the population's first row (same round-1 SQL,
+    // no item filter, LIMIT 1 — `SUM() OVER ()` yields the SAME value
+    // on every populated row) and keep the no-match response shaped
+    // exactly like the match case instead of collapsing the network
+    // total to 0. When the population itself is empty the fallback
+    // row is absent and populationTotal stays 0 (consistent with the
+    // pre-fix behavior for that sub-case).
+    let populationTotal = 0;
+    if (item != null) {
+      const popRows = await runItemRound(Prisma.empty, 1);
+      populationTotal = toNum(popRows[0]?.populationTotal);
+    }
     const { meta } = buildRateLeague([], [], windowMonths);
-    return { items: [], populationTotal: 0, lastMonthKey, windowMonths, meta };
+    return { items: [], populationTotal, lastMonthKey, windowMonths, meta };
   }
 
   // Round trip 2 — per-(item, outlet) breakdown for the selected
@@ -577,13 +649,39 @@ export async function queryWasteRateLeague(
   // (the median/MAD population + zero-waste counts — capping at a
   // top-N slice would bias the median upward, exactly the bias
   // this feature exists to remove).
+  //
+  // FIX (AUDIT-D F1 — CRITICAL): the grain used to be
+  //   GROUP BY ir."itemId", o.code, o.name, ir.area
+  // with ir.area — the DENORMALIZED per-record area label — as a
+  // group key. InventoryRecord.area carries whatever label the
+  // record had at ingest, so an outlet that moved area mid-window
+  // (re-org JAWA TENGAH 1↔2, MLGSOE→WCR in the live data) split
+  // into TWO league rows and every population statistic ran over
+  // the duplicated population: 19/20 items carried duplicate
+  // outlet rows (146 extra rows live), KULIT PANGSIT's rank #1 AND
+  // #2 were the SAME outlet (1209.MLGSOE, z 15.87 vs 13.07 per
+  // area segment), outletsWithBom read 352 against 343 distinct
+  // outlets (network total 344), zero-waste claims counted area
+  // segments of wasting outlets, and the min-5-outlet guard could
+  // be bypassed (3 outlets × 2 labels = 6 population rows). The
+  // area now comes from the Outlet MASTER: grouping by
+  // ir."itemId" + o.code/o.name/o.area yields exactly ONE row per
+  // (item, outlet) because o.code is UNIQUE and the o.* columns
+  // are constant per outlet — a record-level label can no longer
+  // split an outlet, and distinct outlets never merge (unique
+  // code). (buildRateLeague's (itemId, outletCode) merge is the
+  // defensive belt; the pin + negative-ir.area test seals the
+  // SQL.) NOTE: waste-top-items round 2 still groups by ir.area —
+  // pre-existing there, display-only (top-8 breakdown), separate
+  // backlog item; THIS round feeds median/MAD/z/guard, so it must
+  // be outlet-grained.
   const itemIds = itemRows.map((r) => r.itemId);
   const outletRows = await withStatementTimeout((tx) => tx.$queryRaw<WasteRateOutletRawRow[]>`
     SELECT
       ir."itemId",
       o.code as "outletCode",
       o.name as "outletName",
-      ir.area,
+      o.area as "area",
       COALESCE(SUM(ABS(ir."qtyWaste")), 0) as "wasteQty",
       COALESCE(SUM(ABS(ir."qtyBom")), 0) as "bomQty"
     FROM "InventoryRecord" ir
@@ -593,7 +691,7 @@ export async function queryWasteRateLeague(
       AND sf."monthKey" IN (${monthInList})
       AND ir."itemId" IN (${Prisma.join(itemIds)})
       ${f}
-    GROUP BY ir."itemId", o.code, o.name, ir.area
+    GROUP BY ir."itemId", o.code, o.name, o.area
   `);
 
   const result = buildRateLeague(itemRows, outletRows, windowMonths);

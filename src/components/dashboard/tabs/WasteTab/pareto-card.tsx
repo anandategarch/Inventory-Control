@@ -26,9 +26,13 @@
 //      are unverified).
 //    - "Screen Trial" collapsible sub-table (the card's expand
 //      pattern): items where trial looks abusive (3 documented
-//      signals, all INDIKASI). The substitution signal (trial↑ while
-//      deviasi↓) is NOT derivable from the current aggregates — noted
-//      in the footer.
+//      signals, all INDIKASI). FIX (AUDIT-B M2): signal-1 is
+//      TWO-TIER — the absolute BLATAN bar (rasio ≥ 5%) OR a robust
+//      OUTLIER tier (median + 3×1.4826×MAD atas populasi item
+//      ber-BOM pada slice) — each screened row carries a
+//      ratioSignal/ratioThreshold badge pair. The substitution signal
+//      (trial↑ while deviasi↓) is NOT derivable from the current
+//      aggregates — noted in the footer.
 //    - NOTE on the shared queryKey: the Quadrant card fetches the same
 //      route WITHOUT the metric slot — under metric='waste' (default)
 //      both cards dedup into ONE request (keys equal); under
@@ -179,6 +183,23 @@ function FingerprintCell({ fp }: { fp: WasteTopItemRow['fingerprint'] }) {
 // Trial-abuse screen sub-table (W11) — collapsible
 // ------------------------------------------------------------
 
+/** FIX (AUDIT-B M2): signal-1 tier badge classes — BLATAN (red, the
+ *  absolute bar) vs OUTLIER (amber, unusual vs the slice's item
+ *  population). House badge style (same palette language as the
+ *  fingerprint/class badges). */
+const RATIO_SIGNAL_BADGE_CLASS: Record<'BLATAN' | 'OUTLIER', string> = {
+  BLATAN: 'text-red-700 dark:text-red-400 border-red-300/70 dark:border-red-800/70 bg-red-50/60 dark:bg-red-950/30',
+  OUTLIER: 'text-amber-700 dark:text-amber-400 border-amber-300/70 dark:border-amber-800/70 bg-amber-50/60 dark:bg-amber-950/30',
+};
+
+/** FIX (AUDIT-B M2): tooltip per tier — the threshold + what it means. */
+function ratioSignalTooltip(signal: 'BLATAN' | 'OUTLIER', threshold: number | null): string {
+  if (signal === 'BLATAN') {
+    return `BLATAN: rasio trial/BOM ≥ 5% (bar absolut — ${threshold != null ? `ambang ${fmtPct(threshold, false, 1)}, ` : ''}≥ 5% pemakaian teoretis dibukukan trial; jauh di atas sampling R&D).`;
+  }
+  return `OUTLIER: rasio trial/BOM ≥ median + 3 × 1,4826 × MAD populasi item ber-BOM pada slice ini${threshold != null ? ` (ambang ${fmtPct(threshold, false, 2)})` : ''} — tidak biasa dibanding populasi item meski jauh di bawah bar absolut.`;
+}
+
 function TrialScreenTable({ rows }: { rows: WasteTrialScreenItem[] }) {
   return (
     <div className="max-h-64 overflow-auto">
@@ -196,12 +217,27 @@ function TrialScreenTable({ rows }: { rows: WasteTrialScreenItem[] }) {
         <TableBody>
           {rows.map((r) => (
             <TableRow key={r.itemId} className="h-9">
-              <TableCell className="text-xs font-medium">{r.itemName}</TableCell>
+              <TableCell className="text-xs font-medium">
+                {r.itemName}
+                {/* FIX (AUDIT-B M2): the signal-1 tier badge (BLATAN red /
+                    OUTLIER amber) — absent on stale pre-fix caches. */}
+                {r.ratioSignal && (
+                  <Badge
+                    variant="outline"
+                    title={ratioSignalTooltip(r.ratioSignal, r.ratioThreshold ?? null)}
+                    className={`ml-2 text-[9px] font-normal h-4 px-1.5 cursor-help ${RATIO_SIGNAL_BADGE_CLASS[r.ratioSignal]}`}
+                  >
+                    {r.ratioSignal}
+                  </Badge>
+                )}
+              </TableCell>
               <TableCell className="text-right text-xs tabular-nums text-violet-600 dark:text-violet-400">{fmtIDR(r.trialNominal)}</TableCell>
               <TableCell className="text-right text-xs tabular-nums text-muted-foreground">{fmtNum(r.trialQty, r.satuan || '')}</TableCell>
               <TableCell
                 className={`text-right text-xs tabular-nums ${r.trialToBom != null && r.trialToBom >= 0.1 ? 'font-semibold text-red-600 dark:text-red-400' : ''}`}
-                title={r.trialToBom != null ? 'Σ|qtyTrial| ÷ Σ|qtyBom| (unitless — satuan sama)' : 'Tanpa basis BOM — tidak dinormalisasi'}
+                title={r.trialToBom != null
+                  ? `Σ|qtyTrial| ÷ Σ|qtyBom| (unitless — satuan sama)${r.ratioSignal ? ` · lolos sinyal rasio via ${r.ratioSignal}${r.ratioThreshold != null ? ` (ambang ${fmtPct(r.ratioThreshold, false, 2)})` : ''}` : ''}`
+                  : 'Tanpa basis BOM — tidak dinormalisasi'}
               >
                 {r.trialToBom != null ? fmtPct(r.trialToBom, false, 1) : '—'}
               </TableCell>
@@ -505,13 +541,18 @@ export const WasteParetoCard = memo(function WasteParetoCard({
               <div className="px-4 pb-3">
                 {trialScreen.length === 0 ? (
                   <p className="text-xs text-muted-foreground py-2 text-center">
-                    Tidak ada item yang lolos 3 sinyal screen trial pada slice ini — indikasi pemakaian akun trial masih wajar (R&amp;D).
+                    Tidak ada item yang lolos 3 sinyal screen trial pada slice ini (baik bar absolut 5% maupun outlier robust tidak terpicu) —
+                    indikasi pemakaian akun trial masih wajar (R&amp;D).
                   </p>
                 ) : (
                   <>
                     <p className="text-[11px] text-muted-foreground mb-1.5">
                       Item dengan akun TRIAL yang tampak menyalahgunaan — ketiga sinyal terpenuhi (SEMUA, konservatif):
-                      rasio trial/BOM ≥ 5% · ≥ 3 bulan persisten · nilai ≥ Rp 100 rb.{' '}
+                      rasio trial/BOM lolos dua-tier{' '}
+                      (<span className="font-medium text-red-700 dark:text-red-400">BLATAN</span>: bar absolut ≥ 5%{' '}
+                      ATAU <span className="font-medium text-amber-700 dark:text-amber-400">OUTLIER</span>: ≥ median + 3×1,4826×MAD
+                      populasi item ber-BOM pada slice ini — guard &lt; 5 item / MAD = 0 → hanya bar absolut; item tanpa trial ikut baseline
+                      rasio 0) · ≥ 3 bulan persisten · nilai ≥ Rp 100 rb.{' '}
                       <span className="font-medium text-violet-700 dark:text-violet-400">INDIKASI</span> — bukan bukti;
                       verifikasi semantik akun trial sebelum menyimpulkan.
                     </p>

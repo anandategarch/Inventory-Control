@@ -176,32 +176,57 @@ export async function GET(req: NextRequest) {
     // "~8s" — after the dead-compute removal + sections-aware fetching the
     // cold path depends on how many sections are selected; a warm q-* row
     // from a preceding dashboard view cuts it further).
-    const { data: exportData } = await withCacheAndDedup<{ bufferBase64: string; fileName: string }>(
-      cacheKey,
-      EXPORT_CACHE_TTL,
-      async () => {
-        // Stage 1 — fetch the data the selected sections need
-        // (FIX BUG-3-a P1/P2: the 5 dead queries are gone and ?sections=
-        // now gates the FETCHING too — an "exec only" export no longer pays
-        // q-trend + the top-items batch. See data-fetcher.ts header for the
-        // section → query map). Throws EarlyHttpResponse on 404 (no records
-        // for the filter).
-        const params: ReportParams = {
-          monthParam, week, area, outletCode, itemName, pic, kelompok,
-          userCompareWeek, userCompareMonth, sections, startedAt,
-        };
-        const { data, ctx } = await fetchReportData(params);
+    const runExportPipeline = () =>
+      withCacheAndDedup<{ bufferBase64: string; fileName: string }>(
+        cacheKey,
+        EXPORT_CACHE_TTL,
+        async () => {
+          // Stage 1 — fetch the data the selected sections need
+          // (FIX BUG-3-a P1/P2: the 5 dead queries are gone and ?sections=
+          // now gates the FETCHING too — an "exec only" export no longer pays
+          // q-trend + the top-items batch. See data-fetcher.ts header for the
+          // section → query map). Throws EarlyHttpResponse on 404 (no records
+          // for the filter).
+          const params: ReportParams = {
+            monthParam, week, area, outletCode, itemName, pic, kelompok,
+            userCompareWeek, userCompareMonth, sections, startedAt,
+          };
+          const { data, ctx } = await fetchReportData(params);
 
-        // Stage 2 — assemble the PDF document (cover band + numbered
-        // section blocks (filtered by ?sections=) + running header/footer +
-        // vector charts). Returns { bufferBase64, fileName } for the cache
-        // wrapper — P3-HYG-4: base64 keeps the cache row compact +
-        // JSON-serializable (see pdf-builder.ts).
-        // EXPORT-TRIM: 6 sections remain (exec/growth/topItems/variance/
-        // itemTrend/trend).
-        return buildPdfReport(data, ctx);
-      },
-    );
+          // Stage 2 — assemble the PDF document (cover band + numbered
+          // section blocks (filtered by ?sections=) + running header/footer +
+          // vector charts). Returns { bufferBase64, fileName } for the cache
+          // wrapper — P3-HYG-4: base64 keeps the cache row compact +
+          // JSON-serializable (see pdf-builder.ts).
+          // EXPORT-TRIM: 6 sections remain (exec/growth/topItems/variance/
+          // itemTrend/trend).
+          return buildPdfReport(data, ctx);
+        },
+      );
+
+    // FIX (AUDIT-C F4): single cold-path retry. Observed live once: the
+    // FIRST hit after a cold Vercel function start returned a generic 500
+    // ("Gagal memproses permintaan") while three immediate retries were
+    // stable 200s — the failure pattern of cold-path Prisma pool
+    // contention (the export pipeline fans out ~17 queries; $transaction
+    // maxWait can be exceeded while the lazy-init pool warms on a cold
+    // iad1→sin1 function). The in-flight dedup map auto-cleans REJECTED
+    // promises (inflight.ts setInflight finally-hook), so a re-call after
+    // a failed attempt registers a FRESH computation — the retry cannot
+    // re-await the dead promise. EarlyHttpResponse is EXCLUDED: it is the
+    // measured 404 short-circuit (no records for the filter), not a
+    // transient fault — rethrow it so the outer catch returns the embedded
+    // response verbatim. A second failure propagates to the generic catch
+    // exactly as before (one retry, no loops).
+    let exportAttempt: Awaited<ReturnType<typeof runExportPipeline>>;
+    try {
+      exportAttempt = await runExportPipeline();
+    } catch (e) {
+      if (e instanceof EarlyHttpResponse) throw e;
+      logger.warn('[export-report] percobaan cold-path #1 gagal — retry sekali (AUDIT-C F4)', { error: e });
+      exportAttempt = await runExportPipeline();
+    }
+    const { data: exportData } = exportAttempt;
 
     // Reconstruct the binary Buffer from the cached/fresh base64 payload +
     // send as PDF download. Same response shape for both cache hit and

@@ -22,6 +22,10 @@
 //  (susut/sales > mean+2σ riwayat sendiri, bulan sales>0 saja);
 //  hanya dirender saat susutSpikeMonths > 0 (field ADDITIF — cache
 //  pra-W11 tidak memilikinya).
+//  FIX (AUDIT-B M3): tooltip badge S2σ kini membawa baseline n
+//  outlet tsb (susutRatioMonths — "dari N bulan ber-sales, min. 3";
+//  field ADDITIF, fallback teks lama saat absen agar tidak
+//  menampilkan "undefined").
 // ============================================================
 
 import { memo, useState } from 'react';
@@ -152,7 +156,7 @@ export const WasteProfileTable = memo(function WasteProfileTable({
                           {(o.susutSpikeMonths ?? 0) > 0 && (
                             <Badge
                               variant="outline"
-                              title={`${o.susutSpikeMonths} bulan lonjakan SUSUT/sales > mean + 2σ vs riwayat window sendiri (bulan sales > 0 saja, min. 3 bulan) — twin metric-swap dari detektor spike waste; indikasi masalah penyimpanan/cold-chain, bukan bukti`}
+                              title={`${o.susutSpikeMonths} bulan lonjakan SUSUT/sales > mean + 2σ vs riwayat window sendiri (${o.susutRatioMonths != null ? `dari ${o.susutRatioMonths} bulan ber-sales, min. 3` : 'bulan sales > 0 saja, min. 3 bulan'}) — twin metric-swap dari detektor spike waste; indikasi masalah penyimpanan/cold-chain, bukan bukti`}
                               className="text-[9px] font-normal text-sky-700 dark:text-sky-400 border-sky-300/70 dark:border-sky-800/70 bg-sky-50/60 dark:bg-sky-950/30 h-4 px-1.5 cursor-help"
                             >
                               S2σ×{o.susutSpikeMonths}

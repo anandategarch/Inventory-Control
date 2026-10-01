@@ -291,11 +291,14 @@ describe('queryWasteTopItems', () => {
     // without BOM excluded from the denominator) = 1.0 → widespread;
     // persistence 7/8 ≥ ceil(8/2)=4 months → persistent → SISTEMIK.
     // HHI null (3 active outlets < 10 guard); paretoK null (the single
-    // item's cumulativeShare 0.5 never reaches 0.8).
+    // item's 50% waste share never reaches 0.8).
+    // FIX (AUDIT-B M1): outletsActiveWithBom mirrors the fixed numerator
+    // (BOM>0 ∧ waste>0 distribution rows — all 3 waste rows here).
     expect(result.items[0].quadrant).toEqual({
       quadrantClass: 'SISTEMIK',
       prevalence: 1,
       outletsWithBom: 3,
+      outletsActiveWithBom: 3,
       persistence: 0.875,
       hhi: null,
     });

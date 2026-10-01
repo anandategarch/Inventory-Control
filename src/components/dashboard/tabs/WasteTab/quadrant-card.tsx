@@ -6,7 +6,9 @@
 //  Item-level prevalence × persistence quadrant: is an item's waste
 //  a GLOBAL recipe/process problem (many outlets × many months —
 //  SISTEMIK) or a LOCAL one-off (INSIDEN)?
-//    X = prevalence  (outlet waste>0 / outlet ber-BOM, %)
+//    X = prevalence  (outlet ber-BOM yang ada waste-nya /
+//                outlet ber-BOM, % — FIX AUDIT-B M1: both sides on the
+//                BOM usage basis, so the axis value is always ≤ 100%)
 //    Y = persistence (bulan aktif / bulan window, %)
 //    bubble size     = share of the network's total waste
 //    color           = quadrant class
@@ -49,9 +51,16 @@ type QuadrantClass = 'SISTEMIK' | 'MUSIMAN' | 'LOKAL-KRONIS' | 'INSIDEN';
 
 interface ItemQuadrant {
   quadrantClass: QuadrantClass;
-  /** outletsActive(waste>0) / outletsWithBom — null = no BOM basis. */
+  /** FIX (AUDIT-B M1): BOM>0∧waste>0 outlets / outletsWithBom — null = no
+   *  BOM basis (always ≤ 1 now; the pre-fix numerator counted orphan-waste
+   *  outlets too and could exceed 1, clipping the scatter domain). */
   prevalence: number | null;
   outletsWithBom: number;
+  /** FIX (AUDIT-B M1, additive): the prevalence numerator (BOM>0 ∧ waste>0
+   *  outlets). Optional — a stale pre-fix cache (5-min TTL) lacks it; the
+   *  card then falls back to the item's outletsActive (the OLD numerator,
+   *  coherent with that cache's OLD prevalence value). */
+  outletsActiveWithBom?: number;
   /** monthsActive / windowMonths. */
   persistence: number;
   /** Σ(share²) per outlet — null when < 10 active outlets. */
@@ -127,6 +136,9 @@ interface ScatterPoint {
   itemId: number;
   prevalenceRaw: number | null;
   outletsActive: number;
+  /** FIX (AUDIT-B M1): display numerator = BOM>0 ∧ waste>0 outlets (falls
+   *  back to outletsActive on stale pre-fix caches). */
+  outletsActiveWithBom: number;
   outletsWithBom: number;
   monthsActive: number;
   windowMonths: number;
@@ -253,6 +265,10 @@ export const WasteQuadrantCard = memo(function WasteQuadrantCard({
         itemId: it.itemId,
         prevalenceRaw: q.prevalence,
         outletsActive: it.outletsActive,
+        // FIX (AUDIT-B M1): coherent "X/Y outlet" pair — the numerator that
+        // the (fixed) prevalence actually divides (orphan-waste outlets
+        // excluded). Stale pre-fix cache → fall back to the old numerator.
+        outletsActiveWithBom: q.outletsActiveWithBom ?? it.outletsActive,
         outletsWithBom: q.outletsWithBom,
         monthsActive: it.monthsActive,
         windowMonths,
@@ -276,7 +292,7 @@ export const WasteQuadrantCard = memo(function WasteQuadrantCard({
     const listed = points
       .map(
         (p) =>
-          `${p.itemName}: prevalence ${p.outletsActive}/${p.outletsWithBom} outlet, persistensi ${p.monthsActive}/${p.windowMonths} bulan, share ${fmtPct(p.share, false, 1)}, kelas ${p.quadrantClass}`,
+          `${p.itemName}: prevalence ${p.outletsActiveWithBom}/${p.outletsWithBom} outlet (ber-BOM yang menimbang waste), persistensi ${p.monthsActive}/${p.windowMonths} bulan, share ${fmtPct(p.share, false, 1)}, kelas ${p.quadrantClass}`,
       )
       .join('; ');
     return `Diagram kuadran prevalence × persistensi item waste. ${guide}${listed ? ` Titik: ${listed}.` : ' Tidak ada titik terplot.'}`;
@@ -305,14 +321,14 @@ export const WasteQuadrantCard = memo(function WasteQuadrantCard({
         </CardTitle>
         <p className="text-xs text-muted-foreground ml-9">
           Waste bahan ini masalah resep/proses GLOBAL (banyak outlet × banyak bulan) atau insiden lokal? Sumbu X = prevalence
-          (outlet waste&gt;0 / outlet ber-BOM), sumbu Y = persistensi (bulan aktif / bulan window), ukuran bubble = share waste network.
+          (outlet ber-BOM yang ada waste-nya / outlet ber-BOM — FIX AUDIT-B M1: kedua sisi berbasis pemakaian BOM, selalu ≤ 100%), sumbu Y = persistensi (bulan aktif / bulan window), ukuran bubble = share waste network.
           <span className="font-medium text-foreground/70"> SISTEMIK</span> = kandidat masalah resep/proses lintas outlet —
           benahi di akar (resep/SOP prep), bukan kejaran per outlet.
         </p>
         {(paretoK != null || sistK > 0) && (
           <div className="flex items-center gap-2 pt-2 flex-wrap ml-9">
             {paretoK != null && (
-              <Badge variant="secondary" className="text-xs tabular-nums font-medium" title="Jumlah item Pareto untuk mencapai 80% total waste scope (kumulatif share).">
+              <Badge variant="secondary" className="text-xs tabular-nums font-medium" title="Jumlah item (rank by share waste) untuk mencapai 80% total waste scope — FIX AUDIT-B M4: kumulatif dihitung atas urutan share waste, tidak tergantung metrik pengurutan slice.">
                 Pareto k = {paretoK} item → 80%
               </Badge>
             )}
@@ -395,7 +411,7 @@ export const WasteQuadrantCard = memo(function WasteQuadrantCard({
                             Kuadran: <span style={{ color: d.fill }} className="font-medium">{d.quadrantClass}</span>
                           </div>
                           <div className="text-muted-foreground tabular-nums">
-                            Prevalence: {d.outletsActive}/{d.outletsWithBom} outlet ({fmtPct(d.prevalenceRaw ?? 0, false, 0)})
+                            Prevalence: {d.outletsActiveWithBom}/{d.outletsWithBom} outlet ber-BOM ({fmtPct(d.prevalenceRaw ?? 0, false, 0)})
                           </div>
                           <div className="text-muted-foreground tabular-nums">
                             Persistensi: {d.monthsActive}/{d.windowMonths} bulan ({fmtPct(d.y / 100, false, 0)})
@@ -441,7 +457,7 @@ export const WasteQuadrantCard = memo(function WasteQuadrantCard({
                   <TableRow className="border-b hover:bg-transparent">
                     <TableHead className="text-xs font-semibold uppercase tracking-wider h-8">Item</TableHead>
                     <TableHead className="text-center text-xs font-semibold uppercase tracking-wider h-8">Kuadran</TableHead>
-                    <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8" title="Outlet dengan waste > 0 dibanding outlet ber-BOM (denominator basis pemakaian, bukan kehadiran record).">Prevalence</TableHead>
+                    <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8" title="Outlet ber-BOM yang ada waste-nya dibanding semua outlet ber-BOM (numerator maupun denominator berbasis pemakaian — waste tanpa BOM dikecualikan, FIX AUDIT-B M1).">Prevalence</TableHead>
                     <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8" title="Bulan aktif (waste > 0) dibanding bulan window same-week.">Persistensi</TableHead>
                     <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8" title="Σ(share²) per outlet atas waste item — hanya dihitung ≥ 10 outlet aktif.">HHI</TableHead>
                     <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">Share</TableHead>
@@ -464,9 +480,9 @@ export const WasteQuadrantCard = memo(function WasteQuadrantCard({
                             <span className="text-xs text-muted-foreground">—</span>
                           )}
                         </TableCell>
-                        <TableCell className="text-right text-xs tabular-nums text-muted-foreground" title={q?.prevalence == null ? 'Tanpa basis BOM di scope (waste tanpa pemakaian tercatat).' : `${fmtPct(q.prevalence, false, 1)} dari outlet ber-BOM`}>
+                        <TableCell className="text-right text-xs tabular-nums text-muted-foreground" title={q?.prevalence == null ? 'Tanpa basis BOM di scope (waste tanpa pemakaian tercatat).' : `${fmtPct(q.prevalence, false, 1)} — outlet ber-BOM yang ada waste-nya / outlet ber-BOM`}>
                           {q && q.prevalence != null
-                            ? `${it.outletsActive}/${q.outletsWithBom} outlet`
+                            ? `${q.outletsActiveWithBom ?? it.outletsActive}/${q.outletsWithBom} outlet`
                             : '—'}
                         </TableCell>
                         <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
@@ -485,7 +501,8 @@ export const WasteQuadrantCard = memo(function WasteQuadrantCard({
             <p className="px-4 py-2.5 text-[10px] text-muted-foreground border-t">
               Window {windowMonths > 0 ? `${windowMonths} bulan` : '—'} same-week (maks. 12). Ambang kuadran: prevalence ≥ 50% outlet
               ber-BOM{thresholdMonths != null && windowMonths > 0 ? ` dan persistensi ≥ ${thresholdMonths}/${windowMonths} bulan (ceil(window/2), adaptif)` : ''}.
-              HHI = Σ(share²) per outlet — hanya untuk item dengan ≥ 10 outlet aktif; “—” = guard/belum tersedia. Prevalence “—” = item tanpa
+              HHI = Σ(share²) per outlet — hanya untuk item dengan ≥ 10 outlet aktif; “—” = guard/belum tersedia. Prevalence = outlet ber-BOM yang
+              ada waste-nya / outlet ber-BOM (kedua sisi berbasis pemakaian — FIX AUDIT-B M1; waste tanpa BOM tak masuk numerator), “—” = item tanpa
               basis BOM di scope. INDIKASI: klasifikasi pola prevalence × persistensi — bukan root cause; SISTEMIK = kandidat masalah
               resep/proses lintas outlet, validasi sebelum aksi.
             </p>

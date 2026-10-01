@@ -436,6 +436,32 @@ describe('buildWastePersistence — transition matrix + network summary', () => 
     expect(summary.persistenceRatio).toBeNull();
     expect(summary.fisherP).toBeCloseTo(1, 12); // [[1,0],[0,1]] → 1
   });
+
+  it('FIX (AUDIT-A F4): December→January is calendar-consecutive — transition pairs survive the calendar-year rollover', () => {
+    // monthKey strings are ISO 'YYYY-MM', so lexicographic order ==
+    // calendar order across years AND nextMonthKey('2025-12') ===
+    // '2026-01': the pair (Des 2025 → Jan 2026) counts as month-over-month.
+    // Pinning this because every other test in this file stays inside a
+    // single calendar year (months 01–10) — the rollover branch
+    // (persistence.ts nextMonthKey m === 12) had zero coverage.
+    const rows = [
+      mrow({ outletCode: 'GA', monthKey: '2025-12', monthLabel: 'Desember 2025', wasteToSales: 0.09 }),
+      mrow({ outletCode: 'GA', monthKey: '2026-01', wasteToSales: 0.09 }),
+      mrow({ outletCode: 'GB', monthKey: '2025-12', monthLabel: 'Desember 2025', wasteToSales: 0.01 }),
+      mrow({ outletCode: 'GB', monthKey: '2026-01', wasteToSales: 0.01 }),
+    ];
+    const { summary, medians } = buildWastePersistence(rows);
+    // String sort keeps the months in calendar order across the year edge.
+    expect(medians.map((m) => m.monthKey)).toEqual(['2025-12', '2026-01']);
+    // ONE consecutive pair per outlet across the rollover: per-month
+    // medians are 0.05 in both months → GA high→high (0.09), GB low→low
+    // (0.01).
+    expect(summary.transitionPairs).toBe(2);
+    expect(summary.transitionHH).toBe(1);
+    expect(summary.transitionLL).toBe(1);
+    expect(summary.transitionHL).toBe(0);
+    expect(summary.transitionLH).toBe(0);
+  });
 });
 
 describe('buildWastePersistence — classification (integration)', () => {
@@ -512,6 +538,48 @@ describe('buildWastePersistence — guards', () => {
     expect(summary.transitionHH).toBe(2);
     expect(summary.transitionLL).toBe(2);
     expect(summary.persistenceRatio).toBeNull(); // P(high|low) = 0/2 = 0 → null
+  });
+
+  it('FIX (AUDIT-A F4): a month with ZERO active rows (all dqError / all sales=0) yields no median entry, no NaN, and breaks the chain', () => {
+    // Months 02 (every row dqError) and 03 (every row sales=0) have no
+    // comparable outlet — pass 1's `ratios.length === 0 → continue` skips
+    // them ENTIRELY: no median entry, monthsWithMedian drops, and the
+    // 01→04 gap left by the two invalid months forms no transition pair.
+    // This is exactly the branch the live DQ months (2026-01/02/06) run on
+    // the real payload — previously unpinned (AUDIT-A F4).
+    const rows = [
+      mrow({ outletCode: 'A', monthKey: '2026-01', wasteToSales: 0.05 }),
+      mrow({ outletCode: 'B', monthKey: '2026-01', wasteToSales: 0.01 }),
+      mrow({ outletCode: 'A', monthKey: '2026-02', wasteToSales: 0.99, dqError: true }),
+      mrow({ outletCode: 'B', monthKey: '2026-02', wasteToSales: 0.99, dqError: true }),
+      mrow({ outletCode: 'A', monthKey: '2026-03', wasteToSales: 0, sales: 0 }),
+      mrow({ outletCode: 'B', monthKey: '2026-03', wasteToSales: 0, sales: 0 }),
+      mrow({ outletCode: 'A', monthKey: '2026-04', wasteToSales: 0.05 }),
+      mrow({ outletCode: 'B', monthKey: '2026-04', wasteToSales: 0.01 }),
+    ];
+    const { medians, summary, outlets } = buildWastePersistence(rows);
+    // Only the two fully-active months carry a median entry.
+    expect(medians.map((m) => m.monthKey)).toEqual(['2026-01', '2026-04']);
+    expect(summary.monthsWithMedian).toBe(2);
+    // No NaN/±Infinity median ever reaches the wire — the skip happens
+    // BEFORE any median arithmetic, never after a 0/0.
+    for (const m of medians) {
+      expect(Number.isFinite(m.medianWasteToSales)).toBe(true);
+    }
+    expect(medians[0].medianWasteToSales).toBeCloseTo(0.03, 12); // [0.05, 0.01]
+    expect(medians[1].medianWasteToSales).toBeCloseTo(0.03, 12);
+    // The 01→04 stretch is NOT calendar-consecutive → zero pairs, null
+    // statistics (JSON-safe).
+    expect(summary.transitionPairs).toBe(0);
+    expect(summary.fisherP).toBeNull();
+    // Per-outlet bookkeeping: 2 active + 1 invalid + 1 zero-sales each;
+    // 2 active months < 6 → TERBATAS.
+    for (const o of outlets) {
+      expect(o.activeMonths).toBe(2);
+      expect(o.invalidMonths).toBe(1);
+      expect(o.zeroSalesMonths).toBe(1);
+      expect(o.persistenceClass).toBe('TERBATAS');
+    }
   });
 });
 

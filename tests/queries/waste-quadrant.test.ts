@@ -14,10 +14,13 @@
 //  3. computeHhi — known distributions: 2 outlets 50/50 → 0.5, 10 equal
 //     → 0.1, single outlet → 1.0, empty/zero waste → null.
 //  4. buildQuadrant — HHI null guard (< 10 active outlets), HHI from the
-//     FULL distribution (waste>0 outlets only), prevalence denominator
-//     BOM>0 discipline (record presence without BOM excluded), paretoK
-//     on known cumulative shares (+ null when the slice never reaches
-//     80%), classCounts, purity (input rows not mutated).
+//     FULL distribution (waste>0 outlets only), prevalence numerator AND
+//     denominator both BOM-basis (FIX AUDIT-B M1: orphan-waste rows
+//     excluded from the numerator — the ratio can never exceed 1), paretoK
+//     on known waste shares over a share-DESC re-sort (FIX AUDIT-B M4:
+//     order-independent — same k under any input order) + null when the
+//     slice never reaches 80%, classCounts, purity (input rows not
+//     mutated).
 import { describe, it, expect } from 'vitest';
 import {
   WASTE_QUADRANT_HHI_MIN_OUTLETS,
@@ -161,9 +164,11 @@ describe('computeHhi', () => {
 // ------------------------------------------------------------
 
 describe('buildQuadrant', () => {
-  it('computes prevalence with the BOM>0 denominator (FIX 1 discipline: record presence excluded)', () => {
+  it('computes prevalence with BOTH sides on the BOM>0 basis (FIX AUDIT-B M1: numerator = BOM ∧ waste>0 rows)', () => {
     // 10 outlets in scope: 8 with BOM, 2 record-presence-only (hasBom 0).
-    // outletsActive (waste>0) = 4 → prevalence 4/8 = 0.5, NOT 4/10.
+    // Numerator (BOM>0 ∧ waste>0 rows) = 4 → prevalence 4/8 = 0.5, NOT
+    // 4/10 — and unlike the pre-fix numerator (the item aggregate's
+    // outletsActive) it is a SUBSET of the denominator by construction.
     const rows = [item({ itemId: 1, outletsActive: 4, monthsActive: 9 })];
     const distribution = dist(1, [
       [1, 100, 1], [2, 100, 1], [3, 100, 1], [4, 100, 1],          // waste + BOM
@@ -172,6 +177,7 @@ describe('buildQuadrant', () => {
     ]);
     const { perItem } = buildQuadrant(rows, distribution, 9);
     expect(perItem.get(1)?.outletsWithBom).toBe(8);
+    expect(perItem.get(1)?.outletsActiveWithBom).toBe(4);
     expect(perItem.get(1)?.prevalence).toBeCloseTo(0.5, 10);
     expect(perItem.get(1)?.persistence).toBeCloseTo(1, 10);
     expect(perItem.get(1)?.quadrantClass).toBe('SISTEMIK');
@@ -212,6 +218,9 @@ describe('buildQuadrant', () => {
       9,
     );
     expect(perItem.get(1)?.outletsWithBom).toBe(0);
+    // FIX (AUDIT-B M1): orphan-waste rows (waste>0 ∧ hasBom=0) count in
+    // NEITHER side of the ratio — the numerator stays 0 here.
+    expect(perItem.get(1)?.outletsActiveWithBom).toBe(0);
     expect(perItem.get(1)?.prevalence).toBeNull();
     // Persistence-only reading: 9/9 months → LOKAL-KRONIS.
     expect(perItem.get(1)?.quadrantClass).toBe('LOKAL-KRONIS');
@@ -232,7 +241,10 @@ describe('buildQuadrant', () => {
     expect(perItem.get(1)?.quadrantClass).toBe('LOKAL-KRONIS');
   });
 
-  it('paretoK = 1-based rank of the first item crossing 80% cumulative share', () => {
+  it('paretoK = 1-based WASTE rank of the first item crossing 80% cumulative share (FIX AUDIT-B M4: share-DESC re-sort)', () => {
+    // Input is waste-ordered here — the share-DESC re-sort is a no-op, so
+    // the classic Pareto reading applies: 0.4 + 0.3 + 0.15 crosses 0.8 at
+    // rank 3.
     const items = [
       item({ itemId: 1, share: 0.3, cumulativeShare: 0.3 }),
       item({ itemId: 2, share: 0.4, cumulativeShare: 0.7 }),
@@ -242,6 +254,33 @@ describe('buildQuadrant', () => {
     const { summary } = buildQuadrant(items, [], 9);
     expect(summary.paretoK).toBe(3); // 0.85 is the first ≥ 0.8
     expect(WASTE_QUADRANT_PARETO_SHARE).toBe(0.8);
+  });
+
+  it('FIX (AUDIT-B M4): paretoK is ORDER-INDEPENDENT — a susut-ordered input (non-waste-rank shares) yields the SAME k', () => {
+    // The metric='susut' payload arrives ordered by susut, so the waste
+    // shares are NOT descending. The pre-fix scan rode cumulativeShare in
+    // INPUT order — on this fixture it would answer 4 (the 4th row is the
+    // first whose input-order running sum reaches 0.8), which is NOT the
+    // waste-rank answer. The fixed builder re-sorts by share DESC first.
+    const susutOrdered = [
+      item({ itemId: 1, share: 0.5, cumulativeShare: 0.5 }),
+      item({ itemId: 2, share: 0.05, cumulativeShare: 0.55 }),
+      item({ itemId: 3, share: 0.05, cumulativeShare: 0.6 }),
+      item({ itemId: 4, share: 0.4, cumulativeShare: 1.0 }),
+    ];
+    const wasteOrdered = [
+      item({ itemId: 1, share: 0.5, cumulativeShare: 0.5 }),
+      item({ itemId: 4, share: 0.4, cumulativeShare: 0.9 }),
+      item({ itemId: 2, share: 0.05, cumulativeShare: 0.95 }),
+      item({ itemId: 3, share: 0.05, cumulativeShare: 1.0 }),
+    ];
+    const susutK = buildQuadrant(susutOrdered, [], 9).summary.paretoK;
+    const wasteK = buildQuadrant(wasteOrdered, [], 9).summary.paretoK;
+    // Share-DESC accumulation: 0.5 → 0.9 ≥ 0.8 → k = 2 under BOTH orders
+    // (and specifically NOT the input-order answer 4 of the old scan).
+    expect(susutK).toBe(2);
+    expect(wasteK).toBe(2);
+    expect(susutK).toBe(wasteK);
   });
 
   it('paretoK null when the returned slice never reaches 80% (tight limit, long tail)', () => {
@@ -305,9 +344,36 @@ describe('buildQuadrant', () => {
       quadrantClass: 'LOKAL-KRONIS',
       prevalence: null,
       outletsWithBom: 0,
+      // FIX (AUDIT-B M1): the BOM-basis numerator — 0 distribution rows.
+      outletsActiveWithBom: 0,
       persistence: 6 / 9,
       hhi: null,
     });
+  });
+
+  it('FIX (AUDIT-B M1): ORPHAN-WASTE rows (waste>0 ∧ hasBom=0) are excluded from the numerator — prevalence never exceeds 1', () => {
+    // Mirrors the live CUP SUNDAE shape that produced 10/7 = 143% pre-fix:
+    // the item aggregate counts 10 waste>0 outlets, but 3 of them have NO
+    // BOM usage basis (orphan waste). The fixed numerator counts only the
+    // 6 BOM-basis wasting outlets → 6/7 ≈ 0.857, ALWAYS ≤ 1.
+    const distribution = dist(1, [
+      [1, 100, 1], [2, 100, 1], [3, 100, 1], [4, 100, 1], [5, 100, 1], [6, 100, 1], // waste + BOM
+      [7, 0, 1],                                                                    // BOM, zero waste
+      [8, 100, 0], [9, 100, 0], [10, 100, 0],                                      // ORPHAN waste (no BOM)
+    ]);
+    const { perItem } = buildQuadrant(
+      [item({ itemId: 1, outletsActive: 10, monthsActive: 9 })],
+      distribution,
+      9,
+    );
+    expect(perItem.get(1)?.outletsWithBom).toBe(7);
+    expect(perItem.get(1)?.outletsActiveWithBom).toBe(6);
+    expect(perItem.get(1)?.prevalence).toBeCloseTo(6 / 7, 10);
+    expect(perItem.get(1)?.prevalence).toBeLessThanOrEqual(1);
+    // The orphan outlets do not flip the classification: 6/7 ≥ 0.5 and
+    // 9/9 months persistent → SISTEMIK (same class as the pre-fix reading,
+    // now on an honest ratio).
+    expect(perItem.get(1)?.quadrantClass).toBe('SISTEMIK');
   });
 });
 

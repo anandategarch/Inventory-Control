@@ -24,10 +24,12 @@
 //  6. Epistemic labels — components TERUKUR, scenarios + decile
 //     HIPOTESIS (the spec's presentation guard).
 //  7. Purity — the builder never mutates its inputs.
-//  8. Wiring — queryWasteNetwork attaches the additive top-level
-//     attribution block (ONE merged SQL round trip, unchanged — the
-//     builder is a pure third pass), and the waste-series barrel
-//     re-exports the new surface (import paths stable for consumers).
+//  8. Wiring (FIX AUDIT-C F1 — the promised tests now EXIST; the
+//     vi.hoisted db mock below used to be dead code) — queryWasteNetwork
+//     attaches the additive top-level attribution block (ONE merged SQL
+//     round trip, unchanged — the builder is a pure third pass), and the
+//     waste-series barrel re-exports the new surface (import paths stable
+//     for consumers).
 //
 // Pure builders are deep-imported from the attribution module (no db
 // closure); the wiring block imports the barrel like the sibling
@@ -40,6 +42,13 @@ import {
   WASTE_ATTRIBUTION_DISCLOSURE,
   WASTE_ATTRIBUTION_SCENARIO_P,
 } from '@/lib/queries/waste/network/attribution';
+// Wiring (FIX AUDIT-C F1): through the BARREL — the exact import path
+// real consumers use (/api/waste-series route + export-report
+// data-fetcher); exercising it also pins the barrel re-export surface.
+import {
+  queryWasteNetwork,
+  buildWasteAttribution as buildWasteAttributionBarrel,
+} from '@/lib/queries/waste/waste-series';
 import type {
   WasteAttributionKpisInput,
   WasteAttributionOutletInput,
@@ -323,6 +332,135 @@ describe('buildWasteAttribution — epistemic labels', () => {
     for (const c of a.components) expect(c.epistemicLabel).toBe('TERUKUR');
     for (const s of a.scenarios) expect(s.epistemicLabel).toBe('HIPOTESIS');
     expect(a.decile.epistemicLabel).toBe('HIPOTESIS');
+  });
+});
+
+// ------------------------------------------------------------
+// 8. Wiring — queryWasteNetwork + barrel surface (FIX AUDIT-C F1:
+// the header promised these tests since W10; they now exist, and the
+// formerly dead vi.hoisted db mock above is the one they drive).
+// ------------------------------------------------------------
+
+describe('queryWasteNetwork wiring (W10 additive attribution block)', () => {
+  const HI_LOSS = 50_000_000;
+
+  /** Raw $queryRaw row (same shape as the sibling wiring tests). */
+  function rawRow(overrides: Partial<Record<string, number | bigint | string | boolean>> = {}) {
+    return {
+      outletCode: 'OUT-A',
+      outletName: 'Outlet A',
+      area: 'JAKARTA 1',
+      monthKey: '2026-08',
+      monthLabel: 'Agustus 2026',
+      sales: 1_000_000,
+      waste: 25_000,
+      susut: 5_000,
+      trial: 2_000,
+      residual: 0,
+      totalLoss: 40_000,
+      totalSurplus: 5_000,
+      spike: 0,
+      dqError: false,
+      dqErrorCount: 0,
+      ...overrides,
+    };
+  }
+
+  it('attaches the attribution block (components W/S/T + explainedShare + scenarios + decile + disclosure) with NO extra SQL round-trip', async () => {
+    // 2 outlets × 2 months (all sales > 0), designed so the KPIs are
+    // hand-computable AND the decile index PROVES per-outlet residual
+    // attribution flows through:
+    //   OUT-A: sales 2.000.000, waste 50.000, residual 0        (ratio 0,025)
+    //   OUT-B: sales 1.000.000, waste 20.000, residual 100.000  (ratio 0,020)
+    // Base ranking: A first (n=2 → deciles 5/10). At p=0,5 OUT-B's
+    // re-estimated waste 20.000 + 50.000 = 70.000 → ratio 0,07 flips the
+    // ranking → BOTH outlets move decile. Without the per-outlet
+    // residual flowing into the ranking this index would be 0.
+    mockQueryRaw.mockResolvedValueOnce([
+      rawRow({ outletCode: 'OUT-A', monthKey: '2026-07', monthLabel: 'Juli 2026' }),
+      rawRow({ outletCode: 'OUT-A', monthKey: '2026-08' }),
+      rawRow({
+        outletCode: 'OUT-B', outletName: 'Outlet B', monthKey: '2026-07',
+        monthLabel: 'Juli 2026', sales: 500_000, waste: 10_000, susut: 0,
+        trial: 0, residual: 50_000, totalLoss: 60_000, totalSurplus: 0,
+      }),
+      rawRow({
+        outletCode: 'OUT-B', outletName: 'Outlet B', monthKey: '2026-08',
+        sales: 500_000, waste: 10_000, susut: 0, trial: 0,
+        residual: 50_000, totalLoss: 60_000, totalSurplus: 0,
+      }),
+    ]);
+    const result = await queryWasteNetwork('WEEK 4', '2026-08', {}, HI_LOSS);
+
+    // ONE merged SQL round-trip — the attribution pass is pure (the
+    // set_config $executeRaw is the separate withStatementTimeout call).
+    expect(mockQueryRaw).toHaveBeenCalledTimes(1);
+    expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
+
+    // ---- The additive top-level block is present and complete. ----
+    const a = result.attribution;
+    expect(a).toBeDefined();
+    // Measured inputs echo the window KPIs the query computed.
+    expect(a.sales).toBe(3_000_000);
+    expect(a.waste).toBe(70_000);
+    expect(a.susut).toBe(10_000);
+    expect(a.trial).toBe(4_000);
+    expect(a.residual).toBe(100_000);
+    expect(a.totalLoss).toBe(200_000);
+    expect(result.kpis.waste).toBe(70_000); // wired from the SAME kpis
+    // Composition: W+S+T = 84.000 of a 200.000 loss → 0,42.
+    expect(a.explainedNominal).toBe(84_000);
+    expect(a.explainedShare).toBeCloseTo(0.42, 10);
+    expect(a.residualShare).toBeCloseTo(0.5, 10);
+    expect(a.components).toHaveLength(3);
+    expect(a.components.map((c) => c.key)).toEqual(['waste', 'susut', 'trial']);
+    expect(a.components[0].nominal).toBe(70_000);
+    expect(a.components[0].shareOfLoss).toBeCloseTo(0.35, 10);
+    expect(a.components[1].nominal).toBe(10_000);
+    expect(a.components[1].shareOfLoss).toBeCloseTo(0.05, 10);
+    expect(a.components[2].nominal).toBe(4_000);
+    expect(a.components[2].shareOfLoss).toBeCloseTo(0.02, 10);
+    // Scenario grid: p=0 reproduces recorded waste; p=0,5 adds half the
+    // residual (trueWaste(0,5) = 70.000 + 50.000 = 120.000).
+    expect(a.scenarios.map((s) => s.p)).toEqual([...WASTE_ATTRIBUTION_SCENARIO_P]);
+    expect(a.scenarios[0].trueWaste).toBe(70_000);
+    expect(a.scenarios[2].trueWaste).toBe(120_000);
+    expect(a.scenarios[2].impliedWasteToSales).toBeCloseTo(0.04, 10);
+    // Decile index: both outlets ranked (sales > 0); the p=0,5 headline
+    // shows 2 moves — the per-outlet residual attribution FLOWS (see
+    // fixture note above); p=0 is the 0-move sanity anchor.
+    expect(a.decile.outletsRanked).toBe(2);
+    expect(a.decile.outletsExcluded).toBe(0);
+    expect(a.decile.p).toBe(WASTE_ATTRIBUTION_DECILE_P);
+    expect(a.scenarios[0].decileShifts).toBe(0);
+    expect(a.decile.outletsMoved).toBe(2);
+    expect(a.decile.movedShare).toBeCloseTo(1, 10);
+    // The mandatory structural disclosure rides on the response block.
+    expect(a.disclosure).toBe(WASTE_ATTRIBUTION_DISCLOSURE);
+
+    // The per-outlet window aggregates the ranking consumed are on the
+    // response rows (base fields intact — additive merge).
+    const outB = result.outlets.find((o) => o.outletCode === 'OUT-B')!;
+    expect(outB.sales).toBe(1_000_000);
+    expect(outB.residual).toBe(100_000);
+    expect(outB.rankWasteToSales).toBe(2);
+    // Persistence fields (W2) still ride along — the passes coexist.
+    expect(result.outlets.every((o) => o.persistenceClass !== undefined)).toBe(true);
+  });
+
+  it('barrel re-exports the W10 surface (import paths stable for consumers)', () => {
+    // The barrel-bound builder IS the deep-imported one (same module
+    // instance through network/index.ts) — consumers that follow the
+    // documented barrel path get the exact same function.
+    expect(typeof buildWasteAttributionBarrel).toBe('function');
+    expect(buildWasteAttributionBarrel).toBe(buildWasteAttribution);
+    // ...and it behaves identically on a known input.
+    const viaBarrel = buildWasteAttributionBarrel(
+      { waste: 550, susut: 250, trial: 50, residual: 1_000, totalLoss: 2_000, sales: 10_000 },
+      [],
+    );
+    expect(viaBarrel.explainedShare).toBeCloseTo(0.425, 10);
+    expect(viaBarrel.disclosure).toBe(WASTE_ATTRIBUTION_DISCLOSURE);
   });
 });
 

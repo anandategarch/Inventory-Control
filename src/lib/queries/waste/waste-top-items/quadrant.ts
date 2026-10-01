@@ -8,12 +8,24 @@
 //  paretoK + class distribution.
 //
 //  Methodology (findings-DEEPWASTE2-B §2 W3, Readiness-A):
-//    - prevalence  = outletsActive(waste>0) / outletsWithBom — the
-//      denominator counts ONLY outlets with BOM>0 for the item
+//    - prevalence  = wastingBomOutlets / outletsWithBom — BOTH sides of
+//      the ratio are anchored to the BOM usage basis (FIX AUDIT-B M1):
+//      the denominator counts ONLY outlets with BOM>0 for the item
 //      (BUGHUNT-R1 FIX 1 discipline: mere record presence overstated
 //      spread — an item stocked in 343 outlets but wasting in 1 used
-//      to read 343; here an item prepped nowhere but wasting in 1
-//      outlet must not read "100% prevalent" either).
+//      to read 343), and the numerator counts only the BOM>0 outlets
+//      that actually weighed waste (waste>0) — orphan-waste rows
+//      (waste WITHOUT a BOM usage basis) are excluded from the
+//      numerator too: without a usage basis there is no evidence of
+//      spread. The ratio is therefore ALWAYS ≤ 1 (the pre-fix
+//      numerator was the item aggregate's outletsActive — any waste>0
+//      row — which is not a subset of the denominator: live
+//      11/6 and 10/7 readings pushed bubbles past the scatter's
+//      0-100% domain). Orphan waste stays visible through the item's
+//      outletsActive field (the Pareto card's #Outlet column) and the
+//      prevalence null branch (NO BOM outlet at all → conservative
+//      LOW, an item prepped nowhere but wasting in 1 outlet must not
+//      read "100% prevalent").
 //    - persistence = monthsActive / windowMonths over the REAL window
 //      (FIX 2 pattern: the classification threshold is
 //      ceil(ACTUAL windowMonths/2) months, NOT the 12-month cap's 6 —
@@ -115,8 +127,12 @@ export function classifyQuadrantClass(
  * PURE — does not mutate `items` (the caller assigns `row.quadrant`).
  *
  * @param items  the built top-item rows (share/cumulativeShare already
- *               computed by buildWasteTopItems — paretoK rides on them;
- *               outletsActive/monthsActive are the FIX 1 waste>0 counts)
+ *               computed by buildWasteTopItems — paretoK rides on the
+ *               WASTE share; outletsActive/monthsActive are the FIX 1
+ *               waste>0 counts — monthsActive feeds persistence, while
+ *               outletsActive itself NO LONGER feeds prevalence: the
+ *               numerator is re-derived from the distribution rows on
+ *               the BOM basis, FIX AUDIT-B M1)
  * @param distribution full per-(item, outlet) rows from the no-cap
  *                     GROUP BY round trip (waste + BOM>0 flag)
  * @param windowMonths the REAL window month count (adaptive thresholds)
@@ -148,8 +164,20 @@ export function buildQuadrant(
     // Prevalence denominator: outlets with BOM>0 for THIS item (usage
     // basis). Record presence without BOM (hasBom 0) is deliberately
     // excluded — FIX 1 discipline extended to the denominator.
+    // FIX (AUDIT-B M1): the NUMERATOR is derived from the SAME
+    // distribution rows — outlets with BOM>0 AND waste>0 — instead of
+    // the item aggregate's outletsActive (any waste>0 row, orphan waste
+    // included). The old numerator was NOT a subset of the denominator:
+    // orphan-waste outlets (waste without a BOM usage basis) pushed live
+    // prevalence above 1 (11/6, 10/7, 336/335, 118/117 — bubbles drawn
+    // outside the scatter's fixed [0,100]% domain). Both sides on the
+    // usage basis → the ratio is always ≤ 1; the orphan-waste outlets
+    // remain visible via the item's outletsActive (Pareto #Outlet col).
     const outletsWithBom = rows.filter((r) => toNum(r.hasBom) > 0).length;
-    const prevalence = outletsWithBom > 0 ? item.outletsActive / outletsWithBom : null;
+    const outletsActiveWithBom = rows.filter(
+      (r) => toNum(r.hasBom) > 0 && toNum(r.waste) > 0,
+    ).length;
+    const prevalence = outletsWithBom > 0 ? outletsActiveWithBom / outletsWithBom : null;
 
     // HHI over the FULL per-outlet waste distribution (no cap). Only
     // waste>0 outlets carry shares (zeros contribute 0 anyway); the
@@ -167,23 +195,44 @@ export function buildQuadrant(
       quadrantClass,
       prevalence,
       outletsWithBom,
+      // FIX (AUDIT-B M1): the prevalence numerator (BOM>0 ∧ waste>0
+      // distribution rows) exposed so the UI can show the coherent
+      // "X/Y outlet" pair — the item-level outletsActive (any waste>0)
+      // overcounts it by the orphan-waste outlets. Additive field.
+      outletsActiveWithBom,
       persistence: windowMonths > 0 ? item.monthsActive / windowMonths : 0,
       hhi,
     });
   }
 
-  // paretoK: 1-based rank of the first item whose CUMULATIVE share
-  // crosses the 80% target. The rows arrive share-sorted from the SQL
-  // round (buildWasteTopItems preserves that order), but the pure
-  // builder re-derives nothing — it trusts cumulativeShare, exactly
-  // like the Pareto card's "kumulatif ≥ 80%" highlight. Null when the
-  // slice never reaches the target (tight limit over a long tail) or
-  // when there is no population to share out.
+  // paretoK: 1-based rank of the first item whose CUMULATIVE network-waste
+  // share crosses the 80% target.
+  //
+  // FIX (AUDIT-B M4): the scan used to ride `cumulativeShare` in the INPUT
+  // order — valid only when the input is waste-ordered. Under
+  // metric='susut'/'trial' the query orders the top-N by the ACTIVE metric,
+  // so the input order is NOT the waste rank: a slice that happened to
+  // cross 80% waste in susut-order reported a paretoK that was NOT "#items
+  // to 80% network waste" (live metric=susut: null — the slice holds only
+  // ~34% of scope waste; the auditor's contrast case would have produced a
+  // wrong number instead). `share` is WASTE-semantic in every metric view
+  // (builders.ts: share = totalWaste / populationTotal — the quadrant is
+  // waste-semantic by design), so the running sum is re-derived over a
+  // share-DESC COPY of the rows: order-independent, waste-ranked — the
+  // same k under the waste, susut or trial ordering of the same slice.
+  // Null when the returned slice never reaches the target (tight limit
+  // over a long tail) or when there is no population to share out (all
+  // shares 0). Purity: the sort runs on a copy — `items` is not mutated.
   let paretoK: number | null = null;
-  for (let i = 0; i < items.length; i += 1) {
-    if (items[i].cumulativeShare >= WASTE_QUADRANT_PARETO_SHARE) {
-      paretoK = i + 1;
-      break;
+  if (items.length > 0) {
+    const byShareDesc = [...items].sort((a, b) => b.share - a.share);
+    let cumulative = 0;
+    for (let i = 0; i < byShareDesc.length; i += 1) {
+      cumulative += byShareDesc[i].share;
+      if (cumulative >= WASTE_QUADRANT_PARETO_SHARE) {
+        paretoK = i + 1;
+        break;
+      }
     }
   }
 

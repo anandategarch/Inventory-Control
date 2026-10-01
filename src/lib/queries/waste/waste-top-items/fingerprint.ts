@@ -37,9 +37,38 @@
 //      explained loss, never which. W/S-DOMINANT carry the same
 //      pattern-not-root-cause caveat (the summary's epistemicLabel).
 //   d. Trial screen signals (documented tunables in ./constants.ts):
-//        ratio       : trialQty / bomQty ≥ WASTE_TRIAL_SCREEN_BOM_RATIO
-//                      (unitless — same item/satuan on both sides; null
-//                      when bomQty = 0 → NOT screened, no usage basis)
+//        ratio       : TWO-TIER signal-1 (FIX AUDIT-B M2) — an item
+//                      passes via EITHER
+//                        'BLATAN'  : trialQty / bomQty ≥
+//                      WASTE_TRIAL_SCREEN_BOM_RATIO (0.05 — the absolute
+//                      bar: ≥ 5% of theoretical usage booked as trial,
+//                      far beyond R&D sampling), OR
+//                        'OUTLIER' : trialQty / bomQty ≥ median +
+//                      WASTE_TRIAL_SCREEN_OUTLIER_Z(3) ×
+//                      WASTE_TRIAL_SCREEN_MAD_SCALE(1.4826) × MAD of the
+//                      BOM-basis item population ON THIS SLICE (unusually
+//                      high vs peers even far below the absolute bar).
+//                      BLATAN wins when both hold (the absolute bar is
+//                      the stronger, population-independent reading).
+//                      Population = every input item with bomQty > 0;
+//                      zero-trial items JOIN AT RATIO 0 (zero-inflation
+//                      honesty — the rate-league precedent: excluding
+//                      them would deflate the median and inflate the
+//                      tier). Guards: population < MIN_POPULATION (5) OR
+//                      MAD = 0 → outlier tier OFF, absolute bar only
+//                      (below 5 items the robust stats are arithmetic,
+//                      not evidence; MAD = 0 means more than half the
+//                      population sits exactly on the median — no
+//                      scale, no outlier claim). Null basis (bomQty = 0)
+//                      items are NOT screened and NOT in the population.
+//                      WHY two-tier: the live ratio distribution tops out
+//                      at 0.51% — the absolute 5% bar alone left the
+//                      screen permanently empty (29 items passed the
+//                      value signal, 31 the persistence signal, ZERO the
+//                      ratio) — a detector that can never fire is not a
+//                      detector; the robust tier makes "unusual for this
+//                      network" screenable while the absolute bar stays
+//                      as the drift-proof anchor.
 //        persistence : trialMonthsActive ≥ WASTE_TRIAL_SCREEN_MIN_MONTHS
 //                      (months with trial > 0 — FIX 1 discipline)
 //        high-value  : trialNominal ≥ WASTE_TRIAL_SCREEN_MIN_NOMINAL
@@ -66,8 +95,11 @@
 // ============================================================
 import {
   WASTE_TRIAL_SCREEN_BOM_RATIO,
+  WASTE_TRIAL_SCREEN_MAD_SCALE,
   WASTE_TRIAL_SCREEN_MIN_MONTHS,
   WASTE_TRIAL_SCREEN_MIN_NOMINAL,
+  WASTE_TRIAL_SCREEN_MIN_POPULATION,
+  WASTE_TRIAL_SCREEN_OUTLIER_Z,
 } from './constants';
 import type {
   WasteFingerprintClass,
@@ -152,23 +184,83 @@ export function buildFingerprint(
 }
 
 /**
+ * FIX (AUDIT-B M2): median of a numeric array (mean of the middle pair
+ * when n is even); null on empty input. Module-local twin of
+ * rate-league's medianOf — deliberately NOT imported from there:
+ * rate-league.ts is a QUERY module (it imports Prisma), and this file
+ * is a pure builder. Exported for vitest.
+ */
+export function medianOf(values: number[]): number | null {
+  const n = values.length;
+  if (n === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return n % 2 === 1 ? sorted[(n - 1) / 2] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2;
+}
+
+/**
+ * FIX (AUDIT-B M2): MAD = median of |x − median| over the SAME
+ * population; null on empty input. NOT scaled by 1.4826 — the scale is
+ * applied exactly once, inside the outlier threshold (one place, one
+ * constant). Exported for vitest.
+ */
+export function madOf(values: number[], medianValue: number): number | null {
+  if (values.length === 0) return null;
+  return medianOf(values.map((x) => Math.abs(x - medianValue)));
+}
+
+/**
  * Trial-abuse screen over the RETURNED top-item rows: items where the
  * "trial" account looks like a drain (ratio + persistence + value —
  * all three signals must hold). Rows keep the exact numbers behind
  * each signal so the UI can show them; always INDIKASI. PURE.
+ *
+ * FIX (AUDIT-B M2): signal-1 is TWO-TIER (BLATAN | OUTLIER) — see the
+ * header decision d for the calibration rationale + guards. Each
+ * screened row carries `ratioSignal` (which tier fired) and
+ * `ratioThreshold` (the threshold it passed), both additive fields.
  */
 export function buildTrialScreen(items: WasteTopItemRow[]): WasteTrialScreenItem[] {
+  // FIX (AUDIT-B M2) — the OUTLIER tier's population: every input item
+  // WITH a usage basis (bomQty > 0). Zero-trial items join at ratio 0
+  // (zero-inflation honesty — excluding them would deflate the median
+  // and over-fire the tier); bomQty = 0 items have no ratio at all and
+  // are excluded from both the population and the screen.
+  const population: number[] = [];
+  for (const item of items) {
+    const bomQty = toNum(item.bomQty);
+    if (bomQty > 0) population.push(toNum(item.trialQty) / bomQty);
+  }
+  // Robust outlier threshold over the population. Guards (header d):
+  // n < MIN_POPULATION → arithmetic, not evidence → tier OFF; MAD = 0 →
+  // more than half the population exactly on the median → no scale →
+  // tier OFF. Both degrade to the ABSOLUTE bar only — never silent.
+  let outlierThreshold: number | null = null;
+  if (population.length >= WASTE_TRIAL_SCREEN_MIN_POPULATION) {
+    const median = medianOf(population);
+    const mad = median != null ? madOf(population, median) : null;
+    if (median != null && mad != null && mad > 0) {
+      outlierThreshold =
+        median + WASTE_TRIAL_SCREEN_OUTLIER_Z * WASTE_TRIAL_SCREEN_MAD_SCALE * mad;
+    }
+  }
+
   const screened: WasteTrialScreenItem[] = [];
   for (const item of items) {
     const trialQty = toNum(item.trialQty);
     const bomQty = toNum(item.bomQty);
     const trialNominal = toNum(item.trialNominal);
     const trialMonthsActive = toNum(item.trialMonthsActive);
-    // Signal 1 — ratio: undefined basis (bomQty = 0) → NOT screened
-    // (a trial with no theoretical usage cannot be ratio-judged; it is
-    // surfaced by the fingerprint, not the screen).
+    // Signal 1 — two-tier ratio: undefined basis (bomQty = 0) → NOT
+    // screened (a trial with no theoretical usage cannot be ratio-judged;
+    // it is surfaced by the fingerprint, not the screen).
     const trialToBom = bomQty > 0 ? trialQty / bomQty : null;
-    if (trialToBom == null || trialToBom < WASTE_TRIAL_SCREEN_BOM_RATIO) continue;
+    if (trialToBom == null) continue;
+    // BLATAN precedence: the absolute bar is the stronger reading, so it
+    // wins when both tiers are satisfied (documented rule, pinned by
+    // test) — ratioThreshold records the tier that FIRED.
+    const blatant = trialToBom >= WASTE_TRIAL_SCREEN_BOM_RATIO;
+    const outlier = outlierThreshold != null && trialToBom >= outlierThreshold;
+    if (!blatant && !outlier) continue;
     // Signal 2 — persistence: a one-month trial burst is an R&D spike.
     if (trialMonthsActive < WASTE_TRIAL_SCREEN_MIN_MONTHS) continue;
     // Signal 3 — high-value: cheap trials are not controller-worthy.
@@ -182,6 +274,9 @@ export function buildTrialScreen(items: WasteTopItemRow[]): WasteTrialScreenItem
       bomQty,
       trialToBom,
       trialMonthsActive,
+      // FIX (AUDIT-B M2): the two-tier disclosure fields (additive).
+      ratioSignal: blatant ? 'BLATAN' : 'OUTLIER',
+      ratioThreshold: blatant ? WASTE_TRIAL_SCREEN_BOM_RATIO : outlierThreshold,
       fingerprintClass: item.fingerprint?.fingerprintClass ?? null,
       epistemicLabel: 'INDIKASI',
     });

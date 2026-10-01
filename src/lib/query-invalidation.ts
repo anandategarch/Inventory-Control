@@ -78,6 +78,19 @@ const ALL_DATA_QUERY_KEYS: readonly (readonly unknown[])[] = [
   // even though the server-side cache was correctly invalidated).
   ['waste-series'],
   ['waste-top-items'],
+  // FIX (AUDIT-E E1): the W1 Liga Waste-Rate card (rate-league-card.tsx,
+  // the Waste tab's 9th card) self-fetches /api/waste-rate-league under
+  // the ['waste-rate-league', month, week, area, kelompok, pic] root —
+  // this CLIENT-side root was missing from the list, so after ANY
+  // mutation (upload/delete/reset/drive/ingest/settings/PIC/refresh) the
+  // keep-alive Waste tab kept serving pre-mutation league/rank/z for the
+  // Liga card alone (the other 8 waste cards refreshed; refetchOnWindowFocus
+  // is off and TanStack v5 does not auto-refetch a merely-stale active
+  // query) — stale beyond the 5-min server TTL until a reload/filter
+  // change. The exact H-14/T3 + DOCSYNC-1-B pattern: the SERVER-side
+  // aggregation-cache/invalidate.ts has listed 'waste-rate-league' since
+  // the W1 wiring — only this client root was the hole.
+  ['waste-rate-league'],
   ['waste-peer-zscore'],
 ];
 

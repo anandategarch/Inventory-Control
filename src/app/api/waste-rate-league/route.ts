@@ -12,7 +12,9 @@
 //      /api/waste-top-items);
 //    - item (OPTIONAL, exact item name) pins the response to ONE
 //      item's full league regardless of its Pareto rank; it rides
-//      the cache key's dedicated itemName slot;
+//      the cache key's dedicated itemName slot; an EMPTY value
+//      (`?item=`) is normalized to "absent" at the zod gate
+//      (FIX AUDIT-D F3) so '' behaves like the default top-N slice;
 //    - scope follows the active filters (national default;
 //      area/kelompok/pic-scoped when active) — the documented
 //      deferral of the pending PEER-AREA median-scope decision to
@@ -38,6 +40,7 @@ import {
   queryWasteRateLeague,
   clampRateLeagueLimit,
   WASTE_RATE_LEAGUE_DEFAULT_LIMIT,
+  buildRateLeague,
 } from '@/lib/queries';
 import {
   validateQuery,
@@ -70,14 +73,25 @@ const WASTE_RATE_LEAGUE_CACHE_TTL = 5 * 60 * 1000;
 // (global outlet filter parity): a single-outlet scope degenerates
 // every league onto the min-outlet guard, which the response then
 // reports honestly per item.
-const wasteRateLeagueQuerySchema = z.object({
+// Exported for the route-level vitest coverage (schema gate +
+// __NO_MATCH__ shape — tests/queries/waste-rate-league.test.ts).
+export const wasteRateLeagueQuerySchema = z.object({
   month: monthLabelSchema,
   week: weekLabelSchema,
   area: areaSchema,
   kelompok: kelompokSchema,
   pic: picSchema,
   outletCode: outletCodeSchema,
-  item: itemNameSchema,
+  // FIX (AUDIT-D F3): `?item=` (EMPTY string) used to die at the
+  // zod gate — itemNameSchema's .min(1) rejects '' — with a 400,
+  // contradicting both the route comment ("null/'' means the
+  // default top-N Pareto slice") and the itemParam fallback
+  // (`url.searchParams.get('item') || null`), which only handled an
+  // ABSENT param. z.preprocess normalizes '' → undefined BEFORE the
+  // atom, so an empty param behaves EXACTLY like an absent one;
+  // the atom's other gates (max 200 chars, control chars) are
+  // unchanged.
+  item: z.preprocess((v) => (v === '' ? undefined : v), itemNameSchema),
 });
 
 export async function GET(req: NextRequest) {
@@ -107,6 +121,8 @@ export async function GET(req: NextRequest) {
     const kelompokParam = kelompok && kelompok.toLowerCase() !== 'all' ? kelompok : null;
     // item: OPTIONAL exact item name ("fetch one item's full
     // league") — null/'' means the default top-N Pareto slice.
+    // FIX (AUDIT-D F3): the zod gate now normalizes '' to absent as
+    // well, so this fallback and the gate agree on the contract.
     const itemParam = url.searchParams.get('item') || null;
 
     if (!month || !week) {
@@ -127,13 +143,29 @@ export async function GET(req: NextRequest) {
     // Resolve PIC → outletCodes (shared logic — same as /api/pareto).
     const picOutletCodes = await resolvePICOutletCodes(pic);
     if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
+      // FIX (AUDIT-D F4): this early return used to collapse to
+      // `meta: null` and drop the `item` echo, making it the ONLY
+      // success path of this route without the disclosure block
+      // (the query's own empty-window path has always carried it).
+      // Shape now follows the waste-family conventions exactly:
+      //   - `item` is echoed (waste-top-items echoes its `metric`
+      //     selector param on this same path);
+      //   - meta is built by the SAME pure builder as every other
+      //     empty path (waste-series W2/W10 convention — single
+      //     source of truth);
+      //   - week/limit stay OFF — NO waste-family early-return
+      //     echoes them (waste-top-items / waste-series omit both),
+      //     so adding them here would deviate from the 4-route
+      //     convention.
       return NextResponse.json({
         success: true,
+        // FIX (AUDIT-D F3): '' normalizes to null — same as absent.
+        item: itemParam,
         items: [],
         populationTotal: 0,
         lastMonthKey: null,
         windowMonths: 0,
-        meta: null,
+        meta: buildRateLeague([], [], 0).meta,
       });
     }
 

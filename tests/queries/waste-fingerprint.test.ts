@@ -18,6 +18,10 @@ import {
   WASTE_TRIAL_SCREEN_BOM_RATIO,
   WASTE_TRIAL_SCREEN_MIN_MONTHS,
   WASTE_TRIAL_SCREEN_MIN_NOMINAL,
+  // FIX (AUDIT-B M2): the two-tier signal-1 knobs (pinned below).
+  WASTE_TRIAL_SCREEN_OUTLIER_Z,
+  WASTE_TRIAL_SCREEN_MIN_POPULATION,
+  WASTE_TRIAL_SCREEN_MAD_SCALE,
   buildFingerprint,
   buildTrialScreen,
   classifyFingerprintClass,
@@ -25,6 +29,10 @@ import {
   queryWasteTopItems,
 } from '@/lib/queries/waste/waste-top-items';
 import type { WasteTopItemRow } from '@/lib/queries/waste/waste-top-items';
+// FIX (AUDIT-B M2): module-local median/MAD helpers — deep import (the
+// barrel deliberately re-exports only the +3 constants; the helpers stay
+// module-level exports for vitest, same precedent as buildSusutSpike).
+import { medianOf, madOf } from '@/lib/queries/waste/waste-top-items/fingerprint';
 import { buildSusutSpike } from '@/lib/queries/waste/network/susut-spike';
 import { queryWasteNetwork } from '@/lib/queries/waste/waste-series';
 import type { WasteMonthlyRow } from '@/lib/queries/waste/network';
@@ -164,6 +172,13 @@ describe('W11 trial-screen constants', () => {
     expect(WASTE_TRIAL_SCREEN_MIN_MONTHS).toBe(3);
     expect(WASTE_TRIAL_SCREEN_MIN_NOMINAL).toBe(100_000);
   });
+
+  it('FIX (AUDIT-B M2): pins the two-tier OUTLIER knobs (drift alarm)', () => {
+    expect(WASTE_TRIAL_SCREEN_OUTLIER_Z).toBe(3);
+    expect(WASTE_TRIAL_SCREEN_MIN_POPULATION).toBe(5);
+    // Φ⁻¹(0.75) — the same consistency constant as rate-league's robust-z.
+    expect(WASTE_TRIAL_SCREEN_MAD_SCALE).toBe(1.4826);
+  });
 });
 
 // ------------------------------------------------------------
@@ -253,7 +268,7 @@ describe('buildFingerprint', () => {
 // ------------------------------------------------------------
 
 describe('buildTrialScreen', () => {
-  it('screens an item passing ALL THREE signals (ratio + persistence + value)', () => {
+  it('screens an item passing ALL THREE signals (ratio + persistence + value) — BLATAN tier recorded', () => {
     const items = [
       row({
         itemId: 7,
@@ -270,6 +285,9 @@ describe('buildTrialScreen', () => {
     expect(screen[0].trialToBom).toBeCloseTo(0.06, 10);
     expect(screen[0].trialMonthsActive).toBe(5);
     expect(screen[0].trialNominal).toBe(150_000);
+    // FIX (AUDIT-B M2): the tier disclosure pair — absolute bar fired.
+    expect(screen[0].ratioSignal).toBe('BLATAN');
+    expect(screen[0].ratioThreshold).toBe(0.05);
     expect(screen[0].fingerprintClass).toBe('T-DOMINANT');
     expect(screen[0].epistemicLabel).toBe('INDIKASI');
   });
@@ -283,10 +301,14 @@ describe('buildTrialScreen', () => {
     expect(buildTrialScreen([row({ trialQty: 499, bomQty: 10_000, trialMonthsActive: 5, trialNominal: 150_000 })])).toEqual([]);
   });
 
-  it('boundary values are INCLUSIVE (≥ thresholds)', () => {
-    expect(buildTrialScreen([
+  it('boundary values are INCLUSIVE (≥ thresholds — both signal-1 tiers)', () => {
+    // Absolute bar EXACTLY at 0.05 (single item — n < 5, outlier tier off).
+    const screen = buildTrialScreen([
       row({ trialQty: 500, bomQty: 10_000, trialMonthsActive: 3, trialNominal: 100_000 }),
-    ])).toHaveLength(1);
+    ]);
+    expect(screen).toHaveLength(1);
+    expect(screen[0].ratioSignal).toBe('BLATAN');
+    expect(screen[0].ratioThreshold).toBe(0.05);
   });
 
   it('bomQty = 0 → ratio null → NOT screened (no usage basis)', () => {
@@ -298,6 +320,157 @@ describe('buildTrialScreen', () => {
 
   it('empty input → empty screen', () => {
     expect(buildTrialScreen([])).toEqual([]);
+  });
+
+  // ----------------------------------------------------------
+  // FIX (AUDIT-B M2) — the two-tier signal-1 (BLATAN | OUTLIER).
+  // Population fixtures: 5 items, bomQty 10_000 each → ratios are
+  // trialQty/10_000. Hand-computed (see each case).
+  // ----------------------------------------------------------
+
+  it('FIX (AUDIT-B M2): OUTLIER tier fires — a 3σ+ item screens below the 5% absolute bar', () => {
+    // Ratios [0.001, 0.001, 0.002, 0.002, 0.02]: median 0.002,
+    // MAD 0.001 → threshold 0.002 + 3×1.4826×0.001 = 0.0064478.
+    // The 0.02 item (2% — BELOW the 5% absolute bar, the live-like case)
+    // clears the robust threshold → screens as OUTLIER with the exact
+    // threshold recorded. Peers fail signals 2/3 anyway.
+    const items = [
+      row({ itemId: 1, trialQty: 10, bomQty: 10_000, trialNominal: 5_000, trialMonthsActive: 1 }),
+      row({ itemId: 2, trialQty: 10, bomQty: 10_000, trialNominal: 5_000, trialMonthsActive: 1 }),
+      row({ itemId: 3, trialQty: 20, bomQty: 10_000, trialNominal: 5_000, trialMonthsActive: 1 }),
+      row({ itemId: 4, trialQty: 20, bomQty: 10_000, trialNominal: 5_000, trialMonthsActive: 1 }),
+      row({ itemId: 5, itemName: 'SURAI NAGA', trialQty: 200, bomQty: 10_000, trialNominal: 150_000, trialMonthsActive: 9 }),
+    ];
+    const screen = buildTrialScreen(items);
+    expect(screen).toHaveLength(1);
+    expect(screen[0].itemId).toBe(5);
+    expect(screen[0].trialToBom).toBeCloseTo(0.02, 10);
+    expect(screen[0].ratioSignal).toBe('OUTLIER');
+    expect(screen[0].ratioThreshold).toBeCloseTo(0.0064478, 10);
+    expect(screen[0].epistemicLabel).toBe('INDIKASI');
+  });
+
+  it('FIX (AUDIT-B M2): guard population < 5 items → ONLY the absolute bar (no outlier tier)', () => {
+    // 4 items, ratios [0.001, 0.001, 0.002, 0.03]: the 0.03 item PASSES
+    // signals 2/3 and would clear a robust threshold on this population
+    // (n≥5-computed: 0.0064478 < 0.03, see the second half) — but n = 4
+    // < 5 → tier OFF, and 0.03 < the 5% absolute bar → empty screen. The
+    // guard is what blocks it (not the signals).
+    const items = [
+      row({ itemId: 1, trialQty: 10, bomQty: 10_000, trialNominal: 5_000, trialMonthsActive: 1 }),
+      row({ itemId: 2, trialQty: 10, bomQty: 10_000, trialNominal: 5_000, trialMonthsActive: 1 }),
+      row({ itemId: 3, trialQty: 20, bomQty: 10_000, trialNominal: 5_000, trialMonthsActive: 1 }),
+      row({ itemId: 4, trialQty: 300, bomQty: 10_000, trialNominal: 150_000, trialMonthsActive: 9 }),
+    ];
+    expect(buildTrialScreen(items)).toEqual([]);
+    // Same population + one more peer (n = 5, ratios
+    // [0.001, 0.001, 0.002, 0.03, 0.002]: median 0.002, MAD 0.001 →
+    // threshold 0.0064478) → the tier comes alive and the 0.03 item
+    // screens as OUTLIER — proving the n=4 block above was the GUARD.
+    const withFifth = [...items, row({ itemId: 5, trialQty: 20, bomQty: 10_000, trialNominal: 5_000, trialMonthsActive: 1 })];
+    const screen = buildTrialScreen(withFifth);
+    expect(screen).toHaveLength(1);
+    expect(screen[0].itemId).toBe(4);
+    expect(screen[0].ratioSignal).toBe('OUTLIER');
+    expect(screen[0].ratioThreshold).toBeCloseTo(0.0064478, 10);
+  });
+
+  it('FIX (AUDIT-B M2): guard MAD = 0 (majority on the median) → ONLY the absolute bar', () => {
+    // 5 items, ratios [0.01, 0.01, 0.01, 0.01, 0.04]: median 0.01, devs
+    // [0,0,0,0,0.03] → MAD 0 → no scale, tier OFF. The 0.04 item passes
+    // signals 2/3 but sits below the 5% absolute bar → empty screen.
+    const items = [
+      row({ itemId: 1, trialQty: 100, bomQty: 10_000, trialNominal: 5_000, trialMonthsActive: 1 }),
+      row({ itemId: 2, trialQty: 100, bomQty: 10_000, trialNominal: 5_000, trialMonthsActive: 1 }),
+      row({ itemId: 3, trialQty: 100, bomQty: 10_000, trialNominal: 5_000, trialMonthsActive: 1 }),
+      row({ itemId: 4, trialQty: 100, bomQty: 10_000, trialNominal: 5_000, trialMonthsActive: 1 }),
+      row({ itemId: 5, trialQty: 400, bomQty: 10_000, trialNominal: 150_000, trialMonthsActive: 9 }),
+    ];
+    expect(buildTrialScreen(items)).toEqual([]);
+    // An item ≥ 5% still screens via the absolute bar under MAD = 0 —
+    // the tier guard degrades, it never disables the screen.
+    const blatant = buildTrialScreen([
+      ...items.slice(0, 4),
+      row({ itemId: 5, trialQty: 600, bomQty: 10_000, trialNominal: 150_000, trialMonthsActive: 9 }),
+    ]);
+    expect(blatant).toHaveLength(1);
+    expect(blatant[0].ratioSignal).toBe('BLATAN');
+  });
+
+  it('FIX (AUDIT-B M2): BLATAN precedence — an item ≥ 5% that is ALSO an outlier records the absolute bar', () => {
+    // Ratios [0.001, 0.001, 0.002, 0.002, 0.06]: threshold 0.0064478 — the
+    // 0.06 item clears BOTH tiers; the absolute bar is the stronger,
+    // population-independent reading, so it wins and ratioThreshold is
+    // the 0.05 bar (NOT the robust threshold).
+    const items = [
+      row({ itemId: 1, trialQty: 10, bomQty: 10_000, trialNominal: 5_000, trialMonthsActive: 1 }),
+      row({ itemId: 2, trialQty: 10, bomQty: 10_000, trialNominal: 5_000, trialMonthsActive: 1 }),
+      row({ itemId: 3, trialQty: 20, bomQty: 10_000, trialNominal: 5_000, trialMonthsActive: 1 }),
+      row({ itemId: 4, trialQty: 20, bomQty: 10_000, trialNominal: 5_000, trialMonthsActive: 1 }),
+      row({ itemId: 5, trialQty: 600, bomQty: 10_000, trialNominal: 150_000, trialMonthsActive: 9 }),
+    ];
+    const screen = buildTrialScreen(items);
+    expect(screen).toHaveLength(1);
+    expect(screen[0].ratioSignal).toBe('BLATAN');
+    expect(screen[0].ratioThreshold).toBe(0.05);
+    expect(screen[0].ratioThreshold).not.toBeCloseTo(0.0064478, 10);
+  });
+
+  it('FIX (AUDIT-B M2): zero-trial items JOIN the baseline at ratio 0 (the median reflects them)', () => {
+    // Ratios [0, 0, 0.001, 0.002, 0.02]: WITH the two zero-trial items the
+    // median is 0.001 → threshold 0.0054478; WITHOUT them it would be
+    // 0.002 → 0.0064478. The recorded ratioThreshold pins the INCLUSIVE
+    // median (zero-inflation honesty — rate-league precedent).
+    const items = [
+      row({ itemId: 1, trialQty: 0, bomQty: 10_000, trialNominal: 0, trialMonthsActive: 0 }),
+      row({ itemId: 2, trialQty: 0, bomQty: 10_000, trialNominal: 0, trialMonthsActive: 0 }),
+      row({ itemId: 3, trialQty: 10, bomQty: 10_000, trialNominal: 5_000, trialMonthsActive: 1 }),
+      row({ itemId: 4, trialQty: 20, bomQty: 10_000, trialNominal: 5_000, trialMonthsActive: 1 }),
+      row({ itemId: 5, trialQty: 200, bomQty: 10_000, trialNominal: 150_000, trialMonthsActive: 9 }),
+    ];
+    const screen = buildTrialScreen(items);
+    expect(screen).toHaveLength(1);
+    expect(screen[0].itemId).toBe(5);
+    expect(screen[0].ratioSignal).toBe('OUTLIER');
+    expect(screen[0].ratioThreshold).toBeCloseTo(0.0054478, 10);
+    // Direct helper pins (the same population, hand-computed):
+    expect(medianOf([0, 0, 0.001, 0.002, 0.02])).toBeCloseTo(0.001, 12);
+    expect(madOf([0, 0, 0.001, 0.002, 0.02], 0.001)).toBeCloseTo(0.001, 12);
+  });
+
+  it('FIX (AUDIT-B M2): is PURE — the input rows are not mutated', () => {
+    const items = [
+      row({ itemId: 1, trialQty: 10, bomQty: 10_000 }),
+      row({ itemId: 2, trialQty: 200, bomQty: 10_000, trialNominal: 150_000, trialMonthsActive: 9 }),
+      row({ itemId: 3, trialQty: 20, bomQty: 10_000 }),
+      row({ itemId: 4, trialQty: 20, bomQty: 10_000 }),
+      row({ itemId: 5, trialQty: 10, bomQty: 10_000 }),
+    ];
+    const snapshot = items.map((i) => ({ ...i }));
+    buildTrialScreen(items);
+    expect(items).toEqual(snapshot);
+  });
+});
+
+// ------------------------------------------------------------
+// 3b. FIX (AUDIT-B M2): medianOf / madOf — the module-local robust
+//     helpers (deep import; rate-league twins, NOT imported from it)
+// ------------------------------------------------------------
+
+describe('medianOf / madOf (trial-screen helpers)', () => {
+  it('medianOf: odd → middle, even → mean of the middle pair, empty → null', () => {
+    expect(medianOf([3, 1, 2])).toBe(2);
+    expect(medianOf([1, 2, 3, 4])).toBe(2.5);
+    expect(medianOf([])).toBeNull();
+    expect(medianOf([5])).toBe(5);
+  });
+
+  it('madOf: median of |x − median| (hand-computed), empty → null', () => {
+    // [1,2,3,4,5] median 3 → devs [2,1,0,1,2] → MAD 1.
+    expect(madOf([1, 2, 3, 4, 5], 3)).toBe(1);
+    // NOT scaled by 1.4826 — the scale is applied once, in the threshold.
+    expect(madOf([1, 2, 3, 4, 5], 3)).not.toBeCloseTo(1.4826, 10);
+    expect(madOf([], 0)).toBeNull();
   });
 });
 
@@ -547,6 +720,9 @@ describe('queryWasteTopItems (W11)', () => {
     expect(result.trialScreen).toHaveLength(1);
     expect(result.trialScreen[0].itemName).toBe('AYAM CINCANG');
     expect(result.trialScreen[0].trialToBom).toBeCloseTo(0.06, 10);
+    // FIX (AUDIT-B M2): the two-tier fields ride the query edge too.
+    expect(result.trialScreen[0].ratioSignal).toBe('BLATAN');
+    expect(result.trialScreen[0].ratioThreshold).toBe(0.05);
     expect(result.trialScreen[0].fingerprintClass).toBe('T-DOMINANT');
     expect(result.fingerprint?.classCounts.tDominant).toBe(1);
   });

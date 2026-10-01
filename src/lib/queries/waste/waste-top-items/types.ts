@@ -212,16 +212,28 @@ export type WasteQuadrantClass = 'SISTEMIK' | 'MUSIMAN' | 'LOKAL-KRONIS' | 'INSI
 export interface WasteItemQuadrant {
   quadrantClass: WasteQuadrantClass;
   /**
-   * outletsActive(waste>0) / outletsWithBom — the BOM>0 discipline
-   * (BUGHUNT-R1 FIX 1 family): the denominator counts only outlets that
-   * actually USED the item (ABS(qtyBom) > 0), never mere record presence.
-   * Null when the item has NO BOM>0 outlet in scope (orphaned waste — no
-   * usage basis); classification then treats prevalence as LOW (conservative:
-   * no basis to claim "widespread").
+   * FIX (AUDIT-B M1): outletsActiveWithBom / outletsWithBom — BOTH sides
+   * on the BOM>0 usage basis (BUGHUNT-R1 FIX 1 family): the numerator
+   * counts only outlets that USED the item (ABS(qtyBom) > 0) AND weighed
+   * waste (waste > 0); the denominator counts only outlets that used it.
+   * The pre-fix numerator (the item aggregate's outletsActive — any
+   * waste>0 row) was not a subset of the denominator, so orphan-waste
+   * outlets pushed the ratio above 1 (live: 11/6, 10/7). Semantics: "of
+   * the outlets that use the item, how many weigh waste on it" — always
+   * ≤ 1. Null when the item has NO BOM>0 outlet in scope (orphaned waste
+   * — no usage basis); classification then treats prevalence as LOW
+   * (conservative: no basis to claim "widespread").
    */
   prevalence: number | null;
   /** #outlets in scope with BOM>0 for the item (the denominator above). */
   outletsWithBom: number;
+  /**
+   * FIX (AUDIT-B M1, additive): #outlets with BOM>0 AND waste>0 (the
+   * prevalence numerator above) — exposed so the UI shows the coherent
+   * "X/Y outlet" pair; the item-level outletsActive (any waste>0 row)
+   * overcounts it by the orphan-waste outlets (waste without BOM).
+   */
+  outletsActiveWithBom: number;
   /** monthsActive / windowMonths (0 when windowMonths is 0 — pure guard). */
   persistence: number;
   /**
@@ -242,8 +254,11 @@ export interface WasteQuadrantSummary {
   /**
    * #items needed to reach WASTE_QUADRANT_PARETO_SHARE (80%) cumulative
    * network waste share — the "how concentrated is the network's waste"
-   * number. Null when the returned top-N slice never reaches the target
-   * (possible with a tight limit on a long tail).
+   * number. FIX (AUDIT-B M4): re-derived over a waste-share-DESC sort of
+   * the returned rows, so the number is the WASTE rank regardless of the
+   * metric that ordered the top-N slice (the input-order scan was only
+   * valid under metric='waste'). Null when the returned top-N slice never
+   * reaches the target (possible with a tight limit on a long tail).
    */
   paretoK: number | null;
   /** Class distribution over the returned items (all four keys always set). */
@@ -319,6 +334,26 @@ export interface WasteTrialScreenItem {
   trialToBom: number | null;
   /** Distinct months with trial > 0 (the persistence signal). */
   trialMonthsActive: number;
+  /**
+   * FIX (AUDIT-B M2, additive): which signal-1 tier fired —
+   *   - 'BLATAN'  : the absolute bar (trialToBom ≥
+   *     WASTE_TRIAL_SCREEN_BOM_RATIO — ≥ 5% of theoretical usage booked as
+   *     trial, far beyond R&D sampling);
+   *   - 'OUTLIER' : the robust tier (trialToBom ≥ median + 3 × 1.4826 × MAD
+   *     of the BOM-basis item population on this slice — unusually high
+   *     vs the population even when far below the absolute bar).
+   * BLATAN takes precedence when both hold. The two-tier calibration is
+   * what makes the screen triggerable on live data (the absolute 5% bar
+   * alone sat 10× above the live maximum ratio).
+   */
+  ratioSignal: 'BLATAN' | 'OUTLIER';
+  /**
+   * FIX (AUDIT-B M2, additive): the signal-1 threshold the item passed —
+   * WASTE_TRIAL_SCREEN_BOM_RATIO for BLATAN rows, the computed robust
+   * outlier threshold for OUTLIER rows. Null is unreachable on screened
+   * rows but kept nullable for the UI mirror's stale-cache guard.
+   */
+  ratioThreshold: number | null;
   /** The item's fingerprint class at screen time (context; null when explained 0). */
   fingerprintClass: WasteFingerprintClass | null;
   /** Screen verdict — statistical indication, not proof. */

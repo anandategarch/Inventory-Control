@@ -6,7 +6,7 @@
 //  Deep Waste Analysis: the in-app generalization of the offline
 //  "Analisa-Deep-Waste-Area-1" report to ANY scope (global Area /
 //  Kelompok / PIC filters apply — the tab re-fetches when they
-//  change). Six cards:
+//  change). Nine cards:
 //    1. WasteKpiStrip        — window KPIs + severity chips
 //    2. WasteProfileTable    — per-outlet profile (rank waste/sales)
 //    3. WastePersistenceCard — W2: kronis vs episodik (transisi + Fisher)

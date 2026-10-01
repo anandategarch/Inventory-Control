@@ -206,10 +206,17 @@ export async function queryWasteNetwork(
     const p = persistenceByCode.get(o.outletCode);
     const s = susutSpikeByCode.get(o.outletCode);
     // p spreads the W2 optional fields (activeMonths, persistenceClass, …)
-    // and s the W11 susutSpikeMonths onto the row; every base field keeps
-    // its exact value+order — additive merge, nothing renamed/removed.
+    // and s the W11 susutSpikeMonths + susutRatioMonths onto the row; every
+    // base field keeps its exact value+order — additive merge, nothing
+    // renamed/removed.
+    // FIX (AUDIT-B M3): susutRatioMonths (the spike baseline's n —
+    // "dari N bulan ber-sales") rides the SAME merge. buildSusutSpike had
+    // always computed it (module header decision 3: transparency — a
+    // 1-spike reading over 3 valid months is weaker evidence than over 9),
+    // but this merge only forwarded susutSpikeMonths, so the field never
+    // reached the API/UI (live: 0/344 outlet rows carried it).
     return p || s
-      ? { ...o, ...(p ?? {}), ...(s ? { susutSpikeMonths: s.susutSpikeMonths } : {}) }
+      ? { ...o, ...(p ?? {}), ...(s ? { susutSpikeMonths: s.susutSpikeMonths, susutRatioMonths: s.susutRatioMonths } : {}) }
       : o;
   });
 

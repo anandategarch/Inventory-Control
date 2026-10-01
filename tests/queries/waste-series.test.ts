@@ -452,6 +452,44 @@ describe('queryWasteNetwork', () => {
     expect(deepText(mockExecuteRaw.mock.calls[0])).toContain('set_config');
   });
 
+  it('FIX (AUDIT-B M3): merges susutRatioMonths (the spike baseline n) onto the outlet rows — the field reaches the API edge', async () => {
+    // Wiring test for the transparency field buildSusutSpike has ALWAYS
+    // computed (module header decision 3) but the query-edge merge used
+    // to drop: pre-fix, 0/344 live outlet rows carried it. Fixture = the
+    // sibling waste-fingerprint test's spike shape: one outlet, 9 months
+    // with sales > 0 (≥ 3 so the spike baseline forms), susut spiking on
+    // the last month (8 × 0.01 + 0.30 → mean+2σ crossed exactly once).
+    mockQueryRaw.mockResolvedValueOnce(
+      Array.from({ length: 9 }, (_, i) => ({
+        outletCode: '1357.TJPPLU',
+        outletName: 'TJPPLU',
+        area: 'JAKARTA 1',
+        monthKey: `2026-0${i + 1}`,
+        monthLabel: `Bulan ${i + 1}`,
+        sales: 1_000_000,
+        waste: 20_000,
+        susut: i === 8 ? 300_000 : 10_000,
+        trial: 2_000,
+        residual: 80_000,
+        totalLoss: 100_000,
+        totalSurplus: 10_000,
+        spike: 0,
+        dqError: false,
+        dqErrorCount: 0,
+      })),
+    );
+    const result = await queryWasteNetwork('WEEK 4', '2026-08', {}, HI_LOSS);
+    expect(mockQueryRaw).toHaveBeenCalledTimes(1);
+    expect(result.outlets).toHaveLength(1);
+    // Both W11 spike fields now flow: the count AND the baseline n
+    // ("dari 9 bulan ber-sales" — the tooltip's transparency number).
+    expect(result.outlets[0].susutSpikeMonths).toBe(1);
+    expect(result.outlets[0].susutRatioMonths).toBe(9);
+    // Base fields keep their exact values (additive merge only).
+    expect(result.outlets[0].outletCode).toBe('1357.TJPPLU');
+    expect(result.outlets[0].susut).toBe(380_000);
+  });
+
   it('empty result → zeroed kpis, no throw', async () => {
     mockQueryRaw.mockResolvedValueOnce([]);
     const result = await queryWasteNetwork('WEEK 4', '2026-08', {}, HI_LOSS);

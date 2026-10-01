@@ -137,6 +137,16 @@ export interface WasteOutletRow {
    *  (sales > 0; min 3 months, σ > 0 — the waste spike's exact discipline,
    *  metric-swapped). 0 when the guard rejects the outlet. */
   susutSpikeMonths?: number;
+  /**
+   *  FIX (AUDIT-B M3) (additive): valid months (sales > 0) the susut-spike
+   *  baseline was computed over — the transparency n ("dari N bulan
+   *  ber-sales, min. 3"), re-merged onto this row by queryWasteNetwork
+   *  after the fix (buildSusutSpike had been computing it per its module
+   * header decision 3, but the query-edge merge dropped it — the field
+   * never reached the API/UI). Same optional contract as
+   *  susutSpikeMonths above: absent on pre-fix cached payloads.
+   */
+  susutRatioMonths?: number;
 }
 
 export interface WasteMonthMeta {

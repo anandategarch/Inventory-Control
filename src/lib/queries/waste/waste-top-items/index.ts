@@ -64,6 +64,12 @@ export {
   WASTE_TRIAL_SCREEN_BOM_RATIO,
   WASTE_TRIAL_SCREEN_MIN_MONTHS,
   WASTE_TRIAL_SCREEN_MIN_NOMINAL,
+  // FIX (AUDIT-B M2) (additive): trial-screen two-tier signal-1 tunables —
+  // the robust OUTLIER tier (median + 3 × 1.4826 × MAD over the BOM-basis
+  // item population) + its guards. See ./constants.ts.
+  WASTE_TRIAL_SCREEN_OUTLIER_Z,
+  WASTE_TRIAL_SCREEN_MIN_POPULATION,
+  WASTE_TRIAL_SCREEN_MAD_SCALE,
 } from './constants';
 export type {
   WasteItemOutletBreakdown,

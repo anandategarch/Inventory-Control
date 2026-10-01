@@ -125,22 +125,35 @@ export const WastePersistenceCard = memo(function WastePersistenceCard({
           <div className="p-6 text-center text-sm text-muted-foreground">Tidak ada data waste pada scope ini.</div>
         ) : (
           <>
-            {/* Summary strip: class distribution + transition statistics. */}
+            {/* Summary strip: class distribution + transition statistics.
+                FIX (AUDIT-A F3): when the persistence block is absent
+                (stale pre-W2 5-min cache / old payload) the strip used to
+                render "0 KRONIS … 0 TERBATAS" — an absolute zero that reads
+                as a MEASURED class distribution. Guarded the same way as
+                the transition-stats grid below: summary missing → one
+                concise fallback line, never zeroed badges. */}
             <div className="p-4 border-b space-y-3">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Badge variant="outline" className={`text-[10px] font-semibold h-5 ${classBadgeClass('KRONIS')}`}>
-                  {summary?.classDistribution.kronis ?? 0} KRONIS
-                </Badge>
-                <Badge variant="outline" className={`text-[10px] font-semibold h-5 ${classBadgeClass('EPISODIK')}`}>
-                  {summary?.classDistribution.episodik ?? 0} EPISODIK
-                </Badge>
-                <Badge variant="outline" className={`text-[10px] font-semibold h-5 ${classBadgeClass('SEHAT')}`}>
-                  {summary?.classDistribution.sehat ?? 0} SEHAT
-                </Badge>
-                <Badge variant="outline" className={`text-[10px] font-semibold h-5 ${classBadgeClass('TERBATAS')}`}>
-                  {summary?.classDistribution.terbatas ?? 0} TERBATAS
-                </Badge>
-              </div>
+              {summary ? (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant="outline" className={`text-[10px] font-semibold h-5 ${classBadgeClass('KRONIS')}`}>
+                    {summary.classDistribution.kronis} KRONIS
+                  </Badge>
+                  <Badge variant="outline" className={`text-[10px] font-semibold h-5 ${classBadgeClass('EPISODIK')}`}>
+                    {summary.classDistribution.episodik} EPISODIK
+                  </Badge>
+                  <Badge variant="outline" className={`text-[10px] font-semibold h-5 ${classBadgeClass('SEHAT')}`}>
+                    {summary.classDistribution.sehat} SEHAT
+                  </Badge>
+                  <Badge variant="outline" className={`text-[10px] font-semibold h-5 ${classBadgeClass('TERBATAS')}`}>
+                    {summary.classDistribution.terbatas} TERBATAS
+                  </Badge>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Data persistensi belum tersedia pada payload ini (cache 5 menit pra-pembaruan) — muat ulang
+                  setelah beberapa saat.
+                </p>
+              )}
               {summary ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="rounded-lg border bg-muted/30 dark:bg-zinc-800/30 px-3 py-2 min-w-0 space-y-1.5">
@@ -241,7 +254,15 @@ export const WastePersistenceCard = memo(function WastePersistenceCard({
                           </span>
                         )}
                       </TableCell>
-                      <TableCell className={`text-right text-xs tabular-nums ${(o.aboveMedianShare ?? 0) >= 0.6 ? 'text-red-600 dark:text-red-400 font-semibold' : ''}`}>
+                      {/* FIX (AUDIT-A F2): red-bold is gated on the KRONIS
+                          class, not on share ≥ 60% alone — the class
+                          definition already encodes share ≥ 60% ∧ ≥ 6
+                          active months, so an ungated threshold painted 82
+                          TERBATAS outlets live (48 of them at share 100%,
+                          < 6 active months — "not yet classifiable") in the
+                          chronic style. The NUMBER stays the same
+                          (fmtPct unchanged); only the affordance narrows. */}
+                      <TableCell className={`text-right text-xs tabular-nums ${o.persistenceClass === 'KRONIS' ? 'text-red-600 dark:text-red-400 font-semibold' : ''}`}>
                         {fmtPct(o.aboveMedianShare ?? 0, false, 0)}
                       </TableCell>
                       <TableCell className="text-right text-xs tabular-nums">
