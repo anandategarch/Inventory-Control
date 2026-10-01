@@ -41139,3 +41139,31 @@ Stage Summary:
 - 16 bug fitur terbaru ditemukan & diperbaiki (1 P1, 8 P2, 7 P3) — semua oleh 6 subagen paralel (4 audit + 2 fix) + merge/QA main.
 - Perubahan semantik pasca-deploy yang user akan lihat: badge SISTEMATIK jujur (hanya outlet/bulan dengan waste>0; ambang bulan = ceil(window/2) ≈ 4-5 utk data live); residualDominant turun tajam (kini residual loss-side >80% loss, bukan ≡ wasteShare<10%); KPI Σ Residual kini loss-side; zeroWasteBigLoss/underRecording lebih ketat per-bulan; 5 route 400 utk bulan tak dikenal; POST /api/settings tolak dispro ≥ dev; Net Ratio merah saat rugi bersih; tab Waste bisa deep-link (?tab=waste) + keyboard '8'.
 - Skipped (dilaporkan ke user): peer-tab row-click auto-navigasi ke Resto (by design lama, pre-existing), national /api/analysis cold-compute 500 (infra pre-existing), weekLabelSchema longgar (graceful empty by design), DELETE settings reset path (edge teoretis).
+
+---
+Task ID: GODSPLIT-EXEC
+Task: User: "GO dan gelombang 1 - 4" — eksekusi blueprint split god file 4 gelombang (7 fixer-agent paralel, ownership disjoint, barrel re-export 0-importer-edit).
+
+Work Log:
+- Baseline pre-eksekusi di HEAD 56e9184: tsc 0 · vitest 575/575 · eslint 0 error (repo clean).
+- FASE I (gelombang 1+2 paralel, 4 agent — main checkout + 3 worktree):
+  * W1-A 496acab: validation.ts (483) → validation/ folder 9 file (shared 11 atom + 7 domain schema + barrel); export surface 46/46 identik; fan-in 43 tak tersentuh.
+  * W1-B 0e82a4f: waste-series.ts (773) → waste/{network 479, peer-zscore 281, shared 68}.ts + barrel 45; 20/20 export identik; SQL verbatim (line-range extraction + diff).
+  * W2-A 0e34011: rv '15' dual-site → lib/report-version.ts REPORT_DESIGN_VERSION; URL param + cache key identik saat runtime (bun sanity check).
+  * W2-B fca5cbb: buildInsights (191) → lib/insights.ts (249) + useMemo + tests/lib/insights.test.ts 10 test threshold-boundary; TopItems.tsx (457) → TopItems/ folder 5 file (4 kartu + barrel) — pure move verbatim.
+  * Merge 3 branch → 4563796 · 8824d70 · bc54bed (zero conflict). QA merge: tsc 0 · 585/585 · eslint 0 error.
+- FASE II (gelombang 3 paralel, 2 agent):
+  * W3-A 647888c: outlet-monthly-series.ts (506) → outlets/{monthly-series 254, peer-track-record 280}.ts + barrel 35; dedupe toNum/monthWindowBound via import ../waste/shared (byte-identical terbukti via diff).
+  * W3-B 332be8e: rule-evaluation.ts (566) → rule-evaluation/{record-rules 265, zscore-rules 251, shared 106}.ts + barrel 45; expandRuleFlags ×3 → ×1; hist/stats CTE pair TIDAK didedupe (metric-swapped + tagged-template mock capture — didokumentasikan); komentar prioritas-ladder + placeholder "1=0" ikut kodenya.
+  * Merge → 2794b4e (zero conflict). QA merge: tsc 0 · 585/585 · eslint 0 error.
+- FASE III (gelombang 4, 1 agent):
+  * W4 b24e05f: predikat band ±10% 5 situs × 3 varian → outlets/peer-band.ts peerBandPredicate(salesExpr, targetExpr, {unboundedFallback}) — semua Prisma.raw (zero bind-param, komposisi strings array deep-equal dengan inline lama — byte-parity test ×2); semantik per-situs DIPERTAHANKAN (varian CASE fallback 999999999 vs plain strict vs targetSales-alias); tests/queries/peer-band.test.ts 7 test; deepText() helper di test lama membuat fragment ter-interpolasi tetap visible → 0 asersi dilemahkan.
+- QA FINAL (main, independen): tsc 0 · vitest 592/592 (37 file: 575 baseline + 10 insights + 7 peer-band) · eslint 0 error · struktur split terverifikasi (validation/ 9 · waste/ 5 · rule-evaluation/ 4 · outlets/ +3 · TopItems/ 5 · report-version · insights) · peerBandPredicate dipakai tepat 5 situs · REPORT_DESIGN_VERSION dipakai 2 sisi.
+- Docs sync: MASTER_CONTEXT.md — header GODSPLIT entry + stats (tests 592/37 file, commits 619, file consolidation 17 split) + path references (monthly-series.ts, peer-track-record.ts, rule-evaluation/, report-version.ts, insights.ts, peer-band.ts, queries tree).
+
+Stage Summary:
+- 10 commit ter-push: 496acab · 0e82a4f · 0e34011 · fca5cbb · 647888c · 332be8e · b24e05f + merge 4563796 · 8824d70 · 2794b4e (+docs ini).
+- 6 god file tersplit (2.739 LOC monolith → modul ber-domain + barrel): validation · waste-series · outlet-monthly-series · rule-evaluation · TopItems · (+ engine insights ke lib). 3 modul bersama baru: report-version (kill rv dual-site sync) · insights (testable + memoized) · peer-band (prasyarat PEER-AREA).
+- NOL perubahan perilaku: SQL byte-for-byte identik (test byte-parity), export surface identik (diff per-file), 0 importer diedit (barrel), schema Prisma tak tersentuh.
+- PEER-AREA (fitur komparasi peer + area provinsi/pulau dari diskusi sebelumnya) kini UNBLOCKED: scoping band cukup 1 modul peer-band.ts + 5 call-site argumen, bukan 5 string SQL manual.
+- Backlog tersisa dari audit (tidak dieksekusi — di luar gelombang 1-4 yang di-GO): ManagedDialog skeleton · formatter sumbu chart · empty-state bersama · fetch boilerplate · siklus ResolvedParams type-lift · tab-registry page.tsx regrowth.
