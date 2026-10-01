@@ -11,6 +11,11 @@
 //  Long list handling: max-h-96 + overflow-auto (convention).
 //  (BUGHUNT-R2: the old comment promised a "custom scrollbar" via the
 //  `waste-scroll` class — dead: defined in no stylesheet, removed.)
+//
+//  W2 (Kronis vs Episodik): +1 kolom "Kelas" (badge KRONIS/EPISODIK/
+//  SEHAT/TERBATAS + tooltip "bulan di atas median X/Y" INDIKASI) —
+//  data berasal dari field ADDITIF /api/waste-series; respons cache
+//  pra-W2 tidak memilikinya → render em-dash (pola kolom Flag).
 // ============================================================
 
 import { memo, useState } from 'react';
@@ -20,9 +25,23 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Button } from '@/components/ui/button';
 import { Store, ChevronDown, ChevronUp } from 'lucide-react';
 import { fmtIDR, fmtPct } from '@/lib/format';
-import type { WasteOutletRow } from './types';
+import type { WasteOutletRow, WastePersistenceClass } from './types';
 
 const INITIAL_ROWS = 15;
+
+/** W2 class badge color (same palette language as the detector flags + persistence-card). */
+function persistenceClassBadgeClass(c: WastePersistenceClass): string {
+  switch (c) {
+    case 'KRONIS':
+      return 'text-red-600 dark:text-red-400 border-red-300/70 dark:border-red-800/70 bg-red-50/60 dark:bg-red-950/30';
+    case 'EPISODIK':
+      return 'text-amber-700 dark:text-amber-400 border-amber-300/70 dark:border-amber-800/70 bg-amber-50/60 dark:bg-amber-950/30';
+    case 'SEHAT':
+      return 'text-emerald-600 dark:text-emerald-400 border-emerald-300/70 dark:border-emerald-800/70 bg-emerald-50/60 dark:bg-emerald-950/30';
+    default:
+      return 'text-zinc-600 dark:text-zinc-300 border-zinc-300/70 dark:border-zinc-700 bg-zinc-50/60 dark:bg-zinc-900/30';
+  }
+}
 
 export const WasteProfileTable = memo(function WasteProfileTable({
   outlets,
@@ -44,6 +63,7 @@ export const WasteProfileTable = memo(function WasteProfileTable({
         <p className="text-xs text-muted-foreground ml-9">
           Ranking {outlets.length} outlet pada scope filter aktif — rank 1 = rasio waste/sales tertinggi di window.
           Waste = ΣABS nominalWaste; Residual = bagian loss yang TIDAK dijelaskan waste/susut/trial.
+          Kelas (W2) = persistensi waste terhadap median network per bulan — lihat kartu Kronis vs Episodik.
         </p>
       </CardHeader>
       <CardContent className="p-0">
@@ -55,7 +75,7 @@ export const WasteProfileTable = memo(function WasteProfileTable({
                 in no stylesheet (grep: 0 CSS hits); max-h-96/overflow-auto
                 wrapper kept. */}
             <div className="max-h-96 overflow-auto">
-              <Table className="min-w-[1050px]">
+              <Table className="min-w-[1160px]">
                 <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                   <TableRow className="border-b hover:bg-transparent">
                     <TableHead className="text-xs font-semibold uppercase tracking-wider h-8">#</TableHead>
@@ -68,6 +88,7 @@ export const WasteProfileTable = memo(function WasteProfileTable({
                     <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">Residual</TableHead>
                     <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">Total Loss</TableHead>
                     <TableHead className="text-right text-xs font-semibold uppercase tracking-wider h-8">Waste/Sales</TableHead>
+                    <TableHead className="text-center text-xs font-semibold uppercase tracking-wider h-8">Kelas</TableHead>
                     <TableHead className="text-center text-xs font-semibold uppercase tracking-wider h-8">Flag</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -88,6 +109,22 @@ export const WasteProfileTable = memo(function WasteProfileTable({
                       <TableCell className="text-right text-xs tabular-nums text-red-600 dark:text-red-400">{fmtIDR(o.totalLoss)}</TableCell>
                       <TableCell className={`text-right text-xs tabular-nums ${o.wasteToSales > 0.02 ? 'text-amber-600 dark:text-amber-400 font-semibold' : ''}`}>
                         {fmtPct(o.wasteToSales, false, 2)}
+                      </TableCell>
+                      {/* W2 (Kronis vs Episodik) — additive field; em-dash when
+                          absent (stale pre-W2 cached response). Tooltip carries
+                          the "bulan di atas median X/Y" INDIKASI disclosure. */}
+                      <TableCell className="text-center">
+                        {o.persistenceClass ? (
+                          <Badge
+                            variant="outline"
+                            title={`${o.persistenceClass} (INDIKASI) — ${o.monthsAboveMedian ?? 0}/${o.activeMonths ?? 0} bulan aktif di atas median network bulan tersebut`}
+                            className={`text-[9px] font-semibold h-4 px-1.5 cursor-help ${persistenceClassBadgeClass(o.persistenceClass)}`}
+                          >
+                            {o.persistenceClass}
+                          </Badge>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-center">
                         <div className="flex items-center justify-center gap-1 flex-wrap">
@@ -139,6 +176,9 @@ export const WasteProfileTable = memo(function WasteProfileTable({
             <p className="px-4 py-2.5 text-[10px] text-muted-foreground border-t">
               Flag: W0 = waste ≈ 0 dengan loss &gt; ambang P1 · 2σ×n = n bulan lonjakan waste/sales &gt; 2σ vs riwayat window sendiri ·
               UR = waste/sales &lt; 0,1% (≥ 2 bulan, under-recording) · RD = residual &gt; 80% loss dan waste menjelaskan &lt; 10%.
+              Kelas (W2, INDIKASI): KRONIS = ≥ 60% bulan aktif di atas median network per bulan (min. 6 bulan aktif) ·
+              EPISODIK = ada lonjakan 2σ tanpa persistensi kronis · SEHAT = lainnya · TERBATAS = &lt; 6 bulan aktif —
+              bulan DQ-error/tanpa sales dikecualikan dari perhitungan.
             </p>
           </>
         )}

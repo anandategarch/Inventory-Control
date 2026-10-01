@@ -14,6 +14,12 @@
 //  sehingga permukaan publik modul tetap identik dengan
 //  pra-split (grep '^export' file asli = 9 nama: 4 fungsi +
 //  5 tipe).
+//
+//  W2 (Kronis vs Episodik): ditambahkan ADDITIF — field optional
+//  persistenceClass dkk. pada WasteOutletRow + block
+//  WasteNetworkResult.persistence + 5 tipe baru (semuanya murni
+//  tambahan; tidak ada nama lama yang diubah/dihapus; lihat
+//  ./persistence.ts untuk kontrak + logika keputusan).
 // ============================================================
 
 // ------------------------------------------------------------
@@ -86,6 +92,28 @@ export interface WasteOutletRow {
   zeroWasteBigLoss: boolean;
   underRecording: boolean;
   residualDominant: boolean;
+  // ----------------------------------------------------------
+  // W2 (Kronis vs Episodik) — ADDITIVE optional fields, merged onto
+  // each outlet row by queryWasteNetwork via buildWastePersistence.
+  // Optional because buildWasteOutlets (the base builder) does not
+  // compute them (they need the per-month NETWORK medians) — consumers
+  // must treat them as possibly-absent (old cached payloads).
+  // Full contract + decision log: ./persistence.ts header.
+  // ----------------------------------------------------------
+  /** Comparable months: not DQ-error AND sales > 0 (ratio defined). */
+  activeMonths?: number;
+  /** DQ-error months — counted SEPARATELY as invalid, never above/below. */
+  invalidMonths?: number;
+  /** Non-DQ months with sales = 0 (wasteToSales undefined — excluded from the share denominator). */
+  zeroSalesMonths?: number;
+  /** Active months with wasteToSales above that month's network median. */
+  monthsAboveMedian?: number;
+  /** monthsAboveMedian / activeMonths (0 when activeMonths = 0). */
+  aboveMedianShare?: number;
+  /** Spike (2σ) months among ACTIVE months only (DQ months excluded). */
+  activeSpikeMonths?: number;
+  /** KRONIS / EPISODIK / SEHAT / TERBATAS — always INDIKASI (see persistence.ts). */
+  persistenceClass?: WastePersistenceClass;
 }
 
 export interface WasteMonthMeta {
@@ -121,4 +149,93 @@ export interface WasteNetworkResult {
   monthly: WasteMonthlyRow[];
   outlets: WasteOutletRow[];
   kpis: WasteKpis;
+  /**
+   * W2 (Kronis vs Episodik) — ADDITIVE network-level persistence block
+   * (transition matrix + persistence ratio + Fisher exact p + class
+   * distribution + per-month medians). Always present in the
+   * queryWasteNetwork response; the /api/waste-series route forwards
+   * it under the same key. Older consumers ignore it.
+   */
+  persistence: WastePersistenceBlock;
+}
+
+// ------------------------------------------------------------
+// 2. W2 — Kronis vs Episodik persistence types (additive)
+// ------------------------------------------------------------
+
+/** W2: per-outlet persistence class. All classes are INDIKASI (statistical indication, not proof). */
+export type WastePersistenceClass = 'KRONIS' | 'EPISODIK' | 'SEHAT' | 'TERBATAS';
+
+/** W2: per-outlet persistence metrics (merged onto WasteOutletRow as ADDITIVE optional fields). */
+export interface WasteOutletPersistence {
+  outletCode: string;
+  /** Comparable months: not DQ-error AND sales > 0 (ratio defined). */
+  activeMonths: number;
+  /** DQ-error months — counted SEPARATELY as invalid, never above/below. */
+  invalidMonths: number;
+  /** Non-DQ months with sales = 0 (wasteToSales undefined — excluded from the share denominator). */
+  zeroSalesMonths: number;
+  /** Active months with wasteToSales above that month's network median. */
+  monthsAboveMedian: number;
+  /** monthsAboveMedian / activeMonths (0 when activeMonths = 0). */
+  aboveMedianShare: number;
+  /** Spike (2σ) months among ACTIVE months only (DQ months excluded). */
+  activeSpikeMonths: number;
+  persistenceClass: WastePersistenceClass;
+}
+
+/** W2: per-month network median of wasteToSales over the month's ACTIVE outlets (seasonality control). */
+export interface WasteMonthMedian {
+  monthKey: string;
+  monthLabel: string;
+  medianWasteToSales: number;
+  /** Active outlets that month (the median's n). */
+  activeOutlets: number;
+}
+
+/** W2: network-level persistence summary — the numbers behind the "Kronis vs Episodik" card. */
+export interface WastePersistenceSummary {
+  /** t high → t+1 high (consecutive active month pairs, network-wide). */
+  transitionHH: number;
+  /** t high → t+1 low. */
+  transitionHL: number;
+  /** t low → t+1 high. */
+  transitionLH: number;
+  /** t low → t+1 low. */
+  transitionLL: number;
+  /** HH + HL + LH + LL. */
+  transitionPairs: number;
+  /** HH / (HH + HL); null when no high-start pairs. */
+  pHighNextGivenHigh: number | null;
+  /** LH / (LH + LL); null when no low-start pairs. */
+  pHighNextGivenLow: number | null;
+  /** [HH/(HH+HL)] / [LH/(LH+LL)]; null when undefined (never ±Infinity — JSON-safe). */
+  persistenceRatio: number | null;
+  /** Two-sided Fisher exact p on [[HH, HL], [LH, LL]]; null when no pairs. */
+  fisherP: number | null;
+  /** Months with a computable median (≥ 1 active outlet). */
+  monthsWithMedian: number;
+  /** Smallest active-outlet count among those months (surfaces degenerate n=1 months). */
+  minActiveOutletsPerMonth: number;
+  classDistribution: {
+    kronis: number;
+    episodik: number;
+    sehat: number;
+    terbatas: number;
+  };
+  /** Epistemic label (house convention): the classes are indication, not proof. */
+  epistemicLabel: 'INDIKASI';
+}
+
+/** W2: the top-level `persistence` response block — summary + per-month medians. */
+export interface WastePersistenceBlock {
+  summary: WastePersistenceSummary;
+  medians: WasteMonthMedian[];
+}
+
+/** W2: full builder output (per-outlet metrics + medians + summary). */
+export interface WastePersistenceResult {
+  outlets: WasteOutletPersistence[];
+  medians: WasteMonthMedian[];
+  summary: WastePersistenceSummary;
 }

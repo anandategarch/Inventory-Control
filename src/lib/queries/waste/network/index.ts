@@ -7,15 +7,23 @@
 // 5 tipe); WasteMonthlyRawRow sengaja TIDAK di-re-export (module-
 // private pra-split — lihat ./types.ts).
 //
+// W2 (Kronis vs Episodik): permukaan export barrel diperluas
+// ADDITIF (+3 fungsi +2 konstanta +5 tipe dari ./persistence.ts
+// dan ./types.ts) — 9 nama asli tidak berubah; semua import path
+// lama tetap valid.
+//
 // Layout: query.ts (queryWasteNetwork + pipeline SQL 8-CTE; detektor
 // spike 2σ hidup di CTE outlet_stats/monthly_final) · builders.ts
 // (buildWasteMonthlyRows/buildWasteOutlets/buildWasteKpis — 3 detektor
 // TS zeroWasteBigLoss/underRecording/residualDominant tetap inline
 // verbatim di buildWasteOutlets, bukan fungsi mandiri) · types.ts
-// (WasteMonthlyRawRow internal + 5 tipe publik). Konstanta window/
-// ambang tetap di ../shared.ts (tidak disentuh). Persiapan gelombang
-// fitur W2 (persistensi) + W11 (metric-swap) yang akan extend modul
-// ini — pre-split menjaga god file tidak tumbuh kembali.
+// (WasteMonthlyRawRow internal + 5 tipe publik) · persistence.ts
+// (W2 Kronis-vs-Episodik: buildWastePersistence + fisherExact2x2 +
+// classifyWastePersistence — pass murni kedua atas baris bulanan).
+// Konstanta window/ambang tetap di ../shared.ts (tidak disentuh).
+// Persiapan gelombang fitur W2 (persistensi) + W11 (metric-swap) yang
+// akan extend modul ini — pre-split menjaga god file tidak tumbuh
+// kembali.
 //
 // Catatan path pada header historis di bawah (pra-split, relatif
 // waste/): "./shared.ts" & "./peer-zscore.ts" = ../shared.ts &
@@ -70,11 +78,29 @@
 //  route used by the Waste tab.
 // ============================================================
 export { buildWasteKpis, buildWasteMonthlyRows, buildWasteOutlets } from './builders';
+// W2 (Kronis vs Episodik) — additive: pure persistence pass + the
+// self-contained two-sided Fisher exact + the classification gate
+// (constants WASTE_KRONIS_SHARE / WASTE_KRONIS_MIN_MONTHS live in
+// persistence.ts, NOT ../shared.ts, to keep the W2 footprint
+// conflict-free for sibling agents extending shared.ts concurrently).
+export {
+  buildWastePersistence,
+  classifyWastePersistence,
+  fisherExact2x2,
+  WASTE_KRONIS_MIN_MONTHS,
+  WASTE_KRONIS_SHARE,
+} from './persistence';
 export { queryWasteNetwork } from './query';
 export type {
   WasteKpis,
+  WasteMonthMedian,
   WasteMonthMeta,
   WasteMonthlyRow,
   WasteNetworkResult,
   WasteOutletRow,
+  WasteOutletPersistence,
+  WastePersistenceBlock,
+  WastePersistenceClass,
+  WastePersistenceResult,
+  WastePersistenceSummary,
 } from './types';

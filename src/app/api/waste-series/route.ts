@@ -11,12 +11,20 @@
 //  GET: ?month=Y&week=Z&area=&kelompok=&pic=&outletCode=
 //  Window: most recent 12 same-week months ending at the running
 //  month (inclusive).
+//
+//  W2 (Kronis vs Episodik) — ADDITIVE response fields: per-outlet
+//  persistenceClass/activeMonths/monthsAboveMedian/… + top-level
+//  `persistence` block (transition matrix 2×2, persistence ratio,
+//  Fisher exact p, class distribution, per-month medians). The
+//  route only RESHAPES the query result into explicit keys, so the
+//  new block is forwarded here; nothing existing was renamed or
+//  removed (old clients keep working).
 // ============================================================
 import { logger } from '@/lib/logger';
 import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
-import { queryWasteNetwork } from '@/lib/queries';
+import { buildWastePersistence, queryWasteNetwork } from '@/lib/queries';
 import { validateQuery, wasteSeriesQuerySchema } from '@/lib/validation';
 import { getRuntimeThresholds } from '@/lib/settings';
 import { db } from '@/lib/db';
@@ -72,12 +80,17 @@ export async function GET(req: NextRequest) {
     // Resolve PIC → outletCodes (shared logic — same as /api/pareto).
     const picOutletCodes = await resolvePICOutletCodes(pic);
     if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
+      // W2: keep the success shape consistent across ALL success paths —
+      // the empty persistence block is built by the SAME pure builder
+      // (single source of truth, zeroed summary + null statistics).
+      const emptyPersistence = buildWastePersistence([]);
       return NextResponse.json({
         success: true,
         months: [],
         monthly: [],
         outlets: [],
         kpis: { outlets: 0, months: 0, sales: 0, waste: 0, susut: 0, trial: 0, residual: 0, totalLoss: 0, totalSurplus: 0, wasteToSales: 0, zeroWasteBigLossOutlets: 0, underRecordingOutlets: 0, residualDominantOutlets: 0, spikeCells: 0 },
+        persistence: { summary: emptyPersistence.summary, medians: emptyPersistence.medians },
       });
     }
 
@@ -136,6 +149,11 @@ export async function GET(req: NextRequest) {
       monthly: wasteData.monthly,
       outlets: wasteData.outlets,
       kpis: wasteData.kpis,
+      // W2 (Kronis vs Episodik) — additive block: network transition
+      // matrix + persistence ratio + Fisher p + class distribution +
+      // per-month medians (outlet rows above already carry the
+      // per-outlet persistence fields).
+      persistence: wasteData.persistence,
       ...(cached ? { cached: true } : {}),
       ...(stale ? { stale: true } : {}),
     }, { headers: CACHE_ANALYSIS });

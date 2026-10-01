@@ -8,6 +8,12 @@
 //  diolah builders.ts (murni). Header modul lengkap (grain,
 //  konvensi sales MODE, sejarah BUGHUNT-R1 FIX 3/4/5/7) ada
 //  di ./index.ts bersama barrel.
+//
+//  W2 (Kronis vs Episodik): SATU-SATUNYA perubahan sejak split —
+//  pass murni kedua ./persistence.ts atas baris bulanan yang SAMA
+//  (tanpa round-trip SQL tambahan): field optional per-outlet +
+//  block `persistence` network-level pada hasil. ADDITIF — tidak
+//  ada field lama yang diubah/dihapus.
 // ============================================================
 import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../../shared';
 import {
@@ -17,6 +23,7 @@ import {
   WASTE_WINDOW_MONTHS,
 } from '../shared';
 import { buildWasteKpis, buildWasteMonthlyRows, buildWasteOutlets } from './builders';
+import { buildWastePersistence } from './persistence';
 import type { WasteMonthMeta, WasteMonthlyRawRow, WasteNetworkResult } from './types';
 
 // ------------------------------------------------------------
@@ -161,6 +168,21 @@ export async function queryWasteNetwork(
   const outlets = buildWasteOutlets(monthly, highLossNominal);
   const kpis = buildWasteKpis(monthly, outlets);
 
+  // W2 (Kronis vs Episodik) — pure second pass over the SAME monthly
+  // rows: per-outlet persistence metrics (merged ADDITIVELY onto the
+  // profile rows; buildWasteOutlets stays untouched — it cannot compute
+  // these without the per-month NETWORK medians) + the network-level
+  // `persistence` block. No extra SQL round-trip.
+  const persistence = buildWastePersistence(monthly);
+  const persistenceByCode = new Map(persistence.outlets.map((p) => [p.outletCode, p]));
+  const outletsWithPersistence = outlets.map((o) => {
+    const p = persistenceByCode.get(o.outletCode);
+    // p spreads the W2 optional fields (activeMonths, persistenceClass,
+    // …) onto the row; every base field keeps its exact value+order —
+    // additive merge, nothing renamed/removed.
+    return p ? { ...o, ...p } : o;
+  });
+
   // Month metadata: derived from the monthly rows (keeps ONE SQL round
   // trip). A month absent from ALL outlet rows can't exist — per_month is
   // the same scope as the months CTE.
@@ -177,5 +199,11 @@ export async function queryWasteNetwork(
   }
   const months = [...monthMap.values()].sort((a, b) => a.monthKey.localeCompare(b.monthKey));
 
-  return { months, monthly, outlets, kpis };
+  return {
+    months,
+    monthly,
+    outlets: outletsWithPersistence,
+    kpis,
+    persistence: { summary: persistence.summary, medians: persistence.medians },
+  };
 }

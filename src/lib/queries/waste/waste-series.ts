@@ -12,19 +12,35 @@
 // (grep '^export ' on the old file): 7 constants + 7 types + 6 functions.
 // Module-private helpers toNum / monthWindowBound moved to ./shared.ts and
 // are deliberately NOT re-exported here.
+//
+// W2 (Kronis vs Episodik): diperluas ADDITIF — +3 fungsi +2 konstanta
+// +5 tipe dari ./network/persistence.ts (deep import
+// '@/lib/queries/waste/network/persistence' juga tetap valid untuk
+// test pure-builder tanpa db-mock). Permukaan lama tidak berubah.
 
 export {
   buildWasteKpis,
   buildWasteMonthlyRows,
   buildWasteOutlets,
   queryWasteNetwork,
+  buildWastePersistence,
+  classifyWastePersistence,
+  fisherExact2x2,
+  WASTE_KRONIS_MIN_MONTHS,
+  WASTE_KRONIS_SHARE,
 } from './network';
 export type {
   WasteKpis,
+  WasteMonthMedian,
   WasteMonthMeta,
   WasteMonthlyRow,
   WasteNetworkResult,
   WasteOutletRow,
+  WasteOutletPersistence,
+  WastePersistenceBlock,
+  WastePersistenceClass,
+  WastePersistenceResult,
+  WastePersistenceSummary,
 } from './network';
 export {
   queryWastePeerZScore,
