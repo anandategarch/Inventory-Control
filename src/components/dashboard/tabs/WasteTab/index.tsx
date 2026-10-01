@@ -9,13 +9,16 @@
 //  change). Six cards:
 //    1. WasteKpiStrip        — window KPIs + severity chips
 //    2. WasteProfileTable    — per-outlet profile (rank waste/sales)
-//    3. WasteMatrixCard      — outlet × month color-scale matrix
-//    4. LossDecompositionCard— explained (waste/susut/trial) vs residual
-//    5. WasteParetoCard      — item 80/20 + sistematik + breakdown
-//    6. WasteAnomalyCard     — findings list ber-severity
-//  ONE /api/waste-series request feeds cards 1-4 + 6 (props-driven,
-//  HeatmapTab-style self-fetch — no `data` prop from page.tsx);
-//  the Pareto card self-fetches /api/waste-top-items.
+//    3. WastePersistenceCard — W2: kronis vs episodik (transisi + Fisher)
+//    4. WasteMatrixCard      — outlet × month color-scale matrix
+//    5. LossDecompositionCard— explained (waste/susut/trial) vs residual
+//    6. WasteParetoCard      — item 80/20 + sistematik + breakdown
+//    7. WasteQuadrantCard    — W3: kuadran sistemik-vs-insiden (scatter)
+//    8. WasteAnomalyCard     — findings list ber-severity
+//  ONE /api/waste-series request feeds the props-driven cards (1, 2, 3, 4,
+//  5, 8 — HeatmapTab-style self-fetch — no `data` prop from page.tsx);
+//  the Pareto + Quadrant cards self-fetch /api/waste-top-items (shared
+//  queryKey → react-query dedups both into one request).
 //  PERF-FE: memo — page.tsx re-renders on any Zustand change.
 // ============================================================
 
@@ -27,9 +30,11 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { WasteKpiStrip } from './kpi-strip';
 import { WasteProfileTable } from './profile-table';
+import { WastePersistenceCard } from './persistence-card';
 import { WasteMatrixCard } from './matrix-card';
 import { LossDecompositionCard } from './decomposition-card';
 import { WasteParetoCard } from './pareto-card';
+import { WasteQuadrantCard } from './quadrant-card';
 import { WasteAnomalyCard } from './anomaly-card';
 import type { WasteSeriesResponse } from './types';
 
@@ -118,9 +123,17 @@ export const WasteTab = memo(function WasteTab() {
     <div className="space-y-4 min-w-0">
       {kpis && <WasteKpiStrip kpis={kpis} week={currentWeek} monthsCount={months.length} />}
       <WasteProfileTable outlets={outlets} />
+      <WastePersistenceCard outlets={outlets} persistence={data?.persistence} />
       <WasteMatrixCard monthly={monthly} months={months} />
       <LossDecompositionCard monthly={monthly} />
       <WasteParetoCard
+        monthLabel={monthLabel}
+        currentWeek={currentWeek}
+        area={areaParam}
+        kelompok={kelompokParam}
+        pic={picParam}
+      />
+      <WasteQuadrantCard
         monthLabel={monthLabel}
         currentWeek={currentWeek}
         area={areaParam}
