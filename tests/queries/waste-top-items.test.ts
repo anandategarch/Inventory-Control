@@ -1,5 +1,6 @@
-// Tests for src/lib/queries/waste/waste-top-items.ts (DEEP-WASTE-1 —
-// "Top Item Waste" Pareto + sistematik + Item×Outlet breakdown).
+// Tests for src/lib/queries/waste/waste-top-items/ (DEEP-WASTE-1 —
+// "Top Item Waste" Pareto + sistematik + Item×Outlet breakdown;
+// W3-EXEC — the 4th quadrant round trip).
 //
 // Covers:
 //  1. isSistematikWasteItem (pure) — monthsActive ≥ ceil(ACTUAL windowMonths/2)
@@ -7,14 +8,17 @@
 //     12-month cap — boundary cases for window 9 → threshold 5).
 //  2. buildWasteTopItems (pure) — share + cumulative share of the population,
 //     sistematik flag (window-aware), per-outlet breakdown sorted + capped at
-//     8 with shareOfItem, empty input shape, windowMonths passthrough.
+//     8 with shareOfItem, empty input shape, windowMonths passthrough + the
+//     additive W3 null defaults (quadrant fields filled by the query edge).
 //  3. queryWasteTopItems — month derivation runs FIRST (BUGHUNT-R1 FIX 9) and
-//     yields monthKeys + windowMonths; the item + breakdown rounds filter on
-//     the materialized IN list (no months CTE rebuild), SQL pins the SAME
-//     weekLabel + inclusive window, aggregates ΣABS nominalWaste, counts
-//     DISTINCT outlet/month with waste > 0 (FIX 1 — FILTER clause), pivots
-//     last/prev month inline, breakdown restricted to the top-N item ids,
-//     lastMonthKey/prevMonthKey/windowMonths wired from the month round.
+//     yields monthKeys + windowMonths; the item + breakdown + W3 distribution
+//     rounds filter on the materialized IN list (no months CTE rebuild), SQL
+//     pins the SAME weekLabel + inclusive window, aggregates ΣABS nominalWaste,
+//     counts DISTINCT outlet/month with waste > 0 (FIX 1 — FILTER clause),
+//     pivots last/prev month inline, breakdown restricted to the top-N item
+//     ids, lastMonthKey/prevMonthKey/windowMonths wired from the month round;
+//     W3 round = GROUP BY (item, outlet) with NO cap + BOM>0 flag, quadrant
+//     fields + summary merged additively onto the result.
 //
 // Mock @/lib/db (same vi.hoisted pattern as waste-series.test.ts).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -169,13 +173,17 @@ describe('buildWasteTopItems', () => {
     expect(result.items[0].byOutlet[7].outletCode).toBe('OUT7');
   });
 
-  it('empty input → empty result carrying the window', () => {
+  it('empty input → empty result carrying the window + null quadrant defaults', () => {
     const result = buildWasteTopItems([], [], 9);
     expect(result.items).toEqual([]);
     expect(result.populationTotal).toBe(0);
     expect(result.lastMonthKey).toBeNull();
     expect(result.prevMonthKey).toBeNull();
     expect(result.windowMonths).toBe(9);
+    // W3 additive defaults: the pure builder leaves quadrant null — only the
+    // query edge (with the distribution round) fills it.
+    expect(result.quadrant).toBeNull();
+    expect(result.items.every((i) => i.quadrant === null)).toBe(true);
   });
 });
 
@@ -184,7 +192,7 @@ describe('buildWasteTopItems', () => {
 // ------------------------------------------------------------
 
 describe('queryWasteTopItems', () => {
-  it('derives months FIRST, then item + breakdown rounds filter on the IN list (FIX 9) with waste-based counts (FIX 1)', async () => {
+  it('derives months FIRST, then item + breakdown + W3 distribution rounds filter on the IN list (FIX 9) with waste-based counts (FIX 1)', async () => {
     // Round 0 — month derivation (8-month live window, most recent first).
     mockQueryRaw.mockResolvedValueOnce([
       { monthKey: '2026-08' },
@@ -202,10 +210,20 @@ describe('queryWasteTopItems', () => {
     mockQueryRaw.mockResolvedValueOnce([
       { itemId: 1, outletCode: 'A', outletName: 'Outlet A', area: 'AREA', waste: BigInt(500), monthsActive: BigInt(7) },
     ]);
+    // Round 3 (W3) — full per-(item, outlet) distribution. 3 outlets with
+    // waste (matching round 1's outletsActive=3) + 1 record-presence-only
+    // outlet WITHOUT BOM (hasBom 0) that the prevalence denominator must
+    // exclude (FIX 1 discipline: usage basis, not record presence).
+    mockQueryRaw.mockResolvedValueOnce([
+      { itemId: 1, outletId: 10, waste: BigInt(250), hasBom: 1 },
+      { itemId: 1, outletId: 11, waste: BigInt(150), hasBom: 1 },
+      { itemId: 1, outletId: 12, waste: BigInt(100), hasBom: 1 },
+      { itemId: 1, outletId: 13, waste: BigInt(0), hasBom: 0 },
+    ]);
 
     const result = await queryWasteTopItems('WEEK 4', '2026-08', {}, 20);
 
-    expect(mockQueryRaw).toHaveBeenCalledTimes(3);
+    expect(mockQueryRaw).toHaveBeenCalledTimes(4);
     // Round 0 = the month-derivation query (cheapest first — FIX 9).
     const monthSql = deepText(mockQueryRaw.mock.calls[0]);
     expect(monthSql).toContain('ir."weekLabel" =');
@@ -230,6 +248,18 @@ describe('queryWasteTopItems', () => {
     expect(breakdownSql).toContain('GROUP BY ir."itemId", o.code, o.name, ir.area');
     expect(breakdownSql).not.toContain('WITH months');
 
+    // W3 round: same window/week/filter pinning + NO cap + the BOM>0 flag.
+    const distributionSql = deepText(mockQueryRaw.mock.calls[3]);
+    expect(distributionSql).toContain('ir."weekLabel" =');
+    expect(distributionSql).toContain('sf."monthKey" IN (');
+    expect(distributionSql).toContain('ir."itemId" IN (');
+    expect(distributionSql).toContain('SUM(ABS(ir."nominalWaste"))');
+    expect(distributionSql).toContain('ABS(ir."qtyBom") > 0');
+    expect(distributionSql).toContain('GROUP BY ir."itemId", ir."outletId"');
+    // No cap on the distribution — HHI needs the FULL outlet tail.
+    expect(distributionSql).not.toContain('LIMIT');
+    expect(distributionSql).not.toContain('WITH months');
+
     expect(result.items).toHaveLength(1);
     expect(result.items[0].totalWaste).toBe(500);
     expect(result.items[0].wasteQty).toBe(1200);
@@ -242,6 +272,25 @@ describe('queryWasteTopItems', () => {
     expect(result.windowMonths).toBe(8);
     // monthsActive 7 ≥ ceil(8/2) = 4 → sistematik under the live window.
     expect(result.items[0].sistematik).toBe(true);
+
+    // W3 additive fields: prevalence 3 active / 3 BOM outlets (outlet 13
+    // without BOM excluded from the denominator) = 1.0 → widespread;
+    // persistence 7/8 ≥ ceil(8/2)=4 months → persistent → SISTEMIK.
+    // HHI null (3 active outlets < 10 guard); paretoK null (the single
+    // item's cumulativeShare 0.5 never reaches 0.8).
+    expect(result.items[0].quadrant).toEqual({
+      quadrantClass: 'SISTEMIK',
+      prevalence: 1,
+      outletsWithBom: 3,
+      persistence: 0.875,
+      hhi: null,
+    });
+    expect(result.quadrant).toEqual({
+      persistenceThresholdMonths: 4,
+      paretoK: null,
+      classCounts: { SISTEMIK: 1, MUSIMAN: 0, 'LOKAL-KRONIS': 0, INSIDEN: 0 },
+      windowMonths: 8,
+    });
   });
 
   it('short-circuits to ONE query when the window has no months (empty scope)', async () => {
@@ -251,6 +300,7 @@ describe('queryWasteTopItems', () => {
     expect(result.items).toEqual([]);
     expect(result.populationTotal).toBe(0);
     expect(result.windowMonths).toBe(0);
+    expect(result.quadrant).toBeNull();
   });
 
   it('stops after 2 queries when months exist but no items match', async () => {
@@ -262,6 +312,7 @@ describe('queryWasteTopItems', () => {
     expect(result.lastMonthKey).toBe('2026-08');
     expect(result.prevMonthKey).toBe('2026-07');
     expect(result.windowMonths).toBe(2);
+    expect(result.quadrant).toBeNull();
   });
 
   it('fires the merged set_config round-trip via withStatementTimeout', async () => {

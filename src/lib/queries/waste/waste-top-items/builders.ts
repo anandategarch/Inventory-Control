@@ -41,7 +41,7 @@ export function buildWasteTopItems(
   windowMonths: number = WASTE_TOP_ITEMS_WINDOW_MONTHS,
 ): WasteTopItemsResult {
   if (itemRows.length === 0) {
-    return { items: [], populationTotal: 0, lastMonthKey: null, prevMonthKey: null, windowMonths };
+    return { items: [], populationTotal: 0, lastMonthKey: null, prevMonthKey: null, windowMonths, quadrant: null };
   }
   const populationTotal = toNum(itemRows[0].populationTotal);
   const byItemBreakdown = new Map<number, WasteItemOutletBreakdown[]>();
@@ -80,6 +80,9 @@ export function buildWasteTopItems(
       prevMonthWaste: toNum(r.prevMonthWaste),
       sistematik: isSistematikWasteItem(toNum(r.monthsActive), toNum(r.outletsActive), windowMonths),
       byOutlet: breakdown,
+      // W3 (additive): null default — queryWasteTopItems fills it from the
+      // quadrant round trip via buildQuadrant; pure callers keep null.
+      quadrant: null,
     };
   });
   return {
@@ -90,5 +93,8 @@ export function buildWasteTopItems(
     lastMonthKey: null,
     prevMonthKey: null,
     windowMonths,
+    // W3 (additive): null default — filled by queryWasteTopItems from
+    // buildQuadrant; pure callers keep null.
+    quadrant: null,
   };
 }

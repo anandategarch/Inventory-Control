@@ -17,3 +17,35 @@ export const WASTE_TOP_ITEMS_MAX_LIMIT = 50;
 
 /** Per-item outlet breakdown cap (the Item×Outlet matrix width). */
 export const WASTE_TOP_ITEMS_OUTLET_BREAKDOWN_LIMIT = 8;
+
+// ------------------------------------------------------------
+// W3 — Kuadran Sistemik vs Insiden (prevalence × persistence)
+// Tunable thresholds, one home each (house style: constants are
+// documented module knobs, NOT runtime Settings — see findings
+// DEEPWASTE2-A §1a E4 note on hardcoded detector constants).
+// ------------------------------------------------------------
+
+/**
+ * W3 quadrant: minimum prevalence for the "widespread" side of the
+ * classification (SISTEMIK / MUSIMAN). Prevalence = outletsActive(waste>0)
+ * / outlets in scope WITH BOM>0 for the item. 0.5 = item wastes in at
+ * least half the outlets that actually use (prep) the item.
+ */
+export const WASTE_QUADRANT_PREVALENCE_MIN = 0.5;
+
+/**
+ * W3 quadrant: minimum ACTIVE outlets (waste > 0) before an item's HHI
+ * (Σ share² of its per-outlet waste distribution) is reported. Below this
+ * the concentration number is arithmetic, not evidence — with 2 outlets
+ * HHI is ≥ 0.5 by construction (1/n floor), which reads like "extreme
+ * concentration" when it is really just "no outlets to spread over".
+ */
+export const WASTE_QUADRANT_HHI_MIN_OUTLETS = 10;
+
+/**
+ * W3 quadrant: cumulative network-waste share target for paretoK
+ * (the 80 of the 80/20 reading — how many items reach 80% of the
+ * scoped total waste). Mirrors the shared 80/20 convention used by
+ * the Pareto card's cumulative-share highlight.
+ */
+export const WASTE_QUADRANT_PARETO_SHARE = 0.8;

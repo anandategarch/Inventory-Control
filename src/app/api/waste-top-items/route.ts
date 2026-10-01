@@ -1,11 +1,14 @@
 // ============================================================
-//  /api/waste-top-items — Waste item Pareto (DEEP-WASTE-1)
+//  /api/waste-top-items — Waste item Pareto (DEEP-WASTE-1) + W3 quadrant
 //  Top-N items by ΣABS nominalWaste over the multi-month SAME-week
 //  window (most recent 12 months, incl. running month) for the
 //  scoped filter set: waste qty + satuan, sistematik columns
 //  (#outlet aktif / #bulan aktif), share + cumulative share of the
 //  network total, last/prev month waste, and the per-outlet
 //  breakdown (top 8 per item — the Item×Outlet matrix).
+//  W3-EXEC (additive): per-item `quadrant` fields (prevalence ×
+//  persistence class, HHI) + top-level `quadrant` summary block
+//  (adaptive persistence threshold, paretoK, class distribution).
 //  GET: ?month=Y&week=Z&area=&kelompok=&pic=&limit=
 //  limit is clamped 1..50 (default 20) BEFORE the cache key — bogus
 //  values must not poison the cache (same style as the items route's
@@ -74,7 +77,7 @@ export async function GET(req: NextRequest) {
     // Resolve PIC → outletCodes (shared logic — same as /api/pareto).
     const picOutletCodes = await resolvePICOutletCodes(pic);
     if (picOutletCodes && picOutletCodes.length === 1 && picOutletCodes[0] === '__NO_MATCH__') {
-      return NextResponse.json({ success: true, items: [], populationTotal: 0, lastMonthKey: null, prevMonthKey: null, windowMonths: 0 });
+      return NextResponse.json({ success: true, items: [], populationTotal: 0, lastMonthKey: null, prevMonthKey: null, windowMonths: 0, quadrant: null });
     }
 
     // Same currentMonthKey derivation as /api/recommendations — window
@@ -133,6 +136,9 @@ export async function GET(req: NextRequest) {
       // sistematik threshold (ceil(windowMonths/2)) so the UI footer can
       // derive "≥ N bulan" instead of hardcoding the 12-month cap's 6.
       windowMonths: topItemsData.windowMonths,
+      // W3-EXEC (additive): network-level quadrant summary — null only on
+      // empty windows/slices; per-item quadrant fields ride inside `items`.
+      quadrant: topItemsData.quadrant,
       ...(cached ? { cached: true } : {}),
       ...(stale ? { stale: true } : {}),
     }, { headers: CACHE_ANALYSIS });

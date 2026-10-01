@@ -17,10 +17,13 @@
 //
 //  The named re-exports below match the pre-split export surface
 //  EXACTLY (grep '^export ' on the old file): 4 constants +
-//  3 types + 3 functions. WasteItemRawRow / WasteItemOutletRawRow
+//  3 types + 3 functions — PLUS the W3-EXEC additive names (3
+//  constants, 3 types, 4 quadrant builders) so the surface only
+//  grows, never shifts (house additive-only rule). WasteItemRawRow /
+//  WasteItemOutletRawRow / WasteItemOutletDistributionRawRow
 //  moved to ./types.ts with an `export` keyword added (sibling
 //  sharing) and are deliberately NOT re-exported here; toNum
-//  stays module-private inside ./builders.ts.
+//  stays module-private inside ./builders.ts (and ./quadrant.ts).
 //
 //  --- Original module doc (moved verbatim; the SQL round-trip
 //      paragraph moved to ./query.ts) ---
@@ -51,12 +54,22 @@ export {
   WASTE_TOP_ITEMS_MAX_LIMIT,
   WASTE_TOP_ITEMS_OUTLET_BREAKDOWN_LIMIT,
   WASTE_TOP_ITEMS_WINDOW_MONTHS,
+  // W3 (additive): quadrant tunables — see ./constants.ts.
+  WASTE_QUADRANT_PREVALENCE_MIN,
+  WASTE_QUADRANT_HHI_MIN_OUTLETS,
+  WASTE_QUADRANT_PARETO_SHARE,
 } from './constants';
 export type {
   WasteItemOutletBreakdown,
   WasteTopItemRow,
   WasteTopItemsResult,
+  // W3 (additive): quadrant types — see ./types.ts.
+  WasteQuadrantClass,
+  WasteItemQuadrant,
+  WasteQuadrantSummary,
 } from './types';
 export { isSistematikWasteItem } from './sistematik';
 export { buildWasteTopItems } from './builders';
+// W3 (additive): pure quadrant builders (exported for vitest).
+export { buildQuadrant, classifyQuadrantClass, computeHhi, persistenceThresholdMonths, WASTE_QUADRANT_CLASSES } from './quadrant';
 export { queryWasteTopItems } from './query';

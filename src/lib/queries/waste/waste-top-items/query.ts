@@ -13,27 +13,40 @@
 //  resolved module, byte-identical behavior.
 //
 
-//  Three SQL round trips (same pattern as the nested Pareto), but the
+//  Four SQL round trips (same pattern as the nested Pareto), but the
 //  months CTE is derived ONCE up front (BUGHUNT-R1 FIX 9 — it used to be
-//  rebuilt 3×, each a full ~378K-row scan):
+//  rebuilt per round, each a full ~378K-row scan):
 //    0. month derivation (cheapest) — the window monthKeys + windowMonths;
 //    1. per-item aggregate over the window (+ population total via
 //       SUM() OVER ());
-//    2. per-(item, outlet) breakdown restricted to the top-N item ids.
-//  Rounds 1-2 receive the monthKeys as a Prisma.join IN list — identical
+//    2. per-(item, outlet) breakdown restricted to the top-N item ids;
+//    3. W3 quadrant distribution — per-(item, outlet) waste + BOM>0 flag,
+//       GROUP BY outlet with NO cap (the top-8 breakdown slice would
+//       truncate the tail and overstate HHI concentration; the BOM flag
+//       anchors the prevalence denominator). Added by W3-EXEC following
+//       the same style: month derived ONCE first, IN-list month + item
+//       filters, withStatementTimeout wrapper.
+//  Rounds 1-3 receive the monthKeys as a Prisma.join IN list — identical
 //  month set to the old per-round CTE (same WHERE week filter + bound).
 //  Cumulative share + share columns are derived in the PURE builder
-//  (testable — same compute/classify split as waste-series.ts).
+//  (testable — same compute/classify split as waste-series.ts); the
+//  quadrant fields in the PURE ./quadrant.ts builder (same split).
 // ============================================================
 import { Prisma } from '@prisma/client';
 import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../../shared';
 import { buildWasteTopItems } from './builders';
+import { buildQuadrant } from './quadrant';
 import {
   WASTE_TOP_ITEMS_DEFAULT_LIMIT,
   WASTE_TOP_ITEMS_MAX_LIMIT,
   WASTE_TOP_ITEMS_WINDOW_MONTHS,
 } from './constants';
-import type { WasteItemOutletRawRow, WasteItemRawRow, WasteTopItemsResult } from './types';
+import type {
+  WasteItemOutletDistributionRawRow,
+  WasteItemOutletRawRow,
+  WasteItemRawRow,
+  WasteTopItemsResult,
+} from './types';
 
 // ------------------------------------------------------------
 // queryWasteTopItems
@@ -70,7 +83,7 @@ export async function queryWasteTopItems(
   const monthKeys = monthRows.map((r) => r.monthKey);
   const windowMonths = monthKeys.length;
   if (monthKeys.length === 0) {
-    return { items: [], populationTotal: 0, lastMonthKey: null, prevMonthKey: null, windowMonths: 0 };
+    return { items: [], populationTotal: 0, lastMonthKey: null, prevMonthKey: null, windowMonths: 0, quadrant: null };
   }
   // Prisma.join requires ≥ 1 element — guaranteed by the early return above.
   const monthInList = Prisma.join(monthKeys);
@@ -120,7 +133,7 @@ export async function queryWasteTopItems(
   `);
 
   if (itemRows.length === 0) {
-    return { items: [], populationTotal: 0, lastMonthKey, prevMonthKey, windowMonths };
+    return { items: [], populationTotal: 0, lastMonthKey, prevMonthKey, windowMonths, quadrant: null };
   }
 
   // Round trip 2 — per-(item, outlet) breakdown for the top-N items only
@@ -145,9 +158,44 @@ export async function queryWasteTopItems(
     GROUP BY ir."itemId", o.code, o.name, ir.area
   `);
 
+  // Round trip 3 (W3) — the FULL per-(item, outlet) waste distribution +
+  // BOM>0 flag, GROUP BY outlet with NO cap (unlike round 2, whose consumer
+  // caps the breakdown at top-8 outlets per item; capping HERE would drop
+  // tail outlets from HHI and overstate concentration). No JOIN on Outlet:
+  // the quadrant math only needs the outlet IDENTITY (grouping key) + waste
+  // + the BOM usage flag — skipping the join keeps the 4th round cheaper
+  // than round 2 on the same row set. BOM>0 (ABS(qtyBom) > 0, sign
+  // convention: BOM rows are negative) = the outlet actually prepped/used
+  // the item in the window — the prevalence denominator basis (FIX 1
+  // discipline: usage, never mere record presence).
+  const distributionRows = await withStatementTimeout((tx) => tx.$queryRaw<WasteItemOutletDistributionRawRow[]>`
+    SELECT
+      ir."itemId",
+      ir."outletId",
+      COALESCE(SUM(ABS(ir."nominalWaste")), 0) as "waste",
+      MAX(CASE WHEN ABS(ir."qtyBom") > 0 THEN 1 ELSE 0 END) as "hasBom"
+    FROM "InventoryRecord" ir
+    JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
+    WHERE ir."weekLabel" = ${week}
+      AND sf."monthKey" IN (${monthInList})
+      AND ir."itemId" IN (${Prisma.join(itemIds)})
+      ${f}
+    GROUP BY ir."itemId", ir."outletId"
+  `);
+
   const result = buildWasteTopItems(itemRows, breakdownRows, windowMonths);
   result.lastMonthKey = lastMonthKey;
   result.prevMonthKey = prevMonthKey;
+
+  // W3 wiring (additive): classify prevalence × persistence per item + the
+  // network summary, then merge onto the built rows — buildQuadrant is pure
+  // (no mutation), so the assignment happens here, the impure edge.
+  const { perItem, summary } = buildQuadrant(result.items, distributionRows, windowMonths);
+  for (const item of result.items) {
+    const q = perItem.get(item.itemId);
+    if (q) item.quadrant = q;
+  }
+  result.quadrant = summary;
 
   return result;
 }
