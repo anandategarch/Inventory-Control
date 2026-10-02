@@ -24,7 +24,7 @@
 //  PERF-FE: memo — page.tsx re-renders on any Zustand change.
 // ============================================================
 
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
 import { CalendarClock } from 'lucide-react';
@@ -87,6 +87,16 @@ export const WasteTab = memo(function WasteTab() {
     placeholderData: keepPreviousData,
   });
 
+  // FIX (WASTE-DRILL): window month labels for the cards' drill scope —
+  // useMemo pins the array identity (P3-HYG convention) so the memo'd
+  // cards don't re-render on every WasteTab re-render (a fresh .map()
+  // would defeat their memo on identity-sensitive props). Declared BEFORE
+  // the early returns (rules-of-hooks) and keyed on `data` directly.
+  const drillMonthLabels = useMemo(
+    () => (data?.months ?? []).map((m) => m.monthLabel),
+    [data],
+  );
+
   if (!monthLabel || !currentWeek) {
     return (
       <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
@@ -123,8 +133,8 @@ export const WasteTab = memo(function WasteTab() {
   return (
     <div className="space-y-4 min-w-0">
       {kpis && <WasteKpiStrip kpis={kpis} week={currentWeek} monthsCount={months.length} />}
-      <WasteProfileTable outlets={outlets} />
-      <WastePersistenceCard outlets={outlets} persistence={data?.persistence} />
+      <WasteProfileTable outlets={outlets} months={drillMonthLabels} />
+      <WastePersistenceCard outlets={outlets} persistence={data?.persistence} months={drillMonthLabels} />
       <WasteMatrixCard monthly={monthly} months={months} />
       <LossDecompositionCard monthly={monthly} />
       <WasteParetoCard
@@ -133,6 +143,7 @@ export const WasteTab = memo(function WasteTab() {
         area={areaParam}
         kelompok={kelompokParam}
         pic={picParam}
+        months={drillMonthLabels}
       />
       <WasteQuadrantCard
         monthLabel={monthLabel}
@@ -140,6 +151,7 @@ export const WasteTab = memo(function WasteTab() {
         area={areaParam}
         kelompok={kelompokParam}
         pic={picParam}
+        months={drillMonthLabels}
       />
       <WasteRateLeagueCard
         monthLabel={monthLabel}
@@ -147,6 +159,7 @@ export const WasteTab = memo(function WasteTab() {
         area={areaParam}
         kelompok={kelompokParam}
         pic={picParam}
+        months={drillMonthLabels}
       />
       <WasteAnomalyCard outlets={outlets} monthly={monthly} />
     </div>

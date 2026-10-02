@@ -11,6 +11,7 @@ import { z } from 'zod';
 import {
   noControlChars,
   monthLabelSchema,
+  multiMonthLabelSchema,
   weekLabelSchema,
   compareWeekSchema,
   areaSchema,
@@ -45,7 +46,12 @@ export const drilldownQuerySchema = z.object({
   outletCode: outletCodeSchema,
   itemName: itemNameSchema,
   weekLabel: weekLabelSchema,
-  monthLabel: monthLabelSchema,
+  // FIX (WASTE-DRILL): single label OR comma-separated multi-month list —
+  // the Waste tab's window drill passes the same-week window's months so
+  // the drawer records match the window aggregates the cards display.
+  // Route body splits + resolves + WHERE IN each element (P2-12); the
+  // union here just lets the documented multi-period value through the gate.
+  monthLabel: z.union([monthLabelSchema, multiMonthLabelSchema]),
   area: areaSchema,
   kelompok: kelompokSchema,
   pic: picSchema,

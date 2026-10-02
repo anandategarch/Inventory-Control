@@ -9,6 +9,10 @@
 //  version of the offline report's "Anomali Waste" sheet (10
 //  kejadian) + the severity chips of the Ringkasan sheet.
 //  Props-driven (parent owns the query).
+//
+//  FIX (WASTE-DRILL): temuan kini klik → DrillDownDrawer ter-scope window
+//  (months diturunkan dari prop `monthly` — label bulan unik window) —
+//  menutup bagian "loop aksi terputus" findings-DEEPWASTE2-MAIN #4.
 // ============================================================
 
 import { memo, useMemo } from 'react';
@@ -16,6 +20,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { AlertTriangle } from 'lucide-react';
 import { fmtIDR, fmtPct } from '@/lib/format';
+import { clickableRowProps } from '@/lib/a11y';
+import { useDashboard } from '@/hooks/useDashboard';
 import type { WasteMonthlyRow, WasteOutletRow } from './types';
 
 interface WasteFinding {
@@ -102,7 +108,26 @@ export const WasteAnomalyCard = memo(function WasteAnomalyCard({
   outlets: WasteOutletRow[];
   monthly: WasteMonthlyRow[];
 }) {
+  const setDrilldown = useDashboard((s) => s.setDrilldown);
   const findings = useMemo(() => buildFindings(outlets, monthly), [outlets, monthly]);
+
+  // FIX (WASTE-DRILL): window month labels derived from the card's own
+  // `monthly` prop (unique, insertion order = window order) — the drill
+  // scope for a finding matches the window the detectors aggregated over.
+  const drillMonths = useMemo(
+    () => [...new Set(monthly.map((r) => r.monthLabel))],
+    [monthly],
+  );
+
+  // FIX (WASTE-DRILL): finding row → outlet-scoped window drill (keyboard
+  // parity via clickableRowProps — the row is a div, same helper works).
+  const handleFindingDrill = (outletCode: string) => {
+    setDrilldown({
+      outletCode,
+      itemName: null,
+      months: drillMonths.length > 0 ? drillMonths : undefined,
+    });
+  };
 
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
@@ -117,6 +142,7 @@ export const WasteAnomalyCard = memo(function WasteAnomalyCard({
           Maks. 20 temuan pada scope aktif, terurut severity: KRITIS (waste ≈ 0 + loss besar) → TINGGI (lonjakan &gt; 2σ) →
           SEDANG (residual dominan / under-recording). Aturan yang sama berjalan di level record pada engine anomali
           (WASTE_ZERO_BIG_LOSS / WASTE_SPIKE_2SIGMA / WASTE_RESIDUAL_DOMINANT / WASTE_SALES_UNDER_RECORD).
+          <span className="font-medium text-foreground/70"> Klik temuan untuk drill-down data sumber outletnya (window same-week).</span>
         </p>
       </CardHeader>
       <CardContent className="p-0">
@@ -129,7 +155,11 @@ export const WasteAnomalyCard = memo(function WasteAnomalyCard({
             {/* FIX (BUGHUNT-R2): dropped dead `waste-scroll` class — defined in
                 no stylesheet (grep: 0 CSS hits); max-h-96/overflow-auto kept. */}
             {findings.map((f) => (
-              <div key={f.key} className="flex items-start gap-3 px-4 py-2.5 hover:bg-muted/40 dark:hover:bg-zinc-800/30">
+              <div
+                key={f.key}
+                className="flex items-start gap-3 px-4 py-2.5 hover:bg-muted/40 dark:hover:bg-zinc-800/30 cursor-pointer"
+                {...clickableRowProps(() => handleFindingDrill(f.outletCode))}
+              >
                 <Badge variant="outline" className={`text-[10px] font-semibold shrink-0 mt-0.5 ${severityBadgeClass(f.severity)}`}>
                   {f.severity}
                 </Badge>

@@ -41,6 +41,18 @@ export const noControlChars = (v: string) => !CONTROL_CHAR.test(v);
 // monthResolver normalizes case AFTER validation, so validation must accept any case.
 export const monthLabelSchema = z.string().regex(/^[A-Za-z]+\s+20\d{2}$/).refine(noControlChars).optional();
 
+// FIX (WASTE-DRILL): comma-separated month list for /api/drilldown — the route
+// body has split→trim→dedup→sort→resolve→WHERE IN support since P2-12 (the
+// "multi-period" comment in the route header), but this gate only accepted a
+// SINGLE label, so the documented multi-month path was unreachable. The Waste
+// tab's window drill (months of the same-week window, e.g. 8–12 labels) now
+// has a schema that actually lets it through. Each element keeps the single
+// month shape; whitespace around commas is tolerated (the route trims anyway).
+export const multiMonthLabelSchema = z.string()
+  .regex(/^([A-Za-z]+\s+20\d{2})(\s*,\s*[A-Za-z]+\s+20\d{2})+$/)
+  .refine(noControlChars)
+  .optional();
+
 // Week label: "WEEK 1", "WEEK 2", "WEEK 4"
 export const weekLabelSchema = z.string().regex(/^WEEK\s+[0-9]+$/i).refine(noControlChars).optional();
 

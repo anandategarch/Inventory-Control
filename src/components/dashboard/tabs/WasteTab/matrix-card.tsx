@@ -10,6 +10,12 @@
 //  expandable). Cell color = value relative to the metric's max
 //  across the matrix (rose alpha scale — higher = darker).
 //  DQ-error months are marked in the column header.
+//
+//  FIX (WASTE-DRILL): sel berisi data kini klik → DrillDownDrawer
+//  presisi BULAN (outlet + monthLabel sel — BUKAN window: nilai sel
+//  adalah agregat outlet-bulan itu sendiri). Sel kosong tetap statis.
+//  Keyboard parity via clickableRowProps pada <td> (helper rumah
+//  bekerja pada elemen non-interaktif apa pun).
 // ============================================================
 
 import { memo, useMemo, useState } from 'react';
@@ -17,6 +23,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { LayoutGrid, ChevronDown, ChevronUp } from 'lucide-react';
 import { fmtIDR, fmtPct, fmtHeatmapCompact } from '@/lib/format';
+import { clickableRowProps } from '@/lib/a11y';
+import { useDashboard } from '@/hooks/useDashboard';
 import type { WasteMonthlyRow, WasteMonthMeta } from './types';
 
 type MatrixMetric = 'waste' | 'susut' | 'trial' | 'residual' | 'wasteToSales';
@@ -50,6 +58,7 @@ export const WasteMatrixCard = memo(function WasteMatrixCard({
   monthly: WasteMonthlyRow[];
   months: WasteMonthMeta[];
 }) {
+  const setDrilldown = useDashboard((s) => s.setDrilldown);
   const [metric, setMetric] = useState<MatrixMetric>('waste');
   const [expanded, setExpanded] = useState(false);
   // Safe fallback (metric always comes from METRICS) — avoids a non-null
@@ -85,6 +94,18 @@ export const WasteMatrixCard = memo(function WasteMatrixCard({
 
   const visible = expanded ? rowOutlets : rowOutlets.slice(0, INITIAL_ROWS);
 
+  // FIX (WASTE-DRILL): cell → month-precise drill (outlet + THAT month's
+  // label — the cell's aggregate IS the outlet-month pair at the current
+  // week label, so the drawer's WHERE monthLabel IN [bulan] + weekLabel
+  // matches the cell exactly). Empty cells stay non-interactive.
+  const handleCellDrill = (outletCode: string, monthLabel: string) => {
+    setDrilldown({
+      outletCode,
+      itemName: null,
+      months: [monthLabel],
+    });
+  };
+
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
@@ -97,6 +118,7 @@ export const WasteMatrixCard = memo(function WasteMatrixCard({
         <p className="text-xs text-muted-foreground ml-9">
           Baris = outlet terurut total loss (terbesar dulu); kolom = bulan same-week. Warna sel = intensitas nilai
           relatif terhadap maksimum matriks (makin gelap makin tinggi). Bulan dengan DQ error ditandai ⚠ pada kolomnya.
+          <span className="font-medium text-foreground/70"> Klik sel berisi data untuk drill-down data sumber outlet-bulan itu.</span>
         </p>
         <div className="flex items-center gap-1.5 pt-2 ml-9 flex-wrap">
           {METRICS.map((m) => (
@@ -151,10 +173,13 @@ export const WasteMatrixCard = memo(function WasteMatrixCard({
                         return (
                           <td
                             key={m.monthKey}
-                            className="text-center tabular-nums px-1 py-1.5 whitespace-nowrap"
+                            className={cell
+                              ? 'text-center tabular-nums px-1 py-1.5 whitespace-nowrap cursor-pointer hover:outline hover:outline-1 hover:outline-amber-500/70'
+                              : 'text-center tabular-nums px-1 py-1.5 whitespace-nowrap'}
                             style={cellStyle(value, max)}
+                            {...(cell ? clickableRowProps(() => handleCellDrill(o.code, m.monthLabel)) : {})}
                             title={cell
-                              ? `${o.code} · ${m.monthLabel}: ${metric === 'wasteToSales' ? fmtPct(cell.wasteToSales, false, 2) : fmtIDR(cell[metric])}${cell.spike ? ' (lonjakan > 2σ)' : ''}`
+                              ? `${o.code} · ${m.monthLabel}: ${metric === 'wasteToSales' ? fmtPct(cell.wasteToSales, false, 2) : fmtIDR(cell[metric])}${cell.spike ? ' (lonjakan > 2σ)' : ''} — klik untuk drill-down data sumber`
                               : 'tidak ada data'}
                           >
                             {cell ? formatCell(value, metricConf.isRatio) : ''}

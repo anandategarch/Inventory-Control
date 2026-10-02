@@ -24,6 +24,11 @@
 //  read below guards undefined.
 //  Epistemic disclosure: every class is INDIKASI — a strong measured
 //  PATTERN, not proof of cause (house convention from lib/insights.ts).
+//
+//  FIX (WASTE-DRILL): baris outlet kini klik → DrillDownDrawer ter-scope
+//  window (drilldown.months dari parent) — 0 wiring drilldown dari WasteTab
+//  (findings-DEEPWASTE2-MAIN #4) ditutup juga di kartu ini. Keyboard parity
+//  via clickableRowProps.
 // ============================================================
 
 import { memo, useMemo } from 'react';
@@ -32,6 +37,8 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Repeat } from 'lucide-react';
 import { fmtPct } from '@/lib/format';
+import { clickableRowProps } from '@/lib/a11y';
+import { useDashboard } from '@/hooks/useDashboard';
 import type { WasteOutletRow, WastePersistenceBlock, WastePersistenceClass } from './types';
 
 /** Sort order: KRONIS first, TERBATAS last (insufficient data = least interesting). */
@@ -79,11 +86,27 @@ function classTooltip(o: WasteOutletRow): string {
 export const WastePersistenceCard = memo(function WastePersistenceCard({
   outlets,
   persistence,
+  months,
 }: {
   outlets: WasteOutletRow[];
   persistence?: WastePersistenceBlock;
+  /** FIX (WASTE-DRILL): window month labels (parent's data.months) — the
+   *  drill scope. Optional: absent → the drawer falls back to the current
+   *  month only. */
+  months?: string[];
 }) {
+  const setDrilldown = useDashboard((s) => s.setDrilldown);
   const summary = persistence?.summary;
+
+  // FIX (WASTE-DRILL): row → outlet-scoped window drill (same contract as
+  // profile-table). months passed only when non-empty.
+  const handleRowDrill = (outletCode: string) => {
+    setDrilldown({
+      outletCode,
+      itemName: null,
+      months: months && months.length > 0 ? months : undefined,
+    });
+  };
 
   // KRONIS first, then aboveMedianShare DESC; outlets without W2 fields
   // (stale cache) sort last and render an em-dash class.
@@ -118,6 +141,7 @@ export const WastePersistenceCard = memo(function WastePersistenceCard({
           bulan DQ-error dihitung terpisah sebagai bulan tak valid.
           Window same-week{monthsCount > 0 ? `: ${monthsCount} bulan tersedia (maks. 12)` : ': maks. 12 bulan'} —
           minggu bersifat kumulatif sehingga perbandingan antar bulan HANYA valid pada minggu yang sama.
+          <span className="font-medium text-foreground/70"> Klik baris outlet untuk drill-down data sumber (window same-week).</span>
         </p>
       </CardHeader>
       <CardContent className="p-0">
@@ -225,7 +249,11 @@ export const WastePersistenceCard = memo(function WastePersistenceCard({
                 </TableHeader>
                 <TableBody>
                   {sorted.map((o) => (
-                    <TableRow key={o.outletCode} className="h-9">
+                    <TableRow
+                      key={o.outletCode}
+                      className="h-9 cursor-pointer hover:bg-muted/50 dark:hover:bg-zinc-800/40"
+                      {...clickableRowProps(() => handleRowDrill(o.outletCode))}
+                    >
                       <TableCell className="text-xs font-medium">
                         {o.outletCode}
                         <span className="text-muted-foreground font-normal"> · {o.outletName}</span>

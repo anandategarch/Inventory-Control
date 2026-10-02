@@ -24,6 +24,12 @@
 //  numbers to the API's `attribution` block — zero extra requests,
 //  zero wiring debt in WasteTab/index.tsx. Interaction style follows
 //  the card's own ghost-button toggle (showAll) — default collapsed.
+//
+//  FIX (WASTE-DRILL): bar outlet pada stacked chart kini klik →
+//  DrillDownDrawer ter-scope window (months diturunkan dari prop
+//  `monthly`) — pola onClick Bar = DeviationBreakdownChart (konvensi
+//  rumah). Chart tetap role="img" + aria-label (tabel kartu lain tetap
+//  jalur keyboard utama drill pada tab ini).
 // ============================================================
 
 import { memo, useMemo, useState } from 'react';
@@ -34,6 +40,7 @@ import { fmtIDR, fmtHeatmapCompact, fmtPct } from '@/lib/format';
 import { COLORS } from '@/lib/chart-constants';
 import { getTooltipStyle } from '@/lib/chart-constants';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
+import { useDashboard } from '@/hooks/useDashboard';
 // W10 — PURE server module (type-only imports inside): recomputes the
 // attribution block client-side from the same monthly rows.
 import { buildWasteAttribution } from '@/lib/queries/waste/network/attribution';
@@ -59,6 +66,7 @@ export const LossDecompositionCard = memo(function LossDecompositionCard({
 }: {
   monthly: WasteMonthlyRow[];
 }) {
+  const setDrilldown = useDashboard((s) => s.setDrilldown);
   const [showAll, setShowAll] = useState(false);
   // W10 — default COLLAPSED (the chart above is the primary view; the
   // scenario subsection is the analyst drill-down). Same ghost-toggle
@@ -91,6 +99,25 @@ export const LossDecompositionCard = memo(function LossDecompositionCard({
     // in this card (33,0% vs 49,3% live — "two truths").
     return { chartData: sliced, totalOutlets: sorted.length };
   }, [monthly, showAll]);
+
+  // ------------------------------------------------------------
+  // FIX (WASTE-DRILL): window month labels derived from the card's own
+  // `monthly` prop (unique, insertion order) — the drill scope matches the
+  // window the stacked bars aggregate over. Bar click → outlet drill
+  // (DeviationBreakdownChart's Bar onClick convention; d.name = outletCode).
+  // ------------------------------------------------------------
+  const drillMonths = useMemo(
+    () => [...new Set(monthly.map((r) => r.monthLabel))],
+    [monthly],
+  );
+  const handleBarDrill = (d: { name?: string }) => {
+    if (!d.name) return;
+    setDrilldown({
+      outletCode: d.name,
+      itemName: null,
+      months: drillMonths.length > 0 ? drillMonths : undefined,
+    });
+  };
 
   // ------------------------------------------------------------
   // W10 — Skenario Atribusi Residual: rebuild the network attribution
@@ -140,6 +167,7 @@ export const LossDecompositionCard = memo(function LossDecompositionCard({
           {showAll ? ` semua ${chartData.length} outlet` : ` ${Math.min(INITIAL_OUTLETS, chartData.length)} outlet dengan loss terbesar`}.
           {/* FIX (UIUX-C T1): subtitle pakai explainedShare (denominator totalLoss) — konsisten meter W10. */}
           Window: {fmtPctId(attribution.explainedShare)} loss terjelaskan.
+          <span className="font-medium text-foreground/70"> Klik bar outlet untuk drill-down data sumber (window same-week).</span>
         </p>
       </CardHeader>
       <CardContent>
@@ -172,10 +200,10 @@ export const LossDecompositionCard = memo(function LossDecompositionCard({
                     contentStyle={getTooltipStyle()}
                   />
                   <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
-                  <Bar dataKey="waste" name="Waste" stackId="loss" fill={COLORS.waste} maxBarSize={44} isAnimationActive={false} />
-                  <Bar dataKey="susut" name="Susut" stackId="loss" fill={COLORS.susut} maxBarSize={44} isAnimationActive={false} />
-                  <Bar dataKey="trial" name="Trial" stackId="loss" fill={COLORS.trial} maxBarSize={44} isAnimationActive={false} />
-                  <Bar dataKey="residual" name="Residual" stackId="loss" fill={COLORS.residual} maxBarSize={44} isAnimationActive={false} />
+                  <Bar dataKey="waste" name="Waste" stackId="loss" fill={COLORS.waste} maxBarSize={44} isAnimationActive={false} onClick={handleBarDrill} cursor="pointer" />
+                  <Bar dataKey="susut" name="Susut" stackId="loss" fill={COLORS.susut} maxBarSize={44} isAnimationActive={false} onClick={handleBarDrill} cursor="pointer" />
+                  <Bar dataKey="trial" name="Trial" stackId="loss" fill={COLORS.trial} maxBarSize={44} isAnimationActive={false} onClick={handleBarDrill} cursor="pointer" />
+                  <Bar dataKey="residual" name="Residual" stackId="loss" fill={COLORS.residual} maxBarSize={44} isAnimationActive={false} onClick={handleBarDrill} cursor="pointer" />
                 </BarChart>
               </ResponsiveContainer>
             </div>

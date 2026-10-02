@@ -26,6 +26,11 @@
 //  outlet tsb (susutRatioMonths — "dari N bulan ber-sales, min. 3";
 //  field ADDITIF, fallback teks lama saat absen agar tidak
 //  menampilkan "undefined").
+//
+//  FIX (WASTE-DRILL): baris outlet kini klik → DrillDownDrawer ter-scope
+//  window (drilldown.months = bulan-bulan window same-week dari parent) —
+//  menutup temuan findings-DEEPWASTE2-MAIN #4 "0 drilldown wiring dari
+//  WasteTab". Keyboard parity via clickableRowProps (konvensi rumah).
 // ============================================================
 
 import { memo, useState } from 'react';
@@ -35,6 +40,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Button } from '@/components/ui/button';
 import { Store, ChevronDown, ChevronUp } from 'lucide-react';
 import { fmtIDR, fmtPct } from '@/lib/format';
+import { clickableRowProps } from '@/lib/a11y';
+import { useDashboard } from '@/hooks/useDashboard';
 import type { WasteOutletRow, WastePersistenceClass } from './types';
 
 const INITIAL_ROWS = 15;
@@ -55,11 +62,28 @@ function persistenceClassBadgeClass(c: WastePersistenceClass): string {
 
 export const WasteProfileTable = memo(function WasteProfileTable({
   outlets,
+  months,
 }: {
   outlets: WasteOutletRow[];
+  /** FIX (WASTE-DRILL): window month labels (parent's data.months) — the
+   *  drill scope so the drawer's records match the row's window aggregate.
+   *  Optional: absent (stale payload / parent not loaded) → the drawer falls
+   *  back to the current month only. */
+  months?: string[];
 }) {
+  const setDrilldown = useDashboard((s) => s.setDrilldown);
   const [expanded, setExpanded] = useState(false);
   const rows = expanded ? outlets : outlets.slice(0, INITIAL_ROWS);
+
+  // FIX (WASTE-DRILL): row → outlet-scoped window drill. months passed only
+  // when non-empty (undefined keeps the drawer's legacy current-month scope).
+  const handleRowDrill = (outletCode: string) => {
+    setDrilldown({
+      outletCode,
+      itemName: null,
+      months: months && months.length > 0 ? months : undefined,
+    });
+  };
 
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
@@ -74,6 +98,7 @@ export const WasteProfileTable = memo(function WasteProfileTable({
           Ranking {outlets.length} outlet pada scope filter aktif — rank 1 = rasio waste/sales tertinggi di window.
           Waste = ΣABS nominalWaste; Residual = bagian loss yang TIDAK dijelaskan waste/susut/trial.
           Kelas (W2) = persistensi waste terhadap median network per bulan — lihat kartu Kronis vs Episodik.
+          <span className="font-medium text-foreground/70"> Klik baris outlet untuk drill-down data sumber (window same-week).</span>
         </p>
       </CardHeader>
       <CardContent className="p-0">
@@ -104,7 +129,11 @@ export const WasteProfileTable = memo(function WasteProfileTable({
                 </TableHeader>
                 <TableBody>
                   {rows.map((o) => (
-                    <TableRow key={o.outletCode} className="h-9">
+                    <TableRow
+                      key={o.outletCode}
+                      className="h-9 cursor-pointer hover:bg-muted/50 dark:hover:bg-zinc-800/40"
+                      {...clickableRowProps(() => handleRowDrill(o.outletCode))}
+                    >
                       <TableCell className="text-xs tabular-nums text-muted-foreground">{o.rankWasteToSales}</TableCell>
                       <TableCell className="text-xs font-medium">
                         {o.outletCode}

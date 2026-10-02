@@ -33,6 +33,17 @@ export function DrillDownDrawer() {
   })));
   const open = Boolean(drilldown.outletCode || drilldown.itemName);
 
+  // FIX (WASTE-DRILL): the Waste tab's cards aggregate over a multi-month
+  // same-week window, so their drill passes the window's monthLabels
+  // (drilldown.months). The drawer then requests the comma-joined
+  // monthLabel — /api/drilldown's documented multi-period path (each label
+  // resolved to DB case + WHERE IN server-side). Legacy drill callers (Item
+  // tab TopItems, Historical cards, Heatmap sheet) leave months unset →
+  // drillMonthParam === the store's monthLabel, byte-identical scope to the
+  // pre-WASTE-DRILL behavior.
+  const drillMonths = drilldown.months && drilldown.months.length > 0 ? drilldown.months : null;
+  const drillMonthParam = drillMonths ? drillMonths.join(',') : monthLabel;
+
   // FIX M1 (AUDIT-6): Track all loaded records across pages (cursor pagination).
   const [allRecords, setAllRecords] = useState<DrilldownRecord[]>([]);
   const [nextCursor, setNextCursor] = useState<number | null>(null);
@@ -46,7 +57,7 @@ export function DrillDownDrawer() {
     outletCode: drilldown.outletCode,
     itemName: drilldown.itemName,
     weekLabel: currentWeek,
-    monthLabel,
+    monthLabel: drillMonthParam,
     limit: 50,
     area: area && area !== 'all' ? area : undefined,
     kelompok: kelompok && kelompok !== 'all' ? kelompok : undefined,
@@ -82,8 +93,8 @@ export function DrillDownDrawer() {
   // against it actually detects the change.
   const filterSigRef = useRef('');
   useEffect(() => {
-    filterSigRef.current = `${drilldown.outletCode}|${drilldown.itemName}|${currentWeek}|${monthLabel}|${area}|${kelompok}|${pic}`;
-  }, [drilldown.outletCode, drilldown.itemName, currentWeek, monthLabel, area, kelompok, pic]);
+    filterSigRef.current = `${drilldown.outletCode}|${drilldown.itemName}|${currentWeek}|${drillMonthParam}|${area}|${kelompok}|${pic}`;
+  }, [drilldown.outletCode, drilldown.itemName, currentWeek, drillMonthParam, area, kelompok, pic]);
 
   // FIX M1: Load More — fetch next page using cursor, append to allRecords.
   // FIX FE-06 → FIX (BUG-3-b B2): race-guard now compares against the LIVE
@@ -100,7 +111,7 @@ export function DrillDownDrawer() {
       if (drilldown.outletCode) params.set('outletCode', drilldown.outletCode);
       if (drilldown.itemName) params.set('itemName', drilldown.itemName);
       if (currentWeek) params.set('weekLabel', currentWeek);
-      if (monthLabel) params.set('monthLabel', monthLabel);
+      if (drillMonthParam) params.set('monthLabel', drillMonthParam);
       params.set('limit', '50');
       params.set('cursor', String(nextCursor));
       // Pass dashboard filters so pagination respects active filter
@@ -137,7 +148,7 @@ export function DrillDownDrawer() {
     } finally {
       setLoadingMore(false);
     }
-  }, [nextCursor, loadingMore, drilldown, currentWeek, monthLabel, area, kelompok, pic]);
+  }, [nextCursor, loadingMore, drilldown, currentWeek, drillMonthParam, area, kelompok, pic]);
 
   function handleClose(open: boolean) {
     if (!open) setDrilldown({ outletCode: null, itemName: null });
@@ -158,7 +169,16 @@ export function DrillDownDrawer() {
                 {drilldown.outletCode && `Outlet: ${drilldown.outletCode}`}
                 {drilldown.outletCode && drilldown.itemName && ' · '}
                 {drilldown.itemName && `Item: ${drilldown.itemName}`}
-                {currentWeek && ` · ${currentWeek} ${monthLabel || ''}`}
+                {currentWeek && ` · ${currentWeek} `}
+                {/* FIX (WASTE-DRILL): window-scoped drills state their REAL
+                    scope — "window N bulan" + the full month list on hover —
+                    so the drawer never implies a single-month record set for
+                    a multi-month aggregate. */}
+                {drillMonths
+                  ? (drillMonths.length > 1
+                    ? <span title={drillMonths.join(', ')}>· window {drillMonths.length} bulan</span>
+                    : `· ${drillMonths[0]}`)
+                  : (monthLabel || '')}
               </SheetDescription>
             </div>
           </div>

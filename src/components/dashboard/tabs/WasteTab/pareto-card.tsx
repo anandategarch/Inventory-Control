@@ -38,6 +38,13 @@
 //      both cards dedup into ONE request (keys equal); under
 //      susut/trial the quadrant card keeps its own waste-ordered
 //      request (it is waste-semantic by design).
+//
+//  FIX (WASTE-DRILL): dua jalur drill — (1) ikon FileSearch di sel Item
+//  → drill ITEM ter-scope window (semua outlet, bulan window same-week);
+//  (2) baris breakdown per-outlet (expand) → drill ITEM+OUTLET. Baris
+//  utama TETAP toggle expand (perilaku lama utuh; stopPropagation pada
+//  ikon). months = prop opsional dari parent (data.months waste-series —
+//  window bulan identik by-construction, konstanta window sama).
 // ============================================================
 
 import { memo, Fragment, useState } from 'react';
@@ -46,9 +53,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ChevronRight, TrendingUp, TrendingDown, Minus, FlaskConical } from 'lucide-react';
+import { ChevronRight, TrendingUp, TrendingDown, Minus, FlaskConical, FileSearch } from 'lucide-react';
 import { fmtDecimal, fmtIDR, fmtPct, fmtNum } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
+import { useDashboard } from '@/hooks/useDashboard';
 import type {
   WasteFingerprintClass,
   WasteMetric,
@@ -274,13 +282,20 @@ export const WasteParetoCard = memo(function WasteParetoCard({
   area,
   kelompok,
   pic,
+  months,
 }: {
   monthLabel: string;
   currentWeek: string;
   area: string | null;
   kelompok: string | null;
   pic: string | null;
+  /** FIX (WASTE-DRILL): window month labels (parent's data.months) — the
+   *  drill scope so the drawer's records match the window aggregates this
+   *  card orders by. Optional: absent → the drawer falls back to the
+   *  current month only. */
+  months?: string[];
 }) {
+  const setDrilldown = useDashboard((s) => s.setDrilldown);
   const [expandedItem, setExpandedItem] = useState<number | null>(null);
   // W11: the parity metric selector (default waste = pre-W11 behavior).
   const [metric, setMetric] = useState<WasteMetric>('waste');
@@ -322,6 +337,25 @@ export const WasteParetoCard = memo(function WasteParetoCard({
   });
 
   const items = data?.items || [];
+
+  // FIX (WASTE-DRILL): drill handlers — (a) item-level (ikon FileSearch di
+  // sel Item; outletCode null = semua outlet pada scope), (b) item+outlet
+  // (baris breakdown expand). months hanya diteruskan saat non-empty
+  // (undefined = drawer pakai scope bulan-aktif, perilaku lama).
+  const handleItemDrill = (itemName: string) => {
+    setDrilldown({
+      outletCode: null,
+      itemName,
+      months: months && months.length > 0 ? months : undefined,
+    });
+  };
+  const handleItemOutletDrill = (itemName: string, outletCode: string) => {
+    setDrilldown({
+      outletCode,
+      itemName,
+      months: months && months.length > 0 ? months : undefined,
+    });
+  };
   // FIX (UIUX-C S6): presentation reads the payload's metric echo, not the
   // local selector state — keepPreviousData keeps rendering the OLD metric's
   // payload during refetch, so header/cols/parity/"teratas by X" must not
@@ -381,7 +415,7 @@ export const WasteParetoCard = memo(function WasteParetoCard({
             </>
           ) : null}
           Fingerprint = porsi W/S/T dari loss yang terjelaskan (kolom terpisah, semua metrik).
-          Klik baris untuk breakdown per outlet.
+          Klik baris untuk breakdown per outlet; klik ikon kaca pembesar di nama item / baris breakdown untuk drill-down data sumber (window same-week).
         </p>
         {/* W11: metric selector — the matrix-card toggle pattern. */}
         <div className="flex items-center gap-1.5 pt-2 ml-9 flex-wrap" role="group" aria-label="Pilih metrik Pareto">
@@ -470,7 +504,26 @@ export const WasteParetoCard = memo(function WasteParetoCard({
                           <ChevronRight className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${expandedItem === it.itemId ? 'rotate-90' : ''}`} />
                         </TableCell>
                         <TableCell className="text-xs font-medium">
-                          {it.itemName}
+                          <span className="inline-flex items-center gap-1 align-middle">
+                            {it.itemName}
+                            {/* FIX (WASTE-DRILL): item-level drill — ghost icon
+                                button INSIDE the clickable row: stopPropagation
+                                keeps the row's expand toggle intact; the button
+                                itself is natively tabbable (keyboard parity). */}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-5 w-5 p-0 shrink-0"
+                              aria-label={`Drill-down data sumber: ${it.itemName}`}
+                              title={`Drill-down data sumber ${it.itemName} (window same-week)`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleItemDrill(it.itemName);
+                              }}
+                            >
+                              <FileSearch className="h-3 w-3" />
+                            </Button>
+                          </span>
                           {isWaste && it.sistematik && (
                             <Badge variant="outline" className="ml-2 text-[9px] font-normal text-amber-700 dark:text-amber-400 border-amber-300/70 dark:border-amber-800/70 bg-amber-50/60 dark:bg-amber-950/30 h-4 px-1.5">
                               SISTEMATIK
@@ -516,13 +569,19 @@ export const WasteParetoCard = memo(function WasteParetoCard({
                                 const itemTotal = f.nominal;
                                 const shareOfMetric = itemTotal > 0 ? value / itemTotal : 0;
                                 return (
-                                  <div key={b.outletCode} className="flex items-center justify-between gap-2 rounded border bg-background/60 dark:bg-zinc-900/60 px-2 py-1">
+                                  <div
+                                    key={b.outletCode}
+                                    className="flex items-center justify-between gap-2 rounded border bg-background/60 dark:bg-zinc-900/60 px-2 py-1 cursor-pointer hover:bg-muted/50 dark:hover:bg-zinc-800/40"
+                                    {...clickableRowProps(() => handleItemOutletDrill(it.itemName, b.outletCode))}
+                                    title={`Drill-down data sumber: ${it.itemName} · ${b.outletCode} (window same-week)`}
+                                  >
                                     <span className="text-[11px] font-medium truncate" title={`${b.outletCode} · ${b.outletName} · ${b.area}`}>
                                       {b.outletCode} <span className="text-muted-foreground font-normal">· {b.outletName}</span>
                                     </span>
                                     <span className="text-[11px] tabular-nums whitespace-nowrap">
                                       <span className={metricConf.nominalClass}>{fmtIDR(value)}</span>
                                       <span className="text-muted-foreground"> ({fmtPct(shareOfMetric, false, 0)}, {b.monthsActive} bln)</span>
+                                      <FileSearch className="inline h-3 w-3 ml-1 text-muted-foreground" aria-hidden="true" />
                                     </span>
                                   </div>
                                 );

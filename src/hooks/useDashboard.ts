@@ -38,8 +38,19 @@ interface DashboardStore {
   setItem: (v: string | null) => void;
   setPic: (v: string | null) => void;
   reset: () => void;
-  drilldown: { outletCode: string | null; itemName: string | null };
-  setDrilldown: (d: { outletCode: string | null; itemName: string | null }) => void;
+  drilldown: {
+    outletCode: string | null;
+    itemName: string | null;
+    // FIX (WASTE-DRILL): additive optional scope — the Waste tab's cards
+    // aggregate over a multi-month same-week window, so their drill passes
+    // the window's monthLabels here (the drawer then requests comma-joined
+    // monthLabel — /api/drilldown's multi-period path). Legacy drill callers
+    // (Item tab TopItems, Historical cards, Heatmap sheet, …) pass only
+    // {outletCode, itemName} → months undefined → the drawer keeps its
+    // current-month scope exactly as before (object replace, no stale mix).
+    months?: string[] | null;
+  };
+  setDrilldown: (d: { outletCode: string | null; itemName: string | null; months?: string[] | null }) => void;
   sourceModalOpen: boolean;
   setSourceModal: (b: boolean) => void;
   deepDiveItem: { itemName: string | null; outletCode: string | null };
@@ -83,7 +94,7 @@ export const useDashboard = create<DashboardStore>((set) => ({
   setItem: (v) => set({ itemName: v }),
   setPic: (v) => set({ pic: v, focusOutlet: null }),
   reset: () => set({ area: null, kelompok: null, itemName: null, pic: null, focusOutlet: null }),
-  drilldown: { outletCode: null, itemName: null },
+  drilldown: { outletCode: null, itemName: null, months: null },
   setDrilldown: (d) => set({ drilldown: d }),
   sourceModalOpen: false,
   setSourceModal: (b) => set({ sourceModalOpen: b }),

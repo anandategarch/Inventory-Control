@@ -25,6 +25,12 @@
 //  CANDIDATES for recipe/process-level fixes (action framing), to
 //  be validated against resep/SOP prep before any program.
 //
+//  FIX (WASTE-DRILL): baris tabel + titik scatter kini klik →
+//  DrillDownDrawer ter-scope window (drilldown.months dari parent;
+//  payload card ini tidak membawa daftar bulan). Baris = jalur keyboard
+//  (clickableRowProps); titik scatter = jalur mouse (recharts Scatter
+//  onClick — tabel tetap sumber aksesibilitas penuh).
+//
 //  Local response types: the tab-level ./types.ts is frozen for this
 //  task — the card defines its own additive mirror (pareto-card's
 //  local-type pattern; the server fields it does not know about are
@@ -38,6 +44,8 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Grid2x2 } from 'lucide-react';
 import { fmtIDR, fmtPct } from '@/lib/format';
+import { clickableRowProps } from '@/lib/a11y';
+import { useDashboard } from '@/hooks/useDashboard';
 import {
   ScatterChart, Scatter, XAxis, YAxis, Tooltip as RTooltip, CartesianGrid,
   ResponsiveContainer, ReferenceLine, Customized, Cell,
@@ -197,13 +205,19 @@ export const WasteQuadrantCard = memo(function WasteQuadrantCard({
   area,
   kelompok,
   pic,
+  months,
 }: {
   monthLabel: string;
   currentWeek: string;
   area: string | null;
   kelompok: string | null;
   pic: string | null;
+  /** FIX (WASTE-DRILL): window month labels (parent's data.months) — the
+   *  drill scope. Optional: absent → the drawer falls back to the current
+   *  month only. */
+  months?: string[];
 }) {
+  const setDrilldown = useDashboard((s) => s.setDrilldown);
   // Same key + params as the Pareto card: react-query dedups the pair into
   // ONE /api/waste-top-items request; the filters re-fetch on change.
   const { data, isLoading, error } = useQuery<WasteQuadrantResponse>({
@@ -301,6 +315,25 @@ export const WasteQuadrantCard = memo(function WasteQuadrantCard({
   const paretoK = summary?.paretoK ?? null;
   const sistK = classCounts.SISTEMIK;
 
+  // FIX (WASTE-DRILL): item-level window drill — table rows (keyboard
+  // parity via clickableRowProps) + scatter dots (mouse; recharts passes
+  // the point payload — guarded, both {payload:{itemName}} and direct
+  // {itemName} shapes tolerated).
+  const handleItemDrill = (itemName: string) => {
+    setDrilldown({
+      outletCode: null,
+      itemName,
+      months: months && months.length > 0 ? months : undefined,
+    });
+  };
+  const handleDotDrill = (d: unknown) => {
+    const p = d as { itemName?: unknown; payload?: { itemName?: unknown } } | null;
+    const name = typeof p?.itemName === 'string'
+      ? p.itemName
+      : typeof p?.payload?.itemName === 'string' ? p.payload.itemName : null;
+    if (name) handleItemDrill(name);
+  };
+
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
@@ -324,6 +357,7 @@ export const WasteQuadrantCard = memo(function WasteQuadrantCard({
           (outlet ber-BOM yang ada waste-nya / outlet ber-BOM — FIX AUDIT-B M1: kedua sisi berbasis pemakaian BOM, selalu ≤ 100%), sumbu Y = persistensi (bulan aktif / bulan window), ukuran bubble = share waste network.
           <span className="font-medium text-foreground/70"> SISTEMIK</span> = kandidat masalah resep/proses lintas outlet —
           benahi di akar (resep/SOP prep), bukan kejaran per outlet.
+          <span className="font-medium text-foreground/70"> Klik baris tabel / titik bubble untuk drill-down data sumber item (window same-week).</span>
         </p>
         {(paretoK != null || sistK > 0) && (
           <div className="flex items-center gap-2 pt-2 flex-wrap ml-9">
@@ -425,8 +459,10 @@ export const WasteQuadrantCard = memo(function WasteQuadrantCard({
                     }}
                   />
                   {/* PERF (AUDIT-FE): animations off — tab re-mounts replay
-                      the entrance animation otherwise. */}
-                  <Scatter data={points} isAnimationActive={false}>
+                      the entrance animation otherwise. FIX (WASTE-DRILL):
+                      onClick per-point → item drill (mouse path; keyboard
+                      parity lives in the table below). */}
+                  <Scatter data={points} isAnimationActive={false} onClick={handleDotDrill} className="cursor-pointer">
                     {points.map((p) => (
                       <Cell key={p.itemId} fill={p.fill} stroke="var(--background)" strokeWidth={1} r={p.r} />
                     ))}
@@ -467,7 +503,11 @@ export const WasteQuadrantCard = memo(function WasteQuadrantCard({
                   {items.map((it) => {
                     const q = it.quadrant ?? null;
                     return (
-                      <TableRow key={it.itemId} className="h-9">
+                      <TableRow
+                        key={it.itemId}
+                        className="h-9 cursor-pointer hover:bg-muted/50 dark:hover:bg-zinc-800/40"
+                        {...clickableRowProps(() => handleItemDrill(it.itemName))}
+                      >
                         <TableCell className="text-xs font-medium max-w-[260px]">
                           <span className="block truncate" title={it.itemName}>{it.itemName}</span>
                         </TableCell>

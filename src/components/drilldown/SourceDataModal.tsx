@@ -30,6 +30,13 @@ export function SourceDataModal() {
     pic: s.pic,
   })));
 
+  // FIX (WASTE-DRILL): mirror the drawer's month-scope derivation EXACTLY
+  // (field-for-field, per the H-12 parity contract) — window-scoped drills
+  // from the Waste tab keep the same comma-joined monthLabel here, so the
+  // modal shares the drawer's cache entry AND shows the same record set.
+  const drillMonths = drilldown.months && drilldown.months.length > 0 ? drilldown.months : null;
+  const drillMonthParam = drillMonths ? drillMonths.join(',') : monthLabel;
+
   // FIX (H-12 / drilldown queryKey mismatch): this used to omit limit +
   // area/kelompok/pic, so "Sumber Lengkap" opened with a DIFFERENT queryKey
   // than the drawer's (limit undefined vs 50, no filters vs filters) →
@@ -43,7 +50,7 @@ export function SourceDataModal() {
     outletCode: drilldown.outletCode,
     itemName: drilldown.itemName,
     weekLabel: currentWeek,
-    monthLabel,
+    monthLabel: drillMonthParam,
     limit: 50,
     area: area && area !== 'all' ? area : undefined,
     kelompok: kelompok && kelompok !== 'all' ? kelompok : undefined,
@@ -97,8 +104,14 @@ export function SourceDataModal() {
     const link = document.createElement('a');
     const safeName = (drilldown.outletCode || 'all').replace(/[^a-zA-Z0-9]/g, '_');
     const safeItem = (drilldown.itemName || 'all').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30);
+    // FIX (WASTE-DRILL): window-scoped drills export a first..last month RANGE
+    // (single-month + legacy drills keep the plain label) — a 9-label comma
+    // list would make an unwieldy filename.
+    const monthFilePart = drillMonths
+      ? (drillMonths.length > 1 ? `${drillMonths[0]}-${drillMonths[drillMonths.length - 1]}` : drillMonths[0])
+      : (monthLabel || '');
     link.href = url;
-    link.download = `source_${safeName}_${safeItem}_${currentWeek || ''}_${monthLabel || ''}.csv`.replace(/\s+/g, '_');
+    link.download = `source_${safeName}_${safeItem}_${currentWeek || ''}_${monthFilePart}.csv`.replace(/\s+/g, '_');
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -128,7 +141,14 @@ export function SourceDataModal() {
                 {drilldown.outletCode && drilldown.itemName && ' · '}
                 {drilldown.itemName && `Item: ${drilldown.itemName}`}
                 {currentWeek && ` · ${currentWeek}`}
-                {monthLabel && ` ${monthLabel}`}
+                {/* FIX (WASTE-DRILL): the same honest scope line as the drawer
+                    — window N bulan (full list on hover) vs a single month. */}
+                {' '}
+                {drillMonths
+                  ? (drillMonths.length > 1
+                    ? <span title={drillMonths.join(', ')}>window {drillMonths.length} bulan</span>
+                    : drillMonths[0])
+                  : (monthLabel || '')}
                 {/* FIX (UIUX-B S11): "records" → "record" — match the drawer's
                     Indonesian singular convention ("N record" badge). */}
                 {records.length > 0 && ` · ${records.length} record`}

@@ -36,6 +36,10 @@
 //  robust-z outlier tone is INDIKASI (a statistical pattern, not
 //  proof of cause — the action framing is audit/portioning
 //  targets, never an accusation).
+//
+//  FIX (WASTE-DRILL): baris liga kini klik → DrillDownDrawer ter-scope
+//  window, presisi GANDA (itemName = bahan terpilih + outletCode = baris) —
+//  drill paling spesifik di tab Waste. months = prop opsional dari parent.
 // ============================================================
 
 import { memo, useMemo, useState } from 'react';
@@ -44,8 +48,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Trophy, ChevronDown } from 'lucide-react';
+import { Trophy, ChevronDown, FileSearch } from 'lucide-react';
 import { fmtPct, fmtNum, fmtDecimal } from '@/lib/format';
+import { clickableRowProps } from '@/lib/a11y';
+import { useDashboard } from '@/hooks/useDashboard';
 import { FormulaInfo } from '@/components/dashboard/FormulaInfo';
 
 // ------------------------------------------------------------
@@ -131,15 +137,31 @@ export const WasteRateLeagueCard = memo(function WasteRateLeagueCard({
   area,
   kelompok,
   pic,
+  months,
 }: {
   monthLabel: string;
   currentWeek: string;
   area: string | null;
   kelompok: string | null;
   pic: string | null;
+  /** FIX (WASTE-DRILL): window month labels (parent's data.months) — the
+   *  drill scope. Optional: absent → the drawer falls back to the current
+   *  month only. */
+  months?: string[];
 }) {
+  const setDrilldown = useDashboard((s) => s.setDrilldown);
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
   const [showMethod, setShowMethod] = useState(false);
+
+  // FIX (WASTE-DRILL): league row → DOUBLE-precision drill (selected item +
+  // row outlet) ter-scope window — the most specific drill in the tab.
+  const handleRowDrill = (itemName: string, outletCode: string) => {
+    setDrilldown({
+      outletCode,
+      itemName,
+      months: months && months.length > 0 ? months : undefined,
+    });
+  };
 
   const { data, isLoading, error } = useQuery<WasteRateLeagueResponse>({
     queryKey: ['waste-rate-league', monthLabel, currentWeek, area, kelompok, pic],
@@ -250,6 +272,7 @@ export const WasteRateLeagueCard = memo(function WasteRateLeagueCard({
           Outlet mana paling boros pada bahan yang SAMA, relatif terhadap pemakaiannya? Pilih bahan (top Pareto
           waste, default #1) → ranking outlet by rate. Liga hanya memuat outlet dengan waste &gt; 0; outlet tanpa
           waste dilaporkan terpisah. Scope mengikuti filter aktif (nasional default; area/kelompok/PIC bila dipilih).
+          <span className="font-medium text-foreground/70"> Klik baris outlet untuk drill-down data sumber bahan+outlet (window same-week).</span>
         </p>
         {items.length > 0 && (
           <div className="flex items-center gap-2 pt-2 flex-wrap ml-9">
@@ -354,7 +377,12 @@ export const WasteRateLeagueCard = memo(function WasteRateLeagueCard({
                     </TableHeader>
                     <TableBody>
                       {league.map((r) => (
-                        <TableRow key={r.outletCode} className="h-9">
+                        <TableRow
+                          key={r.outletCode}
+                          className="h-9 cursor-pointer hover:bg-muted/50 dark:hover:bg-zinc-800/40"
+                          {...clickableRowProps(() => handleRowDrill(selected.itemName, r.outletCode))}
+                          title={`Drill-down data sumber: ${selected.itemName} · ${r.outletCode} (window same-week)`}
+                       >
                           <TableCell className="text-right text-xs tabular-nums text-muted-foreground">{r.rank}</TableCell>
                           <TableCell className="text-xs font-medium max-w-[240px]">
                             <span className="block truncate" title={`${r.outletCode} · ${r.outletName} · ${r.area}`}>
@@ -375,6 +403,7 @@ export const WasteRateLeagueCard = memo(function WasteRateLeagueCard({
                           </TableCell>
                           <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
                             {fmtNum(r.bomQty, selected.satuan ? ` ${selected.satuan}` : '')}
+                            <FileSearch className="inline h-3 w-3 ml-1 text-muted-foreground" aria-hidden="true" />
                           </TableCell>
                         </TableRow>
                       ))}
