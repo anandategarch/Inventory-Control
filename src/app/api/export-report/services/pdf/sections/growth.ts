@@ -12,7 +12,7 @@ import { chgColor, fmtPp, mkGrowth, negColor } from '../pdf-style';
 import type { SectionEnv } from '../section-context';
 
 export function drawGrowthSection(env: SectionEnv): void {
-  const { rpt, doc, data, hasSection, currCol, prevCol, cmpFull } = env;
+  const { rpt, doc, data, hasSection, hasSub, currCol, prevCol, cmpFull } = env;
   if (!hasSection('growth')) return;
   rpt.sectionHeader(2, cmpFull ? `Perubahan vs ${cmpFull}` : 'Perubahan');
   const s = data.executiveSummary;
@@ -21,6 +21,11 @@ export function drawGrowthSection(env: SectionEnv): void {
   const devToSalesPrev = (s.sales.previous != null && s.sales.previous > 0 && s.nominalDeviasi.previous != null)
     ? s.nominalDeviasi.previous / s.sales.previous
     : null;
+  // SUBSECTION-1 (user: "sub section ini juga harusnya bisa aku centang
+  // juga"): the table and the growth bars are independently selectable
+  // ('growth:tabel' / 'growth:grafik' — bare 'growth' = both).
+  const showTable = hasSub('growth', 'tabel');
+  const showBars = hasSub('growth', 'grafik');
   type GRow = { cells: string[]; g: number | null; goodUp: boolean };
   // PDFCOLOR-8 (deep-audit sign-quadrant pass): "Nominal Deviasi to
   // Sales" is a SIGNED ratio — its change column is MAGNITUDE growth
@@ -49,7 +54,7 @@ export function drawGrowthSection(env: SectionEnv): void {
   // % change lives on the cover card + the growth bars below); % Loss to
   // Sales / % Surplus to Sales rows REMOVED; "% Nominal Deviasi to Sales"
   // renamed "Nominal Deviasi to Sales".
-  const defs: GRow[] = [
+  const defs: GRow[] = showTable ? [
     vr('Nominal Deviasi (Rp)', s.nominalDeviasi.current, s.nominalDeviasi.previous, fmtIDR, s.nominalDeviasi.growth, false),
     vr('QTY BOM', s.qtyBom.current, s.qtyBom.previous, fmtNum, s.qtyBom.growth, true),
     vr('QTY Deviasi', s.qtyDeviasi.current, s.qtyDeviasi.previous, fmtNum, s.qtyDeviasi.growth, false),
@@ -58,7 +63,8 @@ export function drawGrowthSection(env: SectionEnv): void {
     vr('QTY Trial', s.qtyTrial.current, s.qtyTrial.previous, fmtNum, s.qtyTrial.growth, false),
     rr('% Deviasi To BOM', s.deviationToBom, pm?.deviationToBom ?? null, pm?.deviationToBom != null ? calcGrowth(s.deviationToBom, pm.deviationToBom) : null, false),
     rr('Nominal Deviasi to Sales', devToSalesCur, devToSalesPrev, devToSalesGrowth, false),
-  ];
+  ] : [];
+  if (showTable) {
   rpt.table({
     cols: [
       { header: 'Metrik' },
@@ -81,6 +87,7 @@ export function drawGrowthSection(env: SectionEnv): void {
       return undefined;
     },
   });
+  }
 
   // growth % horizontal bars — sales/BOM up = green (good); deviation
   // metrics up = red (bad). Factual coloring by metric direction.
@@ -96,7 +103,7 @@ export function drawGrowthSection(env: SectionEnv): void {
     { label: 'QTY Trial', g: s.qtyTrial.growth, goodUp: false },
     { label: '% Dev/BOM', g: pm?.deviationToBom != null ? calcGrowth(s.deviationToBom, pm.deviationToBom) : null, goodUp: false },
   ].filter((r) => r.g != null) as Array<{ label: string; g: number; goodUp: boolean }>;
-  if (withGrowth.length > 0) {
+  if (showBars && withGrowth.length > 0) {
     rpt.ensure(18 * withGrowth.length + 24);
     rpt.subhead('Growth % per Metrik', { size: 8.5, gapAfter: 2 });
     hBarChart(doc, {

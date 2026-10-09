@@ -15,8 +15,17 @@ import { negColor, tickIDR, titleCase } from '../pdf-style';
 import type { SectionEnv } from '../section-context';
 
 export function drawTrendSection(env: SectionEnv): void {
-  const { rpt, doc, data, hasSection, currLabel } = env;
+  const { rpt, doc, data, hasSection, hasSub, currLabel } = env;
   if (!hasSection('trend')) return;
+  // SUBSECTION-1 (user: "sub section ini juga harusnya bisa aku centang
+  // juga"): the per-period table and the four charts are independently
+  // selectable ('trend:tabel' / 'trend:nominal' / 'trend:losssurplus' /
+  // 'trend:komposisi' / 'trend:akumulasi'; bare 'trend' = all five).
+  const showTabel = hasSub('trend', 'tabel');
+  const showNominal = hasSub('trend', 'nominal');
+  const showLosssurplus = hasSub('trend', 'losssurplus');
+  const showKomposisi = hasSub('trend', 'komposisi');
+  const showAkumulasi = hasSub('trend', 'akumulasi');
   // BUG-HUNT (numbering continuity): empty trend data used to skip the
   // whole section → the numbers jumped. Header + factual note instead.
   rpt.sectionHeader(8, 'Trend Antar Periode');
@@ -24,6 +33,7 @@ export function drawTrendSection(env: SectionEnv): void {
     rpt.noteBox('Tidak ada data trend antar periode pada scope ini.');
     return;
   }
+  if (showTabel) {
   rpt.table({
     cols: [
       { header: 'Periode' },
@@ -48,24 +58,27 @@ export function drawTrendSection(env: SectionEnv): void {
     // is ABS (never '-') — negColor is a no-op on that column.
     cellColor: (row, _ri, ci) => (ci >= 1 && ci <= 3 ? negColor(row[ci]) : undefined),
   });
+  }
 
   const labels = data.trend.map((t) => t.weekLabel.replace(` ${currLabel.split(' ')[0]}`, '').replace(/\s*$/, '')).map((l, i) => (data.trend.length > 8 && i % 2 === 1 ? '' : l));
   // bar — nominal per period
   // BUG-HUNT: SIGNED values (was Math.abs) + barChartV's new diverging
   // axis — a net-negative period now draws a red bar DOWN from the zero
   // baseline, matching the signed table instead of contradicting it.
-  rpt.ensure(160);
-  rpt.subhead('Nominal Deviasi per Periode (Rp)', { size: 8.5, gapAfter: 2 });
-  barChartV(doc, {
-    x: PAGE.M, y: rpt.y, w: CONTENT_W, h: 140,
-    labels,
-    values: data.trend.map((t) => t.nominal),
-    fmt: tickIDR,
-  });
-  rpt.y += 140 + 16;
+  if (showNominal) {
+    rpt.ensure(160);
+    rpt.subhead('Nominal Deviasi per Periode (Rp)', { size: 8.5, gapAfter: 2 });
+    barChartV(doc, {
+      x: PAGE.M, y: rpt.y, w: CONTENT_W, h: 140,
+      labels,
+      values: data.trend.map((t) => t.nominal),
+      fmt: tickIDR,
+    });
+    rpt.y += 140 + 16;
+  }
 
   // line — loss vs surplus
-  if (data.trend.length >= 2) {
+  if (showLosssurplus && data.trend.length >= 2) {
     rpt.ensure(160);
     rpt.subhead('Loss vs Surplus per Periode (Rp)', { size: 8.5, gapAfter: 2 });
     lineChart(doc, {
@@ -90,7 +103,7 @@ export function drawTrendSection(env: SectionEnv): void {
   // months). Palette: 3 neutral grays + danger red on the Loss/Surplus
   // residual (the unexplained remainder is the flag-worthy category).
   const wc = data.weeklyComposition;
-  if (wc.length > 0) {
+  if (showKomposisi && wc.length > 0) {
     // BUG-HUNT: reserve subhead (≈14.5) + chart (140) — the old 150 let
     // the chart's bottom edge spill ~4.5pt into the bottom margin.
     rpt.ensure(160);
@@ -123,6 +136,10 @@ export function drawTrendSection(env: SectionEnv): void {
     // danger-red bar BELOW the zero baseline (the same convention as the
     // "Nominal Deviasi per Periode" chart above — table, charts, and KPI
     // all tell one signed story).
+    // SUBSECTION-1: the accumulation chart is independently selectable
+    // ('trend:akumulasi') — it lives inside the same wc guard as the
+    // composition chart because both read the weeklyComposition rows.
+    if (showAkumulasi) {
     let acc = 0;
     const cum = wc.map((r) => { acc += r.nominalDeviasi; return acc; });
     const cumLabels = wc.map((_r, j) => 'W' + wc.slice(0, j + 1).map((r) => r.weekNo).join('+'));
@@ -135,5 +152,6 @@ export function drawTrendSection(env: SectionEnv): void {
       fmt: tickIDR,
     });
     rpt.y += 140 + 16;
+    }
   }
 }

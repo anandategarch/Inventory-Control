@@ -25,6 +25,9 @@ import { useToast } from '@/hooks/use-toast';
 import type { AnalysisData, StatusData } from '@/hooks/useAnalysis';
 import { invalidateAllData } from '@/lib/query-invalidation';
 import { REPORT_DESIGN_VERSION } from '@/lib/report-version';
+// SUBSECTION-1: the export tokens can be sub-section granular
+// ('topItems:nominal') — count SECTIONS for the toast, not tokens.
+import { countActiveSections } from '@/lib/export-sections';
 
 // P3-HYG-6: the open-dropdown DOM probe is only needed for the 1-8 tab
 // shortcuts — hoisted to module scope + only evaluated inside that branch
@@ -187,7 +190,11 @@ export function useDashboardActions({
       // no manual clear needed, the timer firing post-unmount is harmless.
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
       pending.dismiss();
-      toast({ title: '✅ Export berhasil', description: `${selectedSections.length} section · Laporan PDF telah diunduh` });
+      // SUBSECTION-1: selectedSections may carry sub-section tokens —
+      // 'topItems:nominal,topItems:devbom' is ONE section to the user, not
+      // two. The compact form collapses full parents to their bare key,
+      // but partial parents still arrive expanded.
+      toast({ title: '✅ Export berhasil', description: `${countActiveSections(selectedSections)} section · Laporan PDF telah diunduh` });
     } catch (e: unknown) {
       pending.dismiss();
       // FIX (BUG-3-b A3): map AbortError to a friendly Indonesian message

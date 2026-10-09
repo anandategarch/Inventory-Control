@@ -12,6 +12,7 @@
 // ============================================================
 import type PDFKit from 'pdfkit';
 import type { ReportData, ReportContext } from '../types';
+import { isSectionOn, isSubOn } from '@/lib/export-sections';
 import { Rpt } from './pdf-primitives';
 import { shortMonth, periodCol, periodFull } from './pdf-style';
 
@@ -24,6 +25,12 @@ export interface SectionEnv {
   ctx: ReportContext;
   /** `?sections=` filter — null = all, [] = cover-only document. */
   hasSection: (key: string) => boolean;
+  /**
+   * SUBSECTION-1: sub-block render gate — on when the section's bare
+   * key is selected (whole section) or the exact `key:sub` token is.
+   * Sections without sub-blocks ignore this. See src/lib/export-sections.ts.
+   */
+  hasSub: (key: string, sub: string) => boolean;
   /** Current period, short month form ("SEP 26"). */
   currLabel: string;
   /** Current period, column-header form ("SEP 26 W1"). */
@@ -42,11 +49,14 @@ export function createSectionEnv(
   data: ReportData,
   ctx: ReportContext,
 ): SectionEnv {
-  const hasSection = (key: string): boolean => !ctx.sections || ctx.sections.includes(key);
+  const hasSection = (key: string): boolean => isSectionOn(ctx.sections, key);
+  // SUBSECTION-1: sub-block gate ('topItems:nominal' style tokens — bare
+  // section key = every sub on; null sections list = all).
+  const hasSub = (key: string, sub: string): boolean => isSubOn(ctx.sections, key, sub);
   const currLabel = shortMonth(data.period.monthLabel);
   const currCol = periodCol(data.period.monthLabel, data.period.weekLabel);
   const prevCol = data.period.comparisonMonth ? periodCol(data.period.comparisonMonth, data.period.comparisonWeek) : '\u2014';
   const cmpFull = data.period.comparisonMonth ? periodFull(data.period.comparisonMonth, data.period.comparisonWeek) : null;
   const restoName = data.filters.outletCode && data.filters.outletCode !== 'all' ? data.filters.outletCode : 'Semua Resto';
-  return { rpt, doc, data, ctx, hasSection, currLabel, currCol, prevCol, cmpFull, restoName };
+  return { rpt, doc, data, ctx, hasSection, hasSub, currLabel, currCol, prevCol, cmpFull, restoName };
 }

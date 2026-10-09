@@ -27,7 +27,7 @@
  * (both were the literal '15' before GODSPLIT-W2-A) — both sites must
  * keep producing the identical string.
  */
-export const REPORT_DESIGN_VERSION = '16';
+export const REPORT_DESIGN_VERSION = '17';
 
 // ============================================================
 //  rv changelog — full history (GODSPLIT-W2-A moved it here so the
@@ -95,3 +95,9 @@ export const REPORT_DESIGN_VERSION = '16';
 // GODSPLIT-W2-A: bumping THIS ONE const forks both cache layers (the
 // client's ?rv= param + the server cache-key extra import the SAME const
 // — the old two-site "keep in sync" ritual IS this module).
+// SUBSECTION-1: rv 17 — ?sections= now accepts sub-section tokens
+// ('topItems:nominal' — only that sub-block renders; the section header
+// still prints, numbering stays FIXED). Bare keys keep their exact
+// pre-17 semantics (whole section), and the new tokens fork fresh cache
+// keys by construction — this bump is belt-and-braces per the STALE-PDF
+// convention (new token combos + rv17 + deploy-SHA all agree).

@@ -227,6 +227,45 @@ describe('exportReportQuerySchema', () => {
     expect(r.success).toBe(false);
   });
 
+  // SUBSECTION-1 (user: "sub section ini juga harusnya bisa aku centang
+  // juga"): ?sections= now accepts sub-section tokens ('topItems:nominal')
+  // alongside the bare section keys.
+  it('accepts sub-section tokens (SUBSECTION-1)', () => {
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      sections: 'topItems:nominal,topItems:devbom,waste:komposisi',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('accepts a mix of bare section keys and sub tokens', () => {
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      sections: 'exec,topItems:nominal,trend:akumulasi',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects unknown sub keys with the same typo guard as section keys', () => {
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      sections: 'topItems:nominall',
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects sub tokens on sections that have no sub-sections (leaves)', () => {
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      sections: 'exec:tabel',
+    });
+    expect(r.success).toBe(false);
+  });
+
   it('accepts compareWeek + compareMonth', () => {
     const r = exportReportQuerySchema.safeParse({
       month: 'Agustus 2026',

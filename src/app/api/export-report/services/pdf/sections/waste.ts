@@ -53,8 +53,15 @@ function pdfSafeDisclosure(disclosure: string): string {
 }
 
 export function drawWasteSection(env: SectionEnv): void {
-  const { rpt, doc, data, hasSection, currCol, restoName } = env;
+  const { rpt, doc, data, hasSection, hasSub, currCol, restoName } = env;
   if (!hasSection('waste')) return;
+  // SUBSECTION-1 (user: "sub section ini juga harusnya bisa aku centang
+  // juga"): 5.1 / 5.2 / 5.3 are independently selectable
+  // ('waste:komposisi' / 'waste:skenario' / 'waste:topsnapshot'; bare
+  // 'waste' = all three).
+  const showKomposisi = hasSub('waste', 'komposisi');
+  const showSkenario = hasSub('waste', 'skenario');
+  const showTopsnapshot = hasSub('waste', 'topsnapshot');
   // BUG-HUNT (numbering continuity) convention: the FIXED section header
   // always renders; empty data degrades to a factual noteBox.
   rpt.sectionHeader(5, 'Analisis Waste');
@@ -81,6 +88,7 @@ export function drawWasteSection(env: SectionEnv): void {
   );
 
   // ---- 5.1 Komposisi Loss (TERUKUR) ----
+  if (showKomposisi) {
   rpt.subhead('5.1 Komposisi Loss \u2014 Terjelaskan W/S/T vs Residual (TERUKUR)', { size: 8.5 });
   // Table + bar chart share ONE palette with the (renumbered) trend
   // section's composition chart: 3 neutral grays + danger red on the
@@ -123,8 +131,10 @@ export function drawWasteSection(env: SectionEnv): void {
     `Residual ${fmtPct(a.residualShare)} dari total loss \u2014 lihat catatan identitas di bawah.`,
     { size: 8, color: C.inkSoft },
   );
+  }
 
   // ---- 5.2 Skenario Atribusi Residual (HIPOTESIS) ----
+  if (showSkenario) {
   rpt.subhead('5.2 Skenario Atribusi Residual \u2014 p \u00D7 residual dianggap waste tak tercatat (HIPOTESIS)', { size: 8.5 });
   rpt.table({
     cols: [
@@ -158,6 +168,7 @@ export function drawWasteSection(env: SectionEnv): void {
     `); pindah decile = perubahan minimal 1 decile bila waste tiap outlet diestimasi ulang pada p. Pada p = 50%: ${a.decile.outletsMoved} outlet berpindah (${fmtPct(a.decile.movedShare)} populasi).`,
     { size: 8, color: C.muted },
   );
+  }
 
   // ---- 5.3 Top Waste Items snapshot (current period, q-topcat reuse) ----
   // Cheap by design: reuses the topItems section's q-topcat rows (the fetch
@@ -167,7 +178,7 @@ export function drawWasteSection(env: SectionEnv): void {
   const topWaste = [...data.topItemsByWaste]
     .sort((x, y) => y.nominalWaste - x.nominalWaste)
     .slice(0, TOP_WASTE_SNAPSHOT_ROWS);
-  if (topWaste.length > 0) {
+  if (showTopsnapshot && topWaste.length > 0) {
     rpt.subhead(`5.3 Top Waste Items \u2014 snapshot periode ${currCol} (lihat tabel 3.3 untuk ranking lengkap)`, { size: 8.5 });
     rpt.table({
       cols: [
@@ -192,8 +203,13 @@ export function drawWasteSection(env: SectionEnv): void {
   // ---- MANDATORY structural disclosure (W10 guard) ----
   // pdfSafeDisclosure: ASCII-safe transcription for the two glyphs the
   // PDF's standard fonts cannot encode (see the helper above).
+  // SUBSECTION-1: the disclosure explains the RESIDUAL identity — it is
+  // printed whenever a residual-bearing block (5.1 or 5.2) renders; a
+  // 5.3-only export prints no residual figure, so no disclosure is owed.
+  if (showKomposisi || showSkenario) {
   rpt.noteBox(
     pdfSafeDisclosure(a.disclosure) + ' Bacaan yang benar untuk "residualShare mendekati 100%": porsi NET loss yang tidak ditutup W/S/T ' +
     '\u2014 properti struktur data, buktinya residual TLGTEU (43.925.875,94) identik dengan totalLoss-nya (43.925.875,95).',
   );
+  }
 }

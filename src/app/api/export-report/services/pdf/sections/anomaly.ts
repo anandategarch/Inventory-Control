@@ -16,7 +16,7 @@ import { fmtVsHist, negColor } from '../pdf-style';
 import type { SectionEnv } from '../section-context';
 
 export function drawAnomalySection(env: SectionEnv): void {
-  const { rpt, data, ctx, hasSection, currCol } = env;
+  const { rpt, data, ctx, hasSection, hasSub, currCol } = env;
   if (!hasSection('anomali')) return;
   rpt.sectionHeader(7, 'Item Anomali vs Riwayat Sendiri');
   const an = data.selfHistoryAnomaly;
@@ -25,13 +25,23 @@ export function drawAnomalySection(env: SectionEnv): void {
   // NOT depend on historical periods. 6.1 + 6.2 now sit in the else
   // branch (identical render behavior) so 6.3 always renders. (Numbers
   // since renumbered 7.1/7.2/7.3 by W10.)
-  if (an.length === 0) {
+  // SUBSECTION-1 (user: "sub section ini juga harusnya bisa aku centang
+  // juga"): 7.1 / 7.2 / 7.3 are independently selectable
+  // ('anomali:riwayat' / 'anomali:gantiarah' / 'anomali:pola'; bare
+  // 'anomali' = all three). The an.length check owns 7.1's empty note
+  // only; 7.2 keeps its an.length>0 render condition (pre-SUBSECTION-1
+  // behavior); 7.3 (current-period data) renders within its own selection.
+  const showRiwayat = hasSub('anomali', 'riwayat');
+  const showGantiarah = hasSub('anomali', 'gantiarah');
+  const showPola = hasSub('anomali', 'pola');
+  if (showRiwayat && an.length === 0) {
     // BUG-HUNT (found in render test): '≥' is NOT WinAnsi-encodable —
     // sanitizePdfText maps it to '?' in the PDF. Plain wording instead.
     rpt.noteBox(ctx.historicalPeriods.length === 0
       ? 'Belum ada periode riwayat (bulan sebelumnya dengan minggu yang sama) untuk dibandingkan.'
       : 'Tidak ada item dengan penyimpangan minimal 50% dari rata-rata absolute riwayatnya sendiri pada scope ini.');
-  } else {
+  }
+  if (showRiwayat && an.length > 0) {
     const nBulan = an.reduce((mx, it) => Math.max(mx, it.histCount), 0);
     // REFINE-4 (user: "di laporan di beri keterangan Rata-Rata Absolute"):
     // the benchmark column is the ABSOLUTE average of the item's own
@@ -84,6 +94,8 @@ export function drawAnomalySection(env: SectionEnv): void {
       },
     });
 
+  }
+  if (showGantiarah && an.length > 0) {
     // 7.2 — REFINE-4 (user: "apakah sudah bisa deteksi yang biasanya loss
     // tapi sekarang surplus? kalau belum tambahkan"): items whose
     // direction REVERSED vs their own same-week history. "Rata-rata
@@ -151,6 +163,9 @@ export function drawAnomalySection(env: SectionEnv): void {
   // Top 15 rows by |Nominal Deviasi| (the query's own ranking); the
   // subhead carries the full-population tier counts.
   const ic = data.itemConsistency;
+  // SUBSECTION-1: gated on 'anomali:pola' (VAR12's "always renders" —
+  // within its own selection now).
+  if (showPola) {
   rpt.subhead('7.3 Analisis Pola Item (Massal / Regional / Lokal)', { size: 8.5 });
   if (ic.length === 0) {
     rpt.noteBox('Tidak ada item dengan deviasi pada scope ini.');
@@ -198,5 +213,6 @@ export function drawAnomalySection(env: SectionEnv): void {
         return undefined;
       },
     });
+  }
   }
 }

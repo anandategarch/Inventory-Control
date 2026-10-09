@@ -7,21 +7,40 @@ import { fmtVsHist, negColor } from '../pdf-style';
 import type { SectionEnv } from '../section-context';
 
 export function drawTopItemsSection(env: SectionEnv): void {
-  const { rpt, data, hasSection, currCol, prevCol } = env;
+  const { rpt, data, hasSection, hasSub, currCol, prevCol } = env;
   if (!hasSection('topItems')) return;
   rpt.sectionHeader(3, 'Item Prioritas (Top Items)');
+  // SUBSECTION-1 (user: "sub section ini juga harusnya bisa aku centang
+  // juga"): the 6 rankings 3.1-3.6 are independently selectable
+  // ('topItems:nominal' … 'topItems:losssurplus'; bare 'topItems' = all).
+  const show = {
+    nominal: hasSub('topItems', 'nominal'),
+    devbom: hasSub('topItems', 'devbom'),
+    waste: hasSub('topItems', 'waste'),
+    susut: hasSub('topItems', 'susut'),
+    trial: hasSub('topItems', 'trial'),
+    losssurplus: hasSub('topItems', 'losssurplus'),
+  };
   // BUG-HUNT (numbering continuity): when EVERY top list is empty the
   // section used to render as a bare header with nothing under it — now a
   // factual note states why (same convention as sections 6/8/9).
-  if (data.topItemsByNominal.length === 0 && data.topItemsByDevBom.length === 0
-    && data.topItemsByWaste.length === 0 && data.topItemsBySusut.length === 0
-    && data.topItemsByTrial.length === 0 && data.topItemsByLossSurplus.length === 0) {
+  // SUBSECTION-1: only the SELECTED rankings count — a 'topItems:nominal'
+  // export must not claim "no items" just because the 5 unselected lists
+  // are empty (and the note must still fire when the selected one is).
+  const anySelectedListHasRows =
+    (show.nominal && data.topItemsByNominal.length > 0)
+    || (show.devbom && data.topItemsByDevBom.length > 0)
+    || (show.waste && data.topItemsByWaste.length > 0)
+    || (show.susut && data.topItemsBySusut.length > 0)
+    || (show.trial && data.topItemsByTrial.length > 0)
+    || (show.losssurplus && data.topItemsByLossSurplus.length > 0);
+  if (!anySelectedListHasRows) {
     rpt.noteBox('Tidak ada item dengan deviasi pada scope ini.');
   }
 
   // 3.1 nominal — REFINE-1: + "% Deviasi To BOM" column (user: "3.1
   // Nominal Deviasi Terbesar tambahkan % Deviasi to bom nya juga").
-  if (data.topItemsByNominal.length > 0) {
+  if (show.nominal && data.topItemsByNominal.length > 0) {
     rpt.subhead(`3.1 Nominal Deviasi Terbesar (${currCol})`, { size: 8.5 });
     rpt.table({
       cols: [
@@ -39,7 +58,7 @@ export function drawTopItemsSection(env: SectionEnv): void {
   // 3.2 devBom — REFINE-1: + "Nominal Deviasi" column on the right (user:
   // "3.2 % Deviasi To BOM Terbesar tambahkan Nominal Deviasi juga di
   // sebelah kanan nya").
-  if (data.topItemsByDevBom.length > 0) {
+  if (show.devbom && data.topItemsByDevBom.length > 0) {
     rpt.subhead(`3.2 % Deviasi To BOM Terbesar (${currCol})`, { size: 8.5 });
     rpt.table({
       cols: [
@@ -59,13 +78,15 @@ export function drawTopItemsSection(env: SectionEnv): void {
   // + NEW "Rata-rata Area" column (avg across the area where the row's
   // resto is located); "Nominal (Rp)" column REMOVED ("hapus nominal nya
   // biar fit").
-  const catTables: Array<{ title: string; items: Array<{ itemName: string; outletCode: string; satuan?: string | null; area: string; qty: number; nominal: number; prevQty: number | null; histAvgQty: number | null; areaAvgQty: number | null }> }> = [
-    { title: `3.3 QTY Waste Terbesar (${currCol})`, items: data.topItemsByWaste.map((r) => ({ itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, area: r.area, qty: r.qtyWaste, nominal: r.nominalWaste, prevQty: r.prevQty, histAvgQty: r.histAvgQty, areaAvgQty: r.areaAvgQty })) },
-    { title: `3.4 QTY Susut Terbesar (${currCol})`, items: data.topItemsBySusut.map((r) => ({ itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, area: r.area, qty: r.qtySusut, nominal: r.nominalSusut, prevQty: r.prevQty, histAvgQty: r.histAvgQty, areaAvgQty: r.areaAvgQty })) },
-    { title: `3.5 QTY Trial Terbesar (${currCol})`, items: data.topItemsByTrial.map((r) => ({ itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, area: r.area, qty: r.qtyTrial, nominal: r.nominalTrial, prevQty: r.prevQty, histAvgQty: r.histAvgQty, areaAvgQty: r.areaAvgQty })) },
-    { title: `3.6 QTY Loss/Surplus Terbesar (${currCol})`, items: data.topItemsByLossSurplus.map((r) => ({ itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, area: r.area, qty: r.qtyLossSurplus, nominal: r.nominalLossSurplus, prevQty: r.prevQty, histAvgQty: r.histAvgQty, areaAvgQty: r.areaAvgQty })) },
+  const catTables: Array<{ title: string; sub: string; items: Array<{ itemName: string; outletCode: string; satuan?: string | null; area: string; qty: number; nominal: number; prevQty: number | null; histAvgQty: number | null; areaAvgQty: number | null }> }> = [
+    { title: `3.3 QTY Waste Terbesar (${currCol})`, sub: 'waste', items: data.topItemsByWaste.map((r) => ({ itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, area: r.area, qty: r.qtyWaste, nominal: r.nominalWaste, prevQty: r.prevQty, histAvgQty: r.histAvgQty, areaAvgQty: r.areaAvgQty })) },
+    { title: `3.4 QTY Susut Terbesar (${currCol})`, sub: 'susut', items: data.topItemsBySusut.map((r) => ({ itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, area: r.area, qty: r.qtySusut, nominal: r.nominalSusut, prevQty: r.prevQty, histAvgQty: r.histAvgQty, areaAvgQty: r.areaAvgQty })) },
+    { title: `3.5 QTY Trial Terbesar (${currCol})`, sub: 'trial', items: data.topItemsByTrial.map((r) => ({ itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, area: r.area, qty: r.qtyTrial, nominal: r.nominalTrial, prevQty: r.prevQty, histAvgQty: r.histAvgQty, areaAvgQty: r.areaAvgQty })) },
+    { title: `3.6 QTY Loss/Surplus Terbesar (${currCol})`, sub: 'losssurplus', items: data.topItemsByLossSurplus.map((r) => ({ itemName: r.itemName, outletCode: r.outletCode, satuan: r.satuan, area: r.area, qty: r.qtyLossSurplus, nominal: r.nominalLossSurplus, prevQty: r.prevQty, histAvgQty: r.histAvgQty, areaAvgQty: r.areaAvgQty })) },
   ];
   for (const ct2 of catTables) {
+    // SUBSECTION-1: each 3.3-3.6 category table is independently gated.
+    if (!hasSub('topItems', ct2.sub)) continue;
     if (ct2.items.length === 0) continue;
     rpt.subhead(ct2.title, { size: 8.5 });
     rpt.table({

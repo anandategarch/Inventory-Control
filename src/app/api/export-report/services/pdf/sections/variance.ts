@@ -12,19 +12,29 @@ import { negColor, tickIDR } from '../pdf-style';
 import type { SectionEnv } from '../section-context';
 
 export function drawVarianceSection(env: SectionEnv): void {
-  const { rpt, doc, data, hasSection, currCol, prevCol, cmpFull } = env;
+  const { rpt, doc, data, hasSection, hasSub, currCol, prevCol, cmpFull } = env;
   if (!hasSection('variance')) return;
   const va = data.varianceAnalysis;
+  // SUBSECTION-1 (user: "sub section ini juga harusnya bisa aku centang
+  // juga"): 4.1 Memburuk (tabel + grafik) and 4.2 Membaik (tabel) are
+  // independently selectable ('variance:memburuk' / 'variance:membaik';
+  // bare 'variance' = both).
+  const showWorsened = hasSub('variance', 'memburuk');
+  const showImproved = hasSub('variance', 'membaik');
   // BUG-HUNT (numbering continuity): the section HEADER itself used to be
   // skipped when both lists were empty — the report's section numbers
   // then jumped (…3 → 5…) because the numbers are FIXED, not
   // re-flowed. Render the header + a factual note instead (same
   // convention as sections 6/8/9).
   rpt.sectionHeader(4, cmpFull ? `Perubahan Item (vs ${cmpFull})` : 'Perubahan Item');
-  if (va.topWorsened.length === 0 && va.topImproved.length === 0) {
+  // SUBSECTION-1: the empty note follows the SELECTED sides only (the
+  // unselected side's emptiness is not the reader's concern).
+  const anySelectedSideHasRows =
+    (showWorsened && va.topWorsened.length > 0) || (showImproved && va.topImproved.length > 0);
+  if (!anySelectedSideHasRows) {
     rpt.noteBox('Tidak ada perubahan item vs periode pembanding pada scope ini.');
   }
-  if (va.topWorsened.length > 0) {
+  if (showWorsened && va.topWorsened.length > 0) {
     rpt.subhead(`4.1 Memburuk \u2014 selisih nominal terbesar (${currCol} vs ${prevCol})`, { size: 8.5 });
     rpt.table({
       cols: [
@@ -64,7 +74,7 @@ export function drawVarianceSection(env: SectionEnv): void {
     });
     rpt.y += 18 * worsened.length + 8;
   }
-  if (va.topImproved.length > 0) {
+  if (showImproved && va.topImproved.length > 0) {
     rpt.subhead(`4.2 Membaik \u2014 penurunan selisih nominal terbesar (${currCol} vs ${prevCol})`, { size: 8.5 });
     rpt.table({
       cols: [

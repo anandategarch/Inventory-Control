@@ -5,6 +5,7 @@
 //  /api/export-report.
 // ============================================================
 import { z } from 'zod';
+import { isExportSectionToken } from '@/lib/export-sections';
 import {
   monthLabelSchema,
   weekLabelSchema,
@@ -19,8 +20,15 @@ import {
 // /api/export-report?month=&week=&sections=&area=&kelompok=&outlet=&item=&pic=
 // FIX (BUG-3-a C6): unknown section keys used to vanish silently
 // (?sections=exec,topitems → section 3 just missing from the report, no
-// error). Keep this list in sync with SECTIONS in ExportDialog.tsx and the
-// hasSection() keys in pdf/pdf-builder.ts.
+// error). The valid token set now lives in src/lib/export-sections.ts
+// (SUBSECTION-1) — the SINGLE registry shared with ExportDialog.tsx,
+// section-gates.ts and section-context.ts (kills this file's old
+// "keep in sync" copy of the key list).
+// SUBSECTION-1 (user request: "sub section ini juga harusnya bisa aku
+// centang juga"): tokens are now EITHER a bare section key
+// ('topItems' = whole section, the pre-SUBSECTION-1 form) OR a sub
+// token ('topItems:nominal' = only that sub-block). Unknown sub keys
+// are 400-rejected exactly like unknown section keys were.
 // EXPORT-TRIM: user request — report trimmed 13 → 6 sections. Removed:
 // 'breakdown', 'area', 'outlets', 'pareto', 'coverage' (the removed keys are
 // 400-rejected below). Kept: exec (renamed "Ringkasan"), growth, topItems,
@@ -40,8 +48,10 @@ export const exportReportQuerySchema = z.object({
   month: monthLabelSchema,
   week: weekLabelSchema,
   sections: z.string().refine(
-    (v) => v.split(',').every((s) => s === '' || (EXPORT_SECTION_KEYS as readonly string[]).includes(s)),
-    { message: `sections must be a comma-separated subset of: ${EXPORT_SECTION_KEYS.join(', ')}` },
+    // SUBSECTION-1: bare section keys + 'section:sub' tokens (the full
+    // valid set is EXPORT_SECTION_TOKENS in export-sections.ts).
+    (v) => v.split(',').every((s) => s === '' || isExportSectionToken(s)),
+    { message: `sections must be a comma-separated subset of: ${EXPORT_SECTION_KEYS.join(', ')} (or their sub-section tokens, e.g. topItems:nominal)` },
   ).optional(),
   area: areaSchema,
   kelompok: kelompokSchema,

@@ -39,10 +39,17 @@ import { negColor } from '../pdf-style';
 import type { SectionEnv } from '../section-context';
 
 export function drawPeerSection(env: SectionEnv): void {
-  const { rpt, data, hasSection } = env;
+  const { rpt, data, hasSection, hasSub } = env;
   if (!hasSection('peer')) return;
   rpt.sectionHeader(9, 'Resto dengan Penjualan Kurang Lebih Sama');
   const pc = data.peerComparison;
+  // SUBSECTION-1 (user: "sub section ini juga harusnya bisa aku centang
+  // juga"): 9.1 / 9.2 / 9.3 are independently selectable
+  // ('peer:deviasi' / 'peer:breakdown' / 'peer:topitems'; bare 'peer' =
+  // all three).
+  const showDeviasi = hasSub('peer', 'deviasi');
+  const showBreakdown = hasSub('peer', 'breakdown');
+  const showTopitems = hasSub('peer', 'topitems');
   if (!pc || pc.peers.length === 0) {
     rpt.noteBox('Data pembanding tidak tersedia untuk filter ini \u2014 pilih satu resto pada Filter Resto (tab Resto Analysis) lalu export ulang.');
     return;
@@ -61,6 +68,7 @@ export function drawPeerSection(env: SectionEnv): void {
   // auto-target note, so it renders at full size (the old code-label +
   // note combo overflowed the page width — see SUBHEAD-FIT).
   const sortedPeers = [...pc.peers].sort((a, b) => Math.abs(b.nominalDeviasi) - Math.abs(a.nominalDeviasi));
+  if (showDeviasi) {
   rpt.subhead(`9.1 Nominal Deviasi per Resto (penjualan kurang lebih sama dengan ${tn}${pc.autoTarget ? ' \u2014 terpilih otomatis (deviasi terbesar)' : ''})`, { size: 8.5 });
   rpt.table({
     cols: [
@@ -82,6 +90,7 @@ export function drawPeerSection(env: SectionEnv): void {
     rowBold: (_row, i) => sortedPeers[i]?.isTarget ?? false,
     rowText: (row) => (row[3].startsWith('-') ? C.danger : undefined),
   });
+  }
 
   // 8.2 — per-item breakdown: kuantitas + % to BOM, target vs the
   // average of the similar-sales restos.
@@ -91,7 +100,7 @@ export function drawPeerSection(env: SectionEnv): void {
   // section title "Resto dengan Penjualan Kurang Lebih Sama" defines
   // what "setara" means; the subhead spells it out in the user's own
   // words — omzet tidak jauh berbeda).
-  if (pc.items.length > 0) {
+  if (showBreakdown && pc.items.length > 0) {
     rpt.subhead(`9.2 Breakdown per Item (kuantitas, % to BOM) \u2014 ${targetLabel} vs rata-rata resto dengan omzet tidak jauh berbeda`, { size: 8.5 });
     rpt.table({
       cols: [
@@ -156,7 +165,7 @@ export function drawPeerSection(env: SectionEnv): void {
   //     (the Arah column was REMOVED in R1; direction rides on the sign).
   //   - "Rata-rata Absolute …": |kuantiti deviasi| basis — wrap: true so
   //     the (QTY Deviasi) suffix never blows the column width.
-  if (pc.topItems && pc.topItems.length > 0) {
+  if (showTopitems && pc.topItems && pc.topItems.length > 0) {
     const topItems = pc.topItems;
     rpt.subhead(`9.3 Item di Resto lain (yang setara penjualan ${tn}) jika dilihat dari TOP Item nya`, { size: 8.5 });
     rpt.table({

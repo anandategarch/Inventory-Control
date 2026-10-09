@@ -6,6 +6,7 @@
 //  section gates ONCE per fetch; later phases (record-guard,
 //  query-batch, peer) read them from FetcherContext.gates.
 // ============================================================
+import { isSectionOn } from '@/lib/export-sections';
 import type { ReportParams } from '../types';
 
 export function computeSectionGates(sections: ReportParams['sections']): SectionGates {
@@ -16,8 +17,14 @@ export function computeSectionGates(sections: ReportParams['sections']): Section
   //  + the whole top-items batch). Build the `need` set up front and gate
   //  every fetch below on it. `sections === null` (param absent) = ALL
   //  sections; `[]` (empty param — FIX BUG-3-a C4 in route.ts) = NONE.
-  //  Keep this list in sync with EXPORT_SECTION_KEYS (validation.ts),
-  //  ExportDialog.tsx and the hasSection() keys in pdf/pdf-builder.ts.
+  //  SUBSECTION-1: the token list may now carry sub tokens
+  //  ('topItems:nominal'). Fetch gates stay SECTION-level —
+  //  isSectionOn() treats a bare key OR any of its `key:*` sub tokens
+  //  as "section on" (a sub-token export fetches the section's whole
+  //  batch; only the RENDERING is sub-gated — see section-context.ts
+  //  and the note in src/lib/export-sections.ts). The valid token set
+  //  lives in export-sections.ts (the single registry shared with
+  //  validation + ExportDialog).
   // ============================================================
   // EXPORT-TRIM (user request): trimmed 13 → 6 sections — the removed keys
   // ('breakdown'/'area'/'outlets'/'pareto'/'flip'/'peer'/'coverage') are now
@@ -31,8 +38,6 @@ export function computeSectionGates(sections: ReportParams['sections']): Section
   // (section 5 — Analisis Waste, inserted after the variance context;
   // REFINE-3 precedent renumber: itemTrend 5→6, anomali 6→7, trend 7→8,
   // peer 8→9, flip 9→10 — keys unchanged).
-  const ALL_EXPORT_SECTIONS = ['exec', 'growth', 'topItems', 'variance', 'waste', 'itemTrend', 'anomali', 'trend', 'peer', 'flip'] as const;
-  const need = new Set<string>(sections ?? ALL_EXPORT_SECTIONS);
   // Section → data dependencies (verified against pdf-builder.ts, not
   // assumed; EXPORT-TRIM: only the 6 kept sections): exec renders
   // executiveSummary (q-kpis + prev q-exec-summary); growth renders the
@@ -46,22 +51,22 @@ export function computeSectionGates(sections: ReportParams['sections']): Section
   // (gate widened to needTopItems || needWaste — the 5.3 snapshot reuses the
   // topItems section's cached rows; one shared cache row when both are on).
   // The header/footer need metadata only (no SQL).
-  const needExec = need.has('exec');
-  const needGrowth = need.has('growth');
-  const needTopItems = need.has('topItems');
-  const needVariance = need.has('variance');
-  const needTrend = need.has('trend');
-  const needPeer = need.has('peer');
-  const needFlip = need.has('flip');
+  const needExec = isSectionOn(sections, 'exec');
+  const needGrowth = isSectionOn(sections, 'growth');
+  const needTopItems = isSectionOn(sections, 'topItems');
+  const needVariance = isSectionOn(sections, 'variance');
+  const needTrend = isSectionOn(sections, 'trend');
+  const needPeer = isSectionOn(sections, 'peer');
+  const needFlip = isSectionOn(sections, 'flip');
   // EXPORT-TRIM: sections 'breakdown' / 'area' / 'outlets' / 'pareto' /
   // 'coverage' removed — their need* gates + fetches went with them (see
   // the section map above). 'flip' + 'peer' are BACK (REFINE-1).
-  const needItemTrend = need.has('itemTrend');
+  const needItemTrend = isSectionOn(sections, 'itemTrend');
   // REFINE-3 — section 6 "Item Anomali vs Riwayat Sendiri" (renumbered 7
   // by W10).
-  const needAnomali = need.has('anomali');
+  const needAnomali = isSectionOn(sections, 'anomali');
   // W10 — section 5 "Analisis Waste".
-  const needWaste = need.has('waste');
+  const needWaste = isSectionOn(sections, 'waste');
   // The kpis row feeds executiveSummary (exec + growth sections + the cover
   // KPI cards). Cheap: shared cached q-* row.
   const needKpis = needExec || needGrowth;

@@ -122,7 +122,9 @@ export async function GET(req: NextRequest) {
     // "empty sections param = no sections" semantics, `?sections=` must NOT
     // share the null (all-sections) key. Encode the empty list as an explicit
     // '__NONE__' marker (unforgeable: validation.ts 400-rejects any sections
-    // token outside the 6 known keys, so '__NONE__' can never be user input).
+    // token outside the known section/sub-section keys — SUBSECTION-1 tokens
+    // like 'topItems:nominal' included — so '__NONE__' can never be user
+    // input).
     // PERF (TAHAP-2 / P2-11): resolve month + compareMonth to actual DB case
     // BEFORE the cache key (getMonthResolver is process-cached ~0ms). The
     // data-fetcher re-resolves internally (idempotent no-op on the resolved
