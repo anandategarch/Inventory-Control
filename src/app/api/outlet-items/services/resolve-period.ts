@@ -41,13 +41,30 @@ export async function resolveOutletAndPeriod(params: {
 
   // ============================================================
   //  Load runtime thresholds (Settings-driven, no hardcoding)
+  //  + outlet lookup + the period tables.
+  //
+  //  PERF (PERF-FILTER1 D): thresholds, outlet, weeks + sourceFiles
+  //  used to run as TWO serial waves — Promise.all([thresholds,
+  //  outlet]) followed by resolveComparePeriod's own week.findMany +
+  //  sourceFile.findMany pair. At ~200ms per cross-region round-trip
+  //  wave (Vercel iad1 ↔ Supabase ap-southeast-1) that second wave
+  //  was pure serial latency on EVERY cold request. All four fetches
+  //  are independent — ONE wave now, and the preloaded tables are
+  //  passed into resolveComparePeriod (its PreloadedPeriodTables
+  //  contract, same pattern as the analysis route's fetch-records).
   // ============================================================
-  // PERF-04: Parallelize thresholds + outlet lookup (independent)
-  const [thresholds, outlet] = await Promise.all([
+  const [thresholds, outlet, weeksRaw, fileMonthKeys] = await Promise.all([
     getRuntimeThresholds(),
     db.outlet.findFirst({
       where: { code: outletCode },
       select: { id: true, code: true, name: true, area: true },
+    }),
+    db.week.findMany({
+      select: { weekLabel: true, monthKey: true },
+      distinct: ['monthKey', 'weekLabel'],
+    }),
+    db.sourceFile.findMany({
+      select: { monthLabel: true, monthKey: true },
     }),
   ]);
   if (!outlet) {
@@ -80,15 +97,16 @@ export async function resolveOutletAndPeriod(params: {
   //        no compareMonth) is refused rather than producing a fake 0%-delta
   //        self-comparison.
   //  The lib resolver is already covered by tests/lib/period-resolver.test.ts
-  //  (13 tests incl. the same-month cross-week guards); no preloaded tables
-  //  are passed — the two metadata fetches are cheap (small tables, shared
-  //  with the analysis + export-report routes' resolver usage).
+  //  (13 tests incl. the same-month cross-week guards); the period tables
+  //  preloaded in the wave above feed it (PERF-FILTER1 D — zero extra
+  //  round-trips on the cold path).
   // ============================================================
   const { prevWeek, prevMonth } = await resolveComparePeriod(
     week,
     resolvedMonth,
     compareWeek,
     compareMonth,
+    { weeksRaw, fileMonthKeys },
   );
 
   return {

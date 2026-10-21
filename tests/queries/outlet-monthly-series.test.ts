@@ -10,12 +10,18 @@
 //     abnormalCount.
 //  3. summarizeTrackRecord (pure) — averages, worst-month counts, latest
 //     month; empty input shape.
-//  4. queryOutletMonthlySeries — ONE merged set_config round-trip (the
-//     withStatementTimeout wrapper), SQL pins the SAME weekLabel, applies
-//     monthKey <= currentMonthKey (inclusive window), caps to 12 months,
-//     and maps the raw row shape (bigint → Number).
-//  5. queryPeerTrackRecord — kelompok predicate appears in SQL only when
-//     passed; rank/bandSize/medianLoss mapping; summary wiring.
+//  4. queryOutletMonthlySeries — PERF-FILTER1 (B): now derives from the
+//     SHARED cached band scan ('q-peer-band-scan'). The scan SQL pins the
+//     SAME weekLabel, applies monthKey <= currentMonthKey (inclusive),
+//     caps to the 24-month union window (PEER_BAND_SCAN_WINDOW_MONTHS —
+//     2× the 12-month consumers), and is OUTLET-INDEPENDENT (no target
+//     code in the SQL); the series rows are computed from the scan
+//     fixture through the unchanged pure builders.
+//  5. queryPeerTrackRecord — same shared scan; the ±10% band, RANK()
+//     ties, bandSize + median are now COMPUTED (peer-band-scan helpers)
+//     — kelompok scopes the band at compute time (the SQL predicate is
+//     gone), months without positive target sales are absent, and the
+//     summary wiring is unchanged.
 //
 // Mock @/lib/db (same vi.hoisted pattern as change-analysis.test.ts).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -27,6 +33,7 @@ import {
   queryOutletMonthlySeries,
   queryPeerTrackRecord,
 } from '@/lib/queries/outlets/outlet-monthly-series';
+import { PEER_BAND_SCAN_WINDOW_MONTHS } from '@/lib/queries/outlets/peer-band-scan';
 
 const { mockQueryRaw, mockExecuteRaw } = vi.hoisted(() => ({
   mockQueryRaw: vi.fn(),
@@ -237,32 +244,73 @@ describe('summarizeTrackRecord', () => {
 });
 
 // ------------------------------------------------------------
-// 4. queryOutletMonthlySeries
+// 4. queryOutletMonthlySeries (PERF-FILTER1 B — shared-scan based)
 // ------------------------------------------------------------
 
 describe('queryOutletMonthlySeries', () => {
-  it('pins the same weekLabel, bounds the window inclusively, caps to 12, and maps rows', async () => {
+  /** Shared-scan row fixture (the peer-band-scan shape). */
+  function scanRow(overrides: Partial<Record<string, number | bigint | string>> = {}) {
+    return {
+      monthKey: '2026-08',
+      monthLabel: 'Agustus 2026',
+      outletCode: '1357.TJPPLU',
+      nominalDeviasi: -200,
+      totalLoss: 300,
+      totalSurplus: 100,
+      waste: 50,
+      absQtyDeviasi: 115,
+      absQtyBom: 500,
+      sales: 1000,
+      ...overrides,
+    };
+  }
+
+  it('runs the SHARED scan (outlet-independent) and derives the series rows from it', async () => {
     mockQueryRaw.mockResolvedValueOnce([
-      rawRow({ monthKey: '2026-08', monthLabel: 'Agustus 2026', sales: BigInt(1000), nominalDeviasi: BigInt(-200), devBom: 0.23 }),
+      scanRow({ nominalDeviasi: BigInt(-200), absQtyDeviasi: BigInt(115), absQtyBom: BigInt(500), sales: BigInt(1000) }),
     ]);
     const { rows, total } = await queryOutletMonthlySeries('1357.TJPPLU', 'WEEK 4', '2026-08', TOL, HI_LOSS);
 
     expect(mockQueryRaw).toHaveBeenCalledTimes(1);
     const sql = deepText(mockQueryRaw.mock.calls[0]);
     expect(sql).toContain('ir."weekLabel" =');
-    expect(sql).toContain('<=');
-    expect(sql).toContain('LIMIT');
-    expect(sql).toContain(String(OUTLET_MONTHLY_SERIES_WINDOW_MONTHS));
+    expect(sql).toContain('WEEK 4');
+    expect(sql).toContain('2026-08'); // monthKey upper bound (inclusive window)
+    expect(sql).toContain('<=');      // monthWindowBound
     expect(sql).toContain('"OutletPeriodSales"');
     // Excel loss/surplus convention from nominalLossSurplus (same as peer-comparison).
     expect(sql).toContain('nominalLossSurplus" < 0');
+    // PERF-FILTER1 B: the scan caps the UNION window at 24 months (2× the
+    // 12-month consumers) and NEVER references the target outlet — one row
+    // serves every outlet.
+    expect(sql).toContain(String(PEER_BAND_SCAN_WINDOW_MONTHS));
+    expect(sql).not.toContain('1357.TJPPLU');
 
     expect(rows).toHaveLength(1);
     expect(rows[0].monthLabel).toBe('Agustus 2026');
     expect(rows[0].sales).toBe(1000);
+    expect(rows[0].qtyBom).toBe(500);
+    expect(rows[0].devBom).toBeCloseTo(115 / 500, 10); // ΣABS(qtyDeviasi)/ΣABS(qtyBom)
     expect(rows[0].abnormal).toBe(true); // devBom 0.23 > 0.05
     expect(total.months).toBe(1);
     expect(total.abnormalCount).toBe(1);
+  });
+
+  it('caps the TARGET window to the last 12 months from the 24-month scan', async () => {
+    // 14 chronological months (2024-08 … 2025-09) of scan rows for the
+    // outlet — only the last 12 may surface.
+    const monthKeys = [
+      '2024-08', '2024-09', '2024-10', '2024-11', '2024-12',
+      '2025-01', '2025-02', '2025-03', '2025-04', '2025-05',
+      '2025-06', '2025-07', '2025-08', '2025-09',
+    ];
+    const many = monthKeys.map((monthKey) => scanRow({ monthKey }));
+    mockQueryRaw.mockResolvedValueOnce(many);
+    const { rows } = await queryOutletMonthlySeries('1357.TJPPLU', 'WEEK 4', '2025-09', TOL, HI_LOSS);
+    expect(rows.length).toBe(OUTLET_MONTHLY_SERIES_WINDOW_MONTHS);
+    // ...and they are the CHRONOLOGICALLY LAST 12 (slice(-12) of ASC order).
+    expect(rows[0].monthKey).toBe(monthKeys[2]);
+    expect(rows[rows.length - 1].monthKey).toBe(monthKeys[13]);
   });
 
   it('fires the merged set_config round-trip via withStatementTimeout', async () => {
@@ -281,56 +329,99 @@ describe('queryOutletMonthlySeries', () => {
 });
 
 // ------------------------------------------------------------
-// 5. queryPeerTrackRecord
+// 5. queryPeerTrackRecord (PERF-FILTER1 B — computed from the scan)
 // ------------------------------------------------------------
 
 describe('queryPeerTrackRecord', () => {
-  function trRow(overrides: Partial<Record<string, number | bigint | string>> = {}) {
-    return {
-      monthKey: '2026-08',
-      monthLabel: 'Agustus 2026',
-      targetSales: BigInt(1000),
-      nominalDeviasi: BigInt(-91_500_000),
-      totalLoss: BigInt(91_500_000),
-      rankNetDev: BigInt(2),
-      rankLoss: BigInt(1),
-      bandSize: BigInt(11),
-      medianLoss: BigInt(60_000_000),
-      ...overrides,
-    };
+  /** Band month fixture: target TJPPLU (sales 1000) + 3 in-band peers + 1 out-of-band. */
+  function bandMonth() {
+    const mk = (outletCode: string, sales: number, nd: number, loss: number) => ({
+      monthKey: '2026-08', monthLabel: 'Agustus 2026', outletCode,
+      nominalDeviasi: nd, totalLoss: loss, totalSurplus: 0, waste: 0,
+      absQtyDeviasi: 0, absQtyBom: 0, sales,
+    });
+    return [
+      mk('1357.TJPPLU', 1000, -100, 90),  // target
+      mk('1030.BDGSET', 950, -50, 40),    // |950-1000| = 50 <= 100 ✓
+      mk('1041.BDGUKU', 1050, -150, 95),  // |1050-1000| = 50 <= 100 ✓
+      mk('1001.TLGTEU', 900, -20, 30),    // |900-1000| = 100 <= 100 ✓ (inclusive bound)
+      mk('1375.TJSSEN', 500, -500, 500),  // |500-1000| = 500 > 100 ✗ (out of band)
+    ];
   }
 
-  it('ranks via RANK() windows, builds the ±10% dynamic band, and maps bigint ranks', async () => {
-    mockQueryRaw.mockResolvedValueOnce([trRow()]);
+  it('builds the ±10% dynamic band, ranks (ties share a rank), and computes the band median', async () => {
+    mockQueryRaw.mockResolvedValueOnce(bandMonth());
     const { rows, summary } = await queryPeerTrackRecord('1357.TJPPLU', 'WEEK 4', '2026-08', null);
 
     expect(mockQueryRaw).toHaveBeenCalledTimes(1);
     const sql = deepText(mockQueryRaw.mock.calls[0]);
-    expect(sql).toContain('RANK() OVER');
-    expect(sql).toContain('0.1');
-    expect(sql).toContain('ROW_NUMBER()');
+    // PERF-FILTER1 B: the band math moved OUT of SQL — the scan is pure
+    // aggregation (no RANK/window/±10% predicates left).
     expect(sql).toContain('ir."weekLabel" =');
+    expect(sql).not.toContain('RANK() OVER');
+    expect(sql).not.toContain('SUBSTRING(o.code FROM');
 
     expect(rows).toHaveLength(1);
+    // rankNetDev ASC by nominalDeviasi: B(-150) 1st, target(-100) 2nd.
     expect(rows[0].rankNetDev).toBe(2);
-    expect(rows[0].rankLoss).toBe(1);
-    expect(rows[0].bandSize).toBe(11);
+    // rankLoss DESC by totalLoss: B(95) 1st, target(90) 2nd.
+    expect(rows[0].rankLoss).toBe(2);
+    // Band = target + BDGSET + BDGUKU + TLGTEU (TJSSEN excluded).
+    expect(rows[0].bandSize).toBe(4);
+    // Median of [30, 40, 90, 95] — AVG of middle two = 65.
+    expect(rows[0].medianLoss).toBe(65);
+    expect(rows[0].targetSales).toBe(1000);
+    expect(rows[0].nominalDeviasi).toBe(-100);
     expect(summary.monthsTracked).toBe(1);
-    expect(summary.monthsWorstLoss).toBe(1);
     expect(summary.lastRankNetDev).toBe(2);
   });
 
-  it('includes the kelompok peer-scope predicate only when kelompok is passed', async () => {
-    mockQueryRaw.mockResolvedValueOnce([]);
-    await queryPeerTrackRecord('X', 'WEEK 4', '2026-08', 'BDG');
-    const sqlScoped = deepText(mockQueryRaw.mock.calls[0]);
-    expect(sqlScoped).toContain('SUBSTRING(o.code FROM');
+  it('RANK ties SHARE the rank (SQL RANK semantics, not ROW_NUMBER)', async () => {
+    const mk = (outletCode: string, nd: number) => ({
+      monthKey: '2026-08', monthLabel: 'Agustus 2026', outletCode,
+      nominalDeviasi: nd, totalLoss: 10, totalSurplus: 0, waste: 0,
+      absQtyDeviasi: 0, absQtyBom: 0, sales: 1000,
+    });
+    // target + one peer BOTH at -100 → both rankNetDev 1; the third (-50) ranks 3.
+    mockQueryRaw.mockResolvedValueOnce([mk('1357.TJPPLU', -100), mk('1030.BDGSET', -100), mk('1041.BDGUKU', -50)]);
+    const { rows } = await queryPeerTrackRecord('1357.TJPPLU', 'WEEK 4', '2026-08', null);
+    expect(rows[0].rankNetDev).toBe(1);
+  });
 
+  it('kelompok scopes the PEER set at compute time — target always stays in scope', async () => {
+    mockQueryRaw.mockResolvedValueOnce(bandMonth());
+    const { rows } = await queryPeerTrackRecord('1357.TJPPLU', 'WEEK 4', '2026-08', 'BDG');
+    // Peers: BDGSET + BDGUKU (kelompok BDG) + the target itself — TLGTEU
+    // (kelompok TLG) is excluded even though it is inside the sales band.
+    expect(rows[0].bandSize).toBe(3);
+    // rankLoss over [40, 95, 90]: BDGUKU 1st, target 2nd.
+    expect(rows[0].rankLoss).toBe(2);
+
+    // Out-of-kelompok TARGET still gets ranked (always-in-scope rule):
+    // TLGTEU (sales 900) + its BDG-scope peers within ±10% of 900 —
+    // BDGSET (950 ✓), BDGUKU (1050 ✗ |1050−900| = 150 > 90) → band of 2.
     mockQueryRaw.mockReset();
-    mockQueryRaw.mockResolvedValueOnce([]);
-    await queryPeerTrackRecord('X', 'WEEK 4', '2026-08', null);
-    const sqlUnscoped = deepText(mockQueryRaw.mock.calls[0]);
-    expect(sqlUnscoped).not.toContain('SUBSTRING(o.code FROM');
+    mockQueryRaw.mockResolvedValueOnce(bandMonth());
+    const { rows: rows2 } = await queryPeerTrackRecord('1001.TLGTEU', 'WEEK 4', '2026-08', 'BDG');
+    expect(rows2).toHaveLength(1); // month present, target ranked
+    expect(rows2[0].bandSize).toBe(2);
+    // rankNetDev ASC: BDGSET (−50) 1st, TLGTEU (−20) 2nd.
+    expect(rows2[0].rankNetDev).toBe(2);
+  });
+
+  it('months without positive target sales are absent (old target_sales inner-join semantics)', async () => {
+    const mk = (monthKey: string, sales: number) => ({
+      monthKey, monthLabel: monthKey, outletCode: '1357.TJPPLU',
+      nominalDeviasi: -10, totalLoss: 5, totalSurplus: 0, waste: 0,
+      absQtyDeviasi: 0, absQtyBom: 0, sales,
+    });
+    mockQueryRaw.mockResolvedValueOnce([
+      mk('2026-07', 0),     // no sales → month DROPPED
+      mk('2026-08', 1000),  // ranked
+    ]);
+    const { rows } = await queryPeerTrackRecord('1357.TJPPLU', 'WEEK 4', '2026-08', null);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].monthKey).toBe('2026-08');
   });
 
   it('empty band → empty records + null summary fields', async () => {

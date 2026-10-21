@@ -29,7 +29,11 @@ export const maxDuration = 60;
 // Same AggregationCache pattern as the peer-comparison family (P3-HYG-3).
 // Mutations clear it via invalidateAnalysisCache (routes list includes
 // 'peer-track-record').
-const TRACK_RECORD_CACHE_TTL = 5 * 60 * 1000;
+// PERF-FILTER1 (A): 5 min → 30 min — same safety rationale as the
+// q-* siblings: mutations delete 'peer-track-record\x1f' rows, so the
+// TTL only caps untouched-row survival; the heavy multi-month scan is
+// additionally shared via 'q-peer-band-scan' (PERF-FILTER1 B).
+const TRACK_RECORD_CACHE_TTL = 30 * 60 * 1000; // 30 min (PERF-FILTER1 A)
 
 export async function GET(req: NextRequest) {
   try {

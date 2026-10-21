@@ -24,10 +24,19 @@
 //  Source: split out of src/lib/queries/items/top-items.ts (722 LOC,
 //  Task 1-d). All SQL + comments preserved verbatim; the shared base
 //  CTE was extracted into ./shared-cte.ts to avoid drift.
+//
+//  PERF-FILTER1 (B3): the per-outlet path no longer re-runs the FULL
+//  national CTE chain per outlet. The national aggregates live in ONE
+//  cached scan row ('q-devrank-scan' — ./national-scan.ts, keyed by
+//  (month, week) only, 30-min TTL, mutation-invalidated); this path
+//  runs ONE cheap indexed display query for the target outlet + the
+//  pure computeDeviasiRankForOutlet below (national rank, BOM rank,
+//  ±50% bucket peer average — SQL semantics documented at the fn).
 // ============================================================
 import { withStatementTimeout, type SqlFilterOpts } from '../../shared';
 import { buildDeviasiRankBaseCte } from './shared-cte';
 import { peerBomBucketPredicate } from '../peer-bucket';
+import { getDeviasiNationalScan, type DeviasiNationalScanRow } from './national-scan';
 
 // ============================================================
 //  Top Items by Deviasi Rank — national item ranking
@@ -168,7 +177,161 @@ export async function queryTopItemsByDeviasiRank(
 //  Differs from queryTopItemsByDeviasiRank (national top-50 across all
 //  outlets) — this returns the selected outlet's top-N items, with
 //  national rank + peer benchmark attached.
+//
+//  PERF-FILTER1 (B3) shape: [shared cached national scan] ∥ [cheap
+//  per-outlet display query] → pure compute. The display query is the
+//  OLD base CTE's SELECT/GROUP BY with `AND o.code = ${outletCode}` —
+//  an indexed ~60-200 row scan instead of the national window chain.
+//  Ranks + the ±50% bucket average come from the cached scan row.
 // ============================================================
+
+/** Display-row shape from the per-outlet query (bigint coerced in compute). */
+interface DeviasiOutletDisplayRow {
+  itemName: string;
+  outletCode: string;
+  outletName: string;
+  pic: string | null;
+  satuan: string | null;
+  qtyDeviasi: number | bigint;
+  qtyWaste: number | bigint;
+  qtyLossSurplus: number | bigint;
+  pctLossSurplusToBom: number | null;
+  qtyBom: number | bigint;
+  nominalDeviasi: number | bigint;
+}
+
+/**
+ * Pure compute (exported for vitest): attach national ranks + the ±50%
+ * BOM bucket peer average to the target outlet's display rows.
+ *
+ * SQL semantics preserved from the old single-query path:
+ *   - top-N selection: the outlet's items by ABS(nominalDeviasi) DESC
+ *     (the old outlet_top ROW_NUMBER; ties broken by itemName — the
+ *     SQL tie order was arbitrary).
+ *   - rankNominal: sequential over the FULL national set sorted by
+ *     ABS(nominalDeviasi) DESC (ROW_NUMBER semantics — no shared ranks;
+ *     deterministic tiebreak outletCode, itemName).
+ *   - rankBom: sequential among qtyBom > 0 rows by qtyBom DESC; NULL
+ *     for qtyBom = 0 (FIX BUG-1-01 preserved).
+ *   - avgDeviasiByBom: AVG(absQtyDeviasi) over OTHER outlets with the
+ *     same itemName, both qtyBom > 0, and candidate qtyBom BETWEEN
+ *     target×0.5 AND target×1.5 (peerBomBucketPredicate bounds,
+ *     inclusive); NULL when otherCount = 0 or target qtyBom = 0.
+ *
+ * Display rows missing from the scan (only possible if a mutation
+ * landed BETWEEN the two parallel queries — READ COMMITTED snapshots)
+ * degrade gracefully: rank falls back to the scan's tail position and
+ * the bucket average to NULL, never throwing.
+ */
+export function computeDeviasiRankForOutlet(
+  scanRows: DeviasiNationalScanRow[],
+  displayRows: DeviasiOutletDisplayRow[],
+  outletCode: string,
+  limit: number = 30,
+): Array<{
+  itemName: string;
+  outletCode: string;
+  outletName: string;
+  pic: string | null;
+  satuan: string | null;
+  qtyDeviasi: number;
+  qtyWaste: number;
+  qtyLossSurplus: number;
+  pctLossSurplusToBom: number | null;
+  qtyBom: number;
+  avgDeviasiByBom: number | null;
+  nominalDeviasi: number;
+  rankNominal: number;
+  rankBom: number | null;
+}> {
+  const pairKey = (o: string, i: string) => `${o}\u0000${i}`;
+  // National rank maps (deterministic ROW_NUMBER orderings).
+  const byNominal = [...scanRows].sort(
+    (a, b) =>
+      Math.abs(b.nominalDeviasi) - Math.abs(a.nominalDeviasi) ||
+      a.outletCode.localeCompare(b.outletCode) ||
+      a.itemName.localeCompare(b.itemName),
+  );
+  const rankNominalMap = new Map<string, number>();
+  byNominal.forEach((r, idx) => rankNominalMap.set(pairKey(r.outletCode, r.itemName), idx + 1));
+  const byBom = scanRows
+    .filter((r) => r.qtyBom > 0)
+    .sort(
+      (a, b) =>
+        b.qtyBom - a.qtyBom ||
+        a.outletCode.localeCompare(b.outletCode) ||
+        a.itemName.localeCompare(b.itemName),
+    );
+  const rankBomMap = new Map<string, number>();
+  byBom.forEach((r, idx) => rankBomMap.set(pairKey(r.outletCode, r.itemName), idx + 1));
+  // (item → national rows) index for the bucket averages.
+  const byItem = new Map<string, DeviasiNationalScanRow[]>();
+  for (const r of scanRows) {
+    const list = byItem.get(r.itemName);
+    if (list) list.push(r);
+    else byItem.set(r.itemName, [r]);
+  }
+  // (outlet, item) → scan row — O(1) display-row lookups.
+  const scanByPair = new Map<string, DeviasiNationalScanRow>();
+  for (const r of scanRows) scanByPair.set(pairKey(r.outletCode, r.itemName), r);
+
+  // Top-N display rows (the old outlet_top window, within-outlet rank).
+  const top = [...displayRows]
+    .sort(
+      (a, b) =>
+        Math.abs(Number(b.nominalDeviasi)) - Math.abs(Number(a.nominalDeviasi)) ||
+        a.itemName.localeCompare(b.itemName),
+    )
+    .slice(0, limit);
+
+  return top.map((t) => {
+    const scanRow = scanByPair.get(pairKey(outletCode, t.itemName));
+    // Graceful degradation for the (theoretically impossible, mutation
+    // race) missing scan row — see the doc comment above.
+    const rankNominal = scanRow
+      ? rankNominalMap.get(pairKey(outletCode, t.itemName)) ?? scanRows.length
+      : scanRows.length;
+    const qtyBomNum = Number(t.qtyBom);
+    const rankBom =
+      scanRow && qtyBomNum > 0
+        ? rankBomMap.get(pairKey(outletCode, t.itemName)) ?? null
+        : null;
+    // Bucket average: other outlets, same item, both BOM > 0, candidate
+    // qtyBom BETWEEN target×0.5 AND target×1.5 (inclusive bounds).
+    let avgDeviasiByBom: number | null = null;
+    if (scanRow && scanRow.qtyBom > 0) {
+      const candidates = (byItem.get(t.itemName) ?? []).filter(
+        (c) =>
+          c.outletCode !== outletCode &&
+          c.qtyBom > 0 &&
+          c.qtyBom >= scanRow.qtyBom * 0.5 &&
+          c.qtyBom <= scanRow.qtyBom * 1.5,
+      );
+      if (candidates.length > 0) {
+        avgDeviasiByBom =
+          candidates.reduce((s, c) => s + c.absQtyDeviasi, 0) / candidates.length;
+      }
+    }
+    return {
+      itemName: t.itemName,
+      outletCode: t.outletCode,
+      outletName: t.outletName,
+      pic: t.pic,
+      satuan: t.satuan,
+      qtyDeviasi: Number(t.qtyDeviasi),
+      qtyWaste: Number(t.qtyWaste),
+      qtyLossSurplus: Number(t.qtyLossSurplus),
+      pctLossSurplusToBom: t.pctLossSurplusToBom != null ? Number(t.pctLossSurplusToBom) : null,
+      qtyBom: qtyBomNum,
+      avgDeviasiByBom,
+      nominalDeviasi: Number(t.nominalDeviasi),
+      rankNominal,
+      // FIX (BUG-1-01): preserve null — qtyBom=0 items rank NULL (not 0).
+      rankBom,
+    };
+  });
+}
+
 export async function queryTopItemsByDeviasiRankForOutlet(
   week: string,
   month: string,
@@ -190,84 +353,39 @@ export async function queryTopItemsByDeviasiRankForOutlet(
   rankNominal: number;
   rankBom: number | null;
 }>> {
-  // Compute per-(item,outlet) aggregates for ALL outlets (needed for national
-  // rank + peer benchmark), then filter to the target outlet's top-N.
-  const baseCte = buildDeviasiRankBaseCte({
-    month,
-    week,
-    filters: null, // per-outlet query needs ALL outlets for national rank
-    firstCteName: 'all_item_per_outlet',
-    rankedCteName: 'ranked_all',
-  });
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<Array<{
-    itemName: string;
-    outletCode: string;
-    outletName: string;
-    pic: string | null;
-    satuan: string | null;
-    qtyDeviasi: number | bigint;
-    qtyWaste: number | bigint;
-    qtyLossSurplus: number | bigint;
-    pctLossSurplusToBom: number | null;
-    qtyBom: number | bigint;
-    nominalDeviasi: number | bigint;
-    avgDeviasiByBom: number | null;
-    rankNominal: number | bigint;
-    rankBom: number | null;
-  }>>`
-    WITH ${baseCte},
-    -- Target outlet's top-N items (ranked within outlet by ABS(nominalDeviasi))
-    outlet_top AS (
-      SELECT * FROM (
-        SELECT ra.*,
-          ROW_NUMBER() OVER (PARTITION BY ra."outletCode" ORDER BY ABS(ra."nominalDeviasi") DESC) as "outletRank"
-        FROM ranked_all ra
-        WHERE ra."outletCode" = ${outletCode}
-      ) t WHERE "outletRank" <= ${limit}
-    ),
-    -- Peer benchmark: for each outlet_top item, average ABS(qtyDeviasi) of OTHER
-    -- outlets with same itemName AND qtyBom within ±50% range.
-    bucket_avg AS (
+  // PERF-FILTER1 (B3): shared cached national scan (all outlets — ranks +
+  // bucket inputs) ∥ cheap per-outlet display query — replaces the full
+  // national CTE chain that used to re-run per outlet selection.
+  const [scan, displayRows] = await Promise.all([
+    getDeviasiNationalScan(week, month),
+    // The display query mirrors the OLD base CTE's SELECT list + GROUP BY
+    // with the outlet filter — same aggregates, so the values feeding the
+    // ranks/buckets match the cached scan's exactly.
+    withStatementTimeout((tx) => tx.$queryRaw<DeviasiOutletDisplayRow[]>`
       SELECT
-        ti."itemName",
-        ti."outletCode",
-        AVG(CASE WHEN ipo2."outletCode" != ti."outletCode"
-                 THEN ipo2."absQtyDeviasi" END) as "avgDeviasiByBom",
-        SUM(CASE WHEN ipo2."outletCode" != ti."outletCode"
-                 THEN 1 ELSE 0 END) as "otherCount"
-      FROM outlet_top ti
-      JOIN all_item_per_outlet ipo2
-        ON ipo2."itemName" = ti."itemName"
-        AND ABS(ti."qtyBom") > 0
-        AND ABS(ipo2."qtyBom") > 0
-        AND ${peerBomBucketPredicate('ti', 'ipo2')}
-      GROUP BY ti."itemName", ti."outletCode"
-    )
-    SELECT
-      ti."itemName", ti."outletCode", ti."outletName", ti.pic, ti."satuan",
-      ti."qtyDeviasi", ti."qtyWaste", ti."qtyLossSurplus", ti."pctLossSurplusToBom",
-      ti."qtyBom", ti."nominalDeviasi",
-      CASE WHEN ti."qtyBom" != 0 AND ba."otherCount" > 0 THEN ba."avgDeviasiByBom" ELSE NULL END as "avgDeviasiByBom",
-      ti."rankNominal",
-      ti."rankBom"
-    FROM outlet_top ti
-    LEFT JOIN bucket_avg ba
-      ON ti."itemName" = ba."itemName"
-     AND ti."outletCode" = ba."outletCode"
-    ORDER BY ti."outletRank"
-  `);
-  // Coerce BigInt/Decimal to Number (matches queryTopItemsByDeviasiRank coercion)
-  return rows.map((r) => ({
-    ...r,
-    qtyDeviasi: Number(r.qtyDeviasi),
-    qtyWaste: Number(r.qtyWaste),
-    qtyLossSurplus: Number(r.qtyLossSurplus),
-    pctLossSurplusToBom: r.pctLossSurplusToBom != null ? Number(r.pctLossSurplusToBom) : null,
-    qtyBom: Number(r.qtyBom),
-    avgDeviasiByBom: r.avgDeviasiByBom != null ? Number(r.avgDeviasiByBom) : null,
-    nominalDeviasi: Number(r.nominalDeviasi),
-    rankNominal: Number(r.rankNominal),
-    // FIX (BUG-1-01): preserve null — SQL returns NULL for qtyBom=0 items.
-    rankBom: r.rankBom != null ? Number(r.rankBom) : null,
-  }));
+        i.name as "itemName",
+        o.code as "outletCode",
+        o.name as "outletName",
+        pic.pic,
+        MAX(ir."satuan") as "satuan",
+        SUM(ir."qtyDeviasi") as "qtyDeviasi",
+        SUM(ir."qtyWaste") as "qtyWaste",
+        SUM(ir."qtyLossSurplus") as "qtyLossSurplus",
+        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
+          THEN ABS(SUM(ir."qtyLossSurplus")) / SUM(ABS(ir."qtyBom"))
+          ELSE NULL END as "pctLossSurplusToBom",
+        SUM(ABS(ir."qtyBom")) as "qtyBom",
+        SUM(ir."nominalDeviasi") as "nominalDeviasi"
+      FROM "InventoryRecord" ir
+      JOIN "Item" i ON ir."itemId" = i.id
+      JOIN "Outlet" o ON ir."outletId" = o.id
+      LEFT JOIN "OutletPIC" pic ON o.code = pic."outletCode"
+      WHERE ir."monthLabel" = ${month}
+        AND ir."weekLabel" = ${week}
+        AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
+        AND o.code = ${outletCode}
+      GROUP BY i.name, o.code, o.name, pic.pic
+    `),
+  ]);
+  return computeDeviasiRankForOutlet(scan.rows, displayRows, outletCode, limit);
 }

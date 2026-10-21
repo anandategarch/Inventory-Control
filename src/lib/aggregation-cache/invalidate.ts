@@ -206,6 +206,17 @@ export async function invalidateAnalysisCache(): Promise<void> {
     // birth: the export's auto-target scan now sits in a q-* row and
     // must die on every mutation like its siblings.
     'q-peer-topitems', 'q-peer-autotarget',
+    // PERF-FILTER1 (B): the SHARED national/band scans — one cached row
+    // per (period) that replaces per-outlet cold computes for the Resto
+    // tab family. Same rule as the q-* siblings: every mutation (new
+    // month rows, changed sums/sales, changed outlet sets) must kill
+    // these rows or the band/deviasi views serve pre-mutation data for
+    // up to the 30-min TTL.
+    //   'q-peer-band-scan'  — outlets/peer-band-scan.ts (peer-track-record
+    //                        + waste-peer-zscore + outlet-monthly-series)
+    //   'q-devrank-scan'    — items/top-items/national-scan.ts (the
+    //                        per-outlet deviasi-rank national table)
+    'q-peer-band-scan', 'q-devrank-scan',
   ];
   await Promise.all(routes.map(r => invalidateCache(`${r}\x1f`)));
 }

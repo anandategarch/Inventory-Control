@@ -28,7 +28,10 @@ export const maxDuration = 60;
 // Same AggregationCache pattern as the peer-comparison family (P3-HYG-3):
 // 5-min DB-level cache + in-flight dedup. Mutations clear it via
 // invalidateAnalysisCache (routes list includes 'outlet-monthly-series').
-const SERIES_CACHE_TTL = 5 * 60 * 1000;
+// PERF-FILTER1 (A): 5 min → 30 min — mutations delete
+// 'outlet-monthly-series\x1f' rows (invalidate.ts); the heavy scan is
+// shared via 'q-peer-band-scan' (PERF-FILTER1 B).
+const SERIES_CACHE_TTL = 30 * 60 * 1000; // 30 min (PERF-FILTER1 A)
 
 export async function GET(req: NextRequest) {
   try {

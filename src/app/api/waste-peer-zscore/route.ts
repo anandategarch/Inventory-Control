@@ -30,7 +30,11 @@ export const maxDuration = 60;
 // Same AggregationCache pattern as the peer-comparison family (P3-HYG-3).
 // Mutations clear it via invalidateAnalysisCache (routes list includes
 // 'waste-peer-zscore').
-const WASTE_PEER_ZSCORE_CACHE_TTL = 5 * 60 * 1000;
+// PERF-FILTER1 (A): 5 min → 30 min — mutations delete
+// 'waste-peer-zscore\x1f' rows (invalidate.ts), so the long TTL only
+// caps untouched-row survival; the heavy scan is shared via
+// 'q-peer-band-scan' (PERF-FILTER1 B).
+const WASTE_PEER_ZSCORE_CACHE_TTL = 30 * 60 * 1000; // 30 min (PERF-FILTER1 A)
 
 export async function GET(req: NextRequest) {
   try {

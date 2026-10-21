@@ -18,9 +18,12 @@
 //     caps to 12 months, aggregates ΣABS nominal waste/susut/trial +
 //     residualNominal + Excel loss/surplus convention, computes the
 //     2σ spike window (STDDEV_SAMP), and returns months/monthly/outlets/kpis.
-//  6. queryWastePeerZScore — ±10% dynamic band + RANK() DESC + z-score
-//     guarded on bandSize >= 3 AND std > 0; kelompok predicate appears
-//     only when passed; bigint mapping.
+//  6. queryWastePeerZScore — PERF-FILTER1 (B): derives from the SHARED
+//     cached band scan ('q-peer-band-scan'). The ±10% band, RANK() DESC,
+//     band mean/STDDEV_SAMP + the z-score guard (bandSize >= 3 AND
+//     std > 0) are now COMPUTED (peer-band-scan helpers) — kelompok
+//     scopes the band at compute time; months without positive target
+//     sales are absent.
 //
 // Mock @/lib/db (same vi.hoisted pattern as outlet-monthly-series.test.ts).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -29,7 +32,6 @@ import {
   WASTE_UNDER_RECORD_PCT,
   WASTE_RESIDUAL_DOMINANT_PCT,
   WASTE_SPIKE_MIN_MONTHS,
-  WASTE_ZSCORE_MIN_BAND,
   buildWasteMonthlyRows,
   buildWasteOutlets,
   buildWasteKpis,
@@ -505,61 +507,78 @@ describe('queryWasteNetwork', () => {
 // ------------------------------------------------------------
 
 describe('queryWastePeerZScore', () => {
-  function zRow(overrides: Partial<Record<string, number | bigint | string | null>> = {}) {
+  /** Shared-scan row fixture (the peer-band-scan shape). */
+  function zScanRow(outletCode: string, sales: number, waste: number) {
     return {
       monthKey: '2026-08',
       monthLabel: 'Agustus 2026',
-      targetSales: BigInt(1_000_000),
-      waste: BigInt(20_000),
-      wasteToSales: 0.02,
-      rankWasteToSales: BigInt(1),
-      bandSize: BigInt(11),
-      bandMean: 0.01,
-      bandStd: 0.005,
-      zScore: 2,
-      ...overrides,
+      outletCode,
+      nominalDeviasi: 0,
+      totalLoss: 0,
+      totalSurplus: 0,
+      waste,
+      absQtyDeviasi: 0,
+      absQtyBom: 0,
+      sales,
     };
   }
 
   it('builds the ±10% dynamic band, ranks waste/sales DESC, guards z on bandSize + std', async () => {
-    mockQueryRaw.mockResolvedValueOnce([zRow()]);
+    // All four members share sales 1,000,000 (mutually within ±10%).
+    // Ratios: target 0.02, peers 0.01 / 0.01 / 0.01 → mean 0.0125,
+    // STDDEV_SAMP 0.005 → z = (0.02 − 0.0125) / 0.005 = 1.5.
+    mockQueryRaw.mockResolvedValueOnce([
+      zScanRow('1357.TJPPLU', 1_000_000, 20_000),
+      zScanRow('1030.BDGSET', 1_000_000, 10_000),
+      zScanRow('1041.BDGUKU', 1_000_000, 10_000),
+      zScanRow('1001.TLGTEU', 1_000_000, 10_000),
+    ]);
     const { rows, summary } = await queryWastePeerZScore('1357.TJPPLU', 'WEEK 4', '2026-08', null);
 
     expect(mockQueryRaw).toHaveBeenCalledTimes(1);
     const sql = deepText(mockQueryRaw.mock.calls[0]);
-    expect(sql).toContain('0.1');
-    expect(sql).toContain('RANK() OVER');
-    expect(sql).toContain('STDDEV_SAMP("wasteToSales")');
-    expect(sql).toContain(String(WASTE_ZSCORE_MIN_BAND));
+    // PERF-FILTER1 B: the band/z math moved OUT of SQL — the scan is pure
+    // aggregation (no RANK/STDDEV/±10% predicates left), shared with the
+    // track-record + monthly-series consumers.
     expect(sql).toContain('ir."weekLabel" =');
+    expect(sql).not.toContain('RANK() OVER');
+    expect(sql).not.toContain('STDDEV_SAMP');
+    expect(sql).not.toContain('SUBSTRING(o.code FROM');
 
     expect(rows).toHaveLength(1);
-    expect(rows[0].rankWasteToSales).toBe(1);
-    expect(rows[0].bandSize).toBe(11);
-    expect(rows[0].zScore).toBe(2);
+    expect(rows[0].rankWasteToSales).toBe(1);   // 0.02 = highest ratio
+    expect(rows[0].bandSize).toBe(4);
+    expect(rows[0].wasteToSales).toBeCloseTo(0.02, 10);
+    expect(rows[0].bandMean).toBeCloseTo(0.0125, 10);
+    expect(rows[0].bandStd).toBeCloseTo(0.005, 10);
+    expect(rows[0].zScore).toBeCloseTo(1.5, 10);
     expect(summary.monthsTracked).toBe(1);
     expect(summary.monthsHighestWaste).toBe(1);
   });
 
-  it('maps zScore null (degenerate band) to null', async () => {
-    mockQueryRaw.mockResolvedValueOnce([zRow({ bandSize: BigInt(2), bandStd: 0, zScore: null })]);
-    const { rows, summary } = await queryWastePeerZScore('X', 'WEEK 4', '2026-08', null);
+  it('maps zScore null (degenerate band — size < WASTE_ZSCORE_MIN_BAND) to null', async () => {
+    // Only target + 1 peer → bandSize 2 < 3 → z null.
+    mockQueryRaw.mockResolvedValueOnce([
+      zScanRow('1357.TJPPLU', 1_000_000, 20_000),
+      zScanRow('1030.BDGSET', 1_000_000, 10_000),
+    ]);
+    const { rows, summary } = await queryWastePeerZScore('1357.TJPPLU', 'WEEK 4', '2026-08', null);
+    expect(rows[0].bandSize).toBe(2);
     expect(rows[0].zScore).toBeNull();
     expect(summary.avgZ).toBeNull();
     expect(summary.monthsZAbove1).toBe(0);
   });
 
-  it('includes the kelompok peer-scope predicate only when kelompok is passed', async () => {
-    mockQueryRaw.mockResolvedValueOnce([]);
-    await queryWastePeerZScore('X', 'WEEK 4', '2026-08', 'TJP');
-    const sqlScoped = deepText(mockQueryRaw.mock.calls[0]);
-    expect(sqlScoped).toContain('SUBSTRING(o.code FROM');
-
-    mockQueryRaw.mockReset();
-    mockQueryRaw.mockResolvedValueOnce([]);
-    await queryWastePeerZScore('X', 'WEEK 4', '2026-08', null);
-    const sqlUnscoped = deepText(mockQueryRaw.mock.calls[0]);
-    expect(sqlUnscoped).not.toContain('SUBSTRING(o.code FROM');
+  it('kelompok scopes the PEER set at compute time — target always stays in scope', async () => {
+    mockQueryRaw.mockResolvedValueOnce([
+      zScanRow('1357.TJPPLU', 1_000_000, 20_000),
+      zScanRow('1030.BDGSET', 1_000_000, 10_000), // BDG — in scope
+      zScanRow('1001.TLGTEU', 1_000_000, 10_000), // TLG — excluded
+    ]);
+    const { rows } = await queryWastePeerZScore('1357.TJPPLU', 'WEEK 4', '2026-08', 'BDG');
+    // Band = target + BDGSET (TLGTEU dropped despite matching sales band).
+    expect(rows[0].bandSize).toBe(2);
+    expect(rows[0].rankWasteToSales).toBe(1);
   });
 
   it('empty band → empty records + null summary fields', async () => {

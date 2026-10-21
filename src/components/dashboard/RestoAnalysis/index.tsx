@@ -16,7 +16,6 @@
 //  file re-exports types for backward compatibility.
 // ============================================================
 
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
 import { Gauge, Store, History } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
@@ -24,9 +23,10 @@ import { useShallow } from 'zustand/shallow';
 import { PrioritySummaryCard } from '@/components/dashboard/PrioritySummaryCard';
 import { SectionHeader } from '@/components/dashboard/shared';
 import { SearchableComboBox } from '@/components/filters/SearchableComboBox';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AnalysisData } from '@/hooks/useAnalysis';
 import { useStatus } from '@/hooks/useAnalysis';
+import { useOutletItems, usePrefetchOutletItems } from '@/hooks/useOutletItems';
 import { useRecommendations, useSharedRecommendationForOutlet } from '@/hooks/useRecommendations';
 
 import type {
@@ -114,37 +114,52 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
       allOptionLabel={`Semua / Reset pilihan (${outletOptions.length})`}
       buttonClassName={className}
       ariaLabel="Filter resto"
+      onOptionHover={handleOptionHover}
     />
   );
 
-  const { data, isLoading, isFetching, error, refetch } = useQuery<OutletItemsResponse>({
-    queryKey: ['outlet-items', activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth],
-    queryFn: async () => {
-      const p = new URLSearchParams();
-      p.set('outletCode', activeOutlet!);
-      p.set('month', monthLabel!);
-      p.set('week', currentWeek!);
-      if (comparisonWeek) p.set('compareWeek', comparisonWeek);
-      if (comparisonMonth) p.set('compareMonth', comparisonMonth);
-      const res = await fetch(`/api/outlet-items?${p.toString()}`);
-      const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        const text = await res.text();
-        throw new Error(`Server error (HTTP ${res.status}). ${text.slice(0, 200)}`);
-      }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json() as Promise<OutletItemsResponse>;
-    },
+  // PERF (PERF-FILTER1 C): the inline query moved to the shared hook
+  // (src/hooks/useOutletItems.ts) so the SAME key/fetch powers the hover
+  // prefetch below — TanStack dedupes by key, prefetch + live query share
+  // one cache entry. Options preserved: PAKET A staleTime (now 10 min,
+  // aligned with gcTime — outlet data only changes on ingest / manual
+  // refresh, both invalidate ['outlet-items']), BUG-FE-5 keepPreviousData.
+  const { data, isLoading, isFetching, error, refetch } = useOutletItems({
+    outletCode: activeOutlet!,
+    month: monthLabel!,
+    week: currentWeek!,
+    compareWeek: comparisonWeek,
+    compareMonth: comparisonMonth,
     enabled: Boolean(activeOutlet && monthLabel && currentWeek),
-    // PERF-FE (PAKET A): outlet data only changes on ingest / manual refresh
-    // (handleRefresh invalidates ['outlet-items']) — not every 30s. Without
-    // an explicit staleTime this fell back to the 30s global default and
-    // refetched whenever the user re-entered the Resto tab after >30s.
-    staleTime: 5 * 60_000,
-    gcTime: 10 * 60_000,
-    // FIX (BUG-FE-5): keepPreviousData for smooth transition on filter change
-    placeholderData: keepPreviousData,
   });
+
+  // ============================================================
+  //  PERF (PERF-FILTER1 C): hover prefetch for the Filter Resto picker.
+  //  A 250ms debounce separates real hover intent from a mouse scanning
+  //  down the option list — each new hover RESETS the timer, so only the
+  //  option the pointer actually settles on fires the prefetch (ONE
+  //  request, never a storm). TanStack's prefetchQuery skips keys that
+  //  already hold fresh data, and prefetching the CURRENT selection is
+  //  pointless (the live query already owns that key).
+  // ============================================================
+  const prefetchOutletItems = usePrefetchOutletItems();
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+  }, []);
+  const handleOptionHover = useCallback((code: string) => {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    if (!code || code === activeOutlet || !monthLabel || !currentWeek) return;
+    hoverTimerRef.current = setTimeout(() => {
+      prefetchOutletItems({
+        outletCode: code,
+        month: monthLabel,
+        week: currentWeek,
+        compareWeek: comparisonWeek,
+        compareMonth: comparisonMonth,
+      });
+    }, 250);
+  }, [activeOutlet, monthLabel, currentWeek, comparisonWeek, comparisonMonth, prefetchOutletItems]);
 
   // H-11 (#4b): ONE recommendations fetch for the whole app. First PEEK the
   // shared (unscoped) response the Dashboard's Resto Prioritas card already

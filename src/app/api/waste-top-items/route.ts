@@ -42,7 +42,9 @@ export const maxDuration = 60;
 // Same AggregationCache pattern as the peer-comparison family (P3-HYG-3).
 // Mutations clear it via invalidateAnalysisCache (routes list includes
 // 'waste-top-items').
-const WASTE_TOP_ITEMS_CACHE_TTL = 5 * 60 * 1000;
+// PERF-FILTER1 (A): 5 min → 30 min — mutations delete
+// 'waste-top-items\x1f' rows (invalidate.ts).
+const WASTE_TOP_ITEMS_CACHE_TTL = 30 * 60 * 1000; // 30 min (PERF-FILTER1 A)
 
 export async function GET(req: NextRequest) {
   try {

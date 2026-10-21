@@ -20,30 +20,31 @@
 //  GRAIN + sales MODE conventions: see ./shared.ts (moved
 //  verbatim). PURELY ADDITIVE: feeds the /api/waste-peer-zscore
 //  route used by the Resto tab's "Profil Waste" card.
+//
+//  PERF-FILTER1 (B): the heavy multi-month × all-outlet scan now
+//  lives in ../outlets/peer-band-scan.ts as ONE shared, cached,
+//  outlet-independent row ('q-peer-band-scan' — 30-min TTL,
+//  mutation-invalidated; the same row also serves peer-track-
+//  record + outlet-monthly-series). This module keeps its public
+//  signature; the per-outlet band/rank/z-score math is the PURE
+//  function below (computeWastePeerZScoreFromScan — exported for
+//  vitest). Behavior mirrors the former SQL exactly: RANK()
+//  wasteToSales DESC with ties sharing a rank, band mean via AVG,
+//  bandStd via STDDEV_SAMP (0 when n < 2 — the SQL COALESCE),
+//  and z guarded on bandSize ≥ WASTE_ZSCORE_MIN_BAND AND std > 0.
 // ============================================================
-import { Prisma } from '@prisma/client';
-import { withStatementTimeout } from '../shared';
-import { monthWindowBound, toNum, WASTE_WINDOW_MONTHS, WASTE_ZSCORE_MIN_BAND } from './shared';
-// GODSPLIT-W4: ±10% band predicate — shared builder (was inline text
-// here; strict targetSales-alias variant, same as outlets/peer-track-record).
-import { peerBandPredicate } from '../outlets/peer-band';
+import { WASTE_WINDOW_MONTHS, WASTE_ZSCORE_MIN_BAND } from './shared';
+import {
+  buildPeerBands,
+  getPeerBandScan,
+  rankWithTies,
+  stddevSamp,
+  type PeerBandScan,
+} from '../outlets/peer-band-scan';
 
 // ------------------------------------------------------------
 // 2. Peer waste z-score — types
 // ------------------------------------------------------------
-
-interface WastePeerZScoreRawRow {
-  monthKey: string;
-  monthLabel: string;
-  targetSales: number | bigint;
-  waste: number | bigint;
-  wasteToSales: number | bigint;
-  rankWasteToSales: number | bigint;
-  bandSize: number | bigint;
-  bandMean: number | bigint;
-  bandStd: number | bigint;
-  zScore: number | null;
-}
 
 export interface WastePeerZScoreRow {
   monthKey: string;
@@ -132,8 +133,56 @@ export function summarizeWastePeerZScore(rows: WastePeerZScoreRow[]): WastePeerZ
 }
 
 // ------------------------------------------------------------
-// 2. queryWastePeerZScore
+// 2. queryWastePeerZScore — shared-scan + pure compute
 // ------------------------------------------------------------
+
+/**
+ * Compute the waste peer z-score view for ONE outlet from the shared band
+ * scan (pure — no DB). Mirrors the former SQL's band_ratio/stats/ranked
+ * CTEs:
+ *
+ *   wasteToSales  = waste / sales (members all have sales > 0)
+ *   rankWasteToSales = RANK() OVER (PARTITION BY month ORDER BY
+ *                     wasteToSales DESC) — 1 = highest
+ *   bandMean      = AVG(wasteToSales) over the band
+ *   bandStd       = STDDEV_SAMP(wasteToSales) (0 when n < 2)
+ *   zScore        = (wasteToSales − bandMean) / bandStd, guarded on
+ *                   bandSize ≥ WASTE_ZSCORE_MIN_BAND AND bandStd > 0
+ */
+export function computeWastePeerZScoreFromScan(
+  scan: PeerBandScan,
+  outletCode: string,
+  kelompok?: string | null,
+  windowMonths: number = WASTE_WINDOW_MONTHS,
+): { rows: WastePeerZScoreRow[]; summary: WastePeerZScoreSummary } {
+  const bands = buildPeerBands(scan, outletCode, windowMonths, kelompok);
+  const rows: WastePeerZScoreRow[] = bands.map((band) => {
+    const ratios = band.members.map((m) => m.waste / m.sales);
+    const targetRatio = band.target.waste / band.targetSales;
+    // RANK() DESC with ties sharing a rank (SQL RANK semantics).
+    const ranks = rankWithTies(band.members, (a, b) => a.waste / a.sales > b.waste / b.sales);
+    const targetIdx = band.members.indexOf(band.target);
+    const bandMean = ratios.length > 0 ? ratios.reduce((s, v) => s + v, 0) / ratios.length : 0;
+    const bandStd = stddevSamp(ratios);
+    const bandSize = band.members.length;
+    const zScore = bandSize >= WASTE_ZSCORE_MIN_BAND && bandStd > 0
+      ? (targetRatio - bandMean) / bandStd
+      : null;
+    return {
+      monthKey: band.monthKey,
+      monthLabel: band.monthLabel,
+      targetSales: band.targetSales,
+      waste: band.target.waste,
+      wasteToSales: targetRatio,
+      rankWasteToSales: ranks[targetIdx],
+      bandSize,
+      bandMean,
+      bandStd,
+      zScore,
+    };
+  });
+  return { rows, summary: summarizeWastePeerZScore(rows) };
+}
 
 export async function queryWastePeerZScore(
   outletCode: string,
@@ -141,144 +190,9 @@ export async function queryWastePeerZScore(
   currentMonthKey: string | null,
   kelompok?: string | null,
 ): Promise<{ rows: WastePeerZScoreRow[]; summary: WastePeerZScoreSummary }> {
-  // kelompok scopes the PEER set only — the focus outlet is always
-  // included (same predicate as peer-track-record.ts).
-  const peerKelompokFilter = kelompok
-    ? Prisma.sql`AND (o.code = ${outletCode} OR LEFT(SUBSTRING(o.code FROM '[^.]+$'), 3) = UPPER(${kelompok}))`
-    : Prisma.empty;
-
-  // Shape (mirrors queryPeerTrackRecord with the waste metric):
-  //   months / month_labels — the window for THIS outlet
-  //   metrics        — per (outlet, month) ΣABS nominalWaste for ALL
-  //                    outlets in scope (band candidates)
-  //   sales          — per (outlet, month) MODE sales
-  //   target_sales   — the focus outlet's sales per month
-  //   band           — outlets with sales within ±10% of the target's
-  //                    sales THAT month (dynamic, sales > 0)
-  //   band_ratio     — band + wasteToSales ratio per member
-  //   stats          — per month band mean/stddev_samp/count of the ratio
-  //   ranked         — RANK() per month on waste/sales DESC (1 = highest)
-  //   final          — target outlet's rows, chronological
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<WastePeerZScoreRawRow[]>`
-    WITH months AS (
-      SELECT sf."monthKey"
-      FROM "InventoryRecord" ir
-      JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
-      JOIN "Outlet" o ON ir."outletId" = o.id
-      WHERE o.code = ${outletCode}
-        AND ir."weekLabel" = ${week}
-        ${monthWindowBound(currentMonthKey)}
-      GROUP BY sf."monthKey"
-      ORDER BY sf."monthKey" DESC
-      LIMIT ${WASTE_WINDOW_MONTHS}
-    ),
-    month_labels AS (
-      SELECT sf."monthKey", MIN(sf."monthLabel") as "monthLabel"
-      FROM "SourceFile" sf
-      WHERE sf."monthKey" IN (SELECT "monthKey" FROM months)
-      GROUP BY sf."monthKey"
-    ),
-    metrics AS (
-      SELECT
-        o.code as "outletCode",
-        sf."monthKey",
-        COALESCE(SUM(ABS(ir."nominalWaste")), 0) as "waste"
-      FROM "InventoryRecord" ir
-      JOIN "Outlet" o ON ir."outletId" = o.id
-      JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
-      WHERE ir."weekLabel" = ${week}
-        AND sf."monthKey" IN (SELECT "monthKey" FROM months)
-        ${peerKelompokFilter}
-      GROUP BY o.code, sf."monthKey"
-    ),
-    sales AS (
-      SELECT
-        o.code as "outletCode",
-        ml."monthKey",
-        MAX(ops."salesMode") as sales
-      FROM "OutletPeriodSales" ops
-      JOIN "Outlet" o ON ops."outletId" = o.id
-      JOIN month_labels ml ON ml."monthLabel" = ops."monthLabel"
-      WHERE ops."weekLabel" = ${week}
-      GROUP BY o.code, ml."monthKey"
-    ),
-    target_sales AS (
-      SELECT "monthKey", MAX(sales) as "targetSales"
-      FROM sales
-      WHERE "outletCode" = ${outletCode}
-      GROUP BY "monthKey"
-    ),
-    band AS (
-      SELECT
-        m."outletCode",
-        m."monthKey",
-        COALESCE(s.sales, 0) as "sales",
-        m.waste,
-        ts."targetSales"
-      FROM metrics m
-      JOIN target_sales ts ON ts."monthKey" = m."monthKey"
-      LEFT JOIN sales s
-        ON s."outletCode" = m."outletCode"
-        AND s."monthKey" = m."monthKey"
-      WHERE COALESCE(s.sales, 0) > 0
-        ${peerBandPredicate('s.sales', 'ts."targetSales"')}
-    ),
-    band_ratio AS (
-      SELECT b.*,
-        b.waste / b.sales as "wasteToSales"
-      FROM band b
-    ),
-    stats AS (
-      SELECT "monthKey",
-        AVG("wasteToSales") as "bandMean",
-        COALESCE(STDDEV_SAMP("wasteToSales"), 0) as "bandStd",
-        COUNT(*) as "bandSize"
-      FROM band_ratio
-      GROUP BY "monthKey"
-    ),
-    ranked AS (
-      SELECT
-        b."outletCode",
-        b."monthKey",
-        b."targetSales",
-        b.waste,
-        b."wasteToSales",
-        RANK() OVER (PARTITION BY b."monthKey" ORDER BY b."wasteToSales" DESC) as "rankWasteToSales",
-        COUNT(*) OVER (PARTITION BY b."monthKey") as "bandSize"
-      FROM band_ratio b
-    )
-    SELECT
-      r."monthKey",
-      ml."monthLabel",
-      r."targetSales",
-      r.waste,
-      r."wasteToSales",
-      r."rankWasteToSales",
-      r."bandSize",
-      COALESCE(st."bandMean", 0) as "bandMean",
-      COALESCE(st."bandStd", 0) as "bandStd",
-      CASE
-        WHEN st."bandSize" >= ${WASTE_ZSCORE_MIN_BAND} AND st."bandStd" > 0
-          THEN (r."wasteToSales" - st."bandMean") / st."bandStd"
-        ELSE NULL END as "zScore"
-    FROM ranked r
-    JOIN month_labels ml ON ml."monthKey" = r."monthKey"
-    LEFT JOIN stats st ON st."monthKey" = r."monthKey"
-    WHERE r."outletCode" = ${outletCode}
-    ORDER BY r."monthKey" ASC
-  `);
-
-  const mapped: WastePeerZScoreRow[] = rows.map((r) => ({
-    monthKey: r.monthKey,
-    monthLabel: r.monthLabel,
-    targetSales: toNum(r.targetSales),
-    waste: toNum(r.waste),
-    wasteToSales: toNum(r.wasteToSales),
-    rankWasteToSales: toNum(r.rankWasteToSales),
-    bandSize: toNum(r.bandSize),
-    bandMean: toNum(r.bandMean),
-    bandStd: toNum(r.bandStd),
-    zScore: r.zScore == null ? null : Number(r.zScore),
-  }));
-  return { rows: mapped, summary: summarizeWastePeerZScore(mapped) };
+  // PERF-FILTER1 (B): ONE shared cached scan (all outlets × window months)
+  // replaces the per-outlet multi-month SQL — the scan row is shared with
+  // peer-track-record + outlet-monthly-series (same week/monthKey).
+  const scan = await getPeerBandScan(week, currentMonthKey);
+  return computeWastePeerZScoreFromScan(scan, outletCode, kelompok);
 }

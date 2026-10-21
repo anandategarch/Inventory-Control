@@ -63,7 +63,9 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 // Same AggregationCache pattern as the waste family (P3-HYG-3).
-const WASTE_RATE_LEAGUE_CACHE_TTL = 5 * 60 * 1000;
+// PERF-FILTER1 (A): 5 min → 30 min — mutations delete
+// 'waste-rate-league\x1f' rows (invalidate.ts).
+const WASTE_RATE_LEAGUE_CACHE_TTL = 30 * 60 * 1000; // 30 min (PERF-FILTER1 A)
 
 // Inline schema — same atoms as the waste-family schemas in
 // src/lib/validation/waste.ts (this file cannot add to that

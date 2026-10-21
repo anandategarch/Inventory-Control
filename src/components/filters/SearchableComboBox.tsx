@@ -28,6 +28,13 @@ interface SearchableComboBoxProps {
   // Without this, the combobox's accessible name is just the visible text
   // (e.g. "BDG"), so screen readers don't announce the field's purpose.
   ariaLabel?: string;
+  // PERF (PERF-FILTER1 C): hover-intent callback for expensive consumers —
+  // fires (debounced by the CALLER) when an option row is hovered so e.g.
+  // the Resto tab's Filter Resto picker can prefetch that outlet's payload
+  // before the click. Generic component stays fetch-agnostic: it only
+  // reports the hovered value. Skipped for the "all" pseudo-option.
+  // eslint-disable-next-line no-unused-vars -- plain rule mis-flags TYPE-position params (same class as onValueChange above; the @typescript-eslint twin is authoritative)
+  onOptionHover?: (value: string) => void;
 }
 
 export function SearchableComboBox({
@@ -44,6 +51,7 @@ export function SearchableComboBox({
   disabled,
   buttonClassName,
   ariaLabel,
+  onOptionHover,
 }: SearchableComboBoxProps) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState('');
@@ -134,6 +142,7 @@ export function SearchableComboBox({
                     key={option.value}
                     value={option.value}
                     onSelect={() => handleSelect(option.value)}
+                    onMouseEnter={onOptionHover ? () => onOptionHover(option.value) : undefined}
                     className="text-xs cursor-pointer"
                   >
                     <Check className={cn('h-3.5 w-3.5', isSelected ? 'opacity-100' : 'opacity-0')} />

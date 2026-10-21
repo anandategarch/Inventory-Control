@@ -90,7 +90,12 @@ export async function fetchRecords(params: ResolvedParams): Promise<FetchedRecor
   // TASK H-5: week select now also carries periodStart/periodEnd (day-of-month
   // bounds, cumulative: W2 = 1–14) — same single query, two extra columns,
   // used to give the payload's period block concrete date ranges.
-  const [weeksRaw, fileMonthKeys, picOutletCodesRaw, thresholds] = await Promise.all([
+  // PERF (PERF-FILTER1 D): resolveKelompokOutletCodes joined the metadata
+  // wave — it previously ran as a SERIAL query after resolveComparePeriod
+  // (buildWhere construction needs it, but nothing in the wave above does),
+  // costing one extra ~200ms cross-region round-trip wave on every cold
+  // request. It is independent of every other wave member.
+  const [weeksRaw, fileMonthKeys, picOutletCodesRaw, thresholds, kelompokOutletCodes] = await Promise.all([
     db.week.findMany({
       select: { weekLabel: true, monthKey: true, periodStart: true, periodEnd: true },
       distinct: ['monthKey', 'weekLabel'],
@@ -109,6 +114,10 @@ export async function fetchRecords(params: ResolvedParams): Promise<FetchedRecor
           })
       : Promise.resolve(null),
     getRuntimeThresholds(),
+    // PERF (PERF-FILTER1 D): rides the wave (was serial after
+    // resolveComparePeriod) — kelompok filter resolution is independent
+    // of every other wave member.
+    resolveKelompokOutletCodes(kelompok),
   ]);
   const picOutletCodes = picOutletCodesRaw;
   const monthKeyByLabel = new Map(fileMonthKeys.map((f) => [f.monthLabel, f.monthKey]));
@@ -181,22 +190,15 @@ export async function fetchRecords(params: ResolvedParams): Promise<FetchedRecor
   params.weekRange = weekRangeOf(week, resolvedMonth);
   params.compareWeekRange = weekRangeOf(prevWeek, prevMonth);
 
-  // FIX (BUG-KELOMPOK-EMPTY): resolve kelompok → outlet codes ONCE for buildWhere.
-  // The raw SQL path (buildSqlFilters) uses an inline sub-select, but Prisma's
-  // WhereInput can't easily express LEFT(SUBSTRING(code, '[^.]+$'),3) = X.
-  //
-  // FIX (BUG-PERF-4 / BUG-BE-2): Replaced inline "fetch ALL outlets + JS filter"
-  // with the shared resolveKelompokOutletCodes helper, which does a single DB-level
-  // SQL filter (same LEFT(SUBSTRING(...)) expression as buildSqlFilters). This is
-  // ~5x faster (1 SQL query vs fetch-all + JS loop) and deduplicates the logic
-  // that was copy-pasted in export-report/route.ts.
-  //
+  // FIX (BUG-KELOMPOK-EMPTY / BUG-PERF-4 / BUG-BE-2, kept): kelompok → outlet
+  // codes via the shared resolveKelompokOutletCodes helper (single DB-level
+  // SQL filter, same LEFT(SUBSTRING(...)) expression as buildSqlFilters).
   // FIX (RESTORE-BACKEND-2): the inline `buildWhere` closure that lived here
   // (50 lines) has been extracted to @/lib/build-where.ts as `buildInventoryWhere`
-  // and is shared with /api/export-report. The closure depended on `kelompokOutletCodes`
-  // via JS hoisting (resolved below); the extracted helper takes it as an explicit
-  // parameter, so we resolve kelompokOutletCodes BEFORE constructing buildWhere.
-  const kelompokOutletCodes = await resolveKelompokOutletCodes(kelompok);
+  // and is shared with /api/export-report; the helper takes the resolved codes
+  // as an explicit parameter.
+  // PERF (PERF-FILTER1 D): the resolution now rides the metadata wave above
+  // (was a serial query at this position — one extra round-trip wave).
 
   // FIX (RESTORE-BACKEND-2): buildWhere now delegates to the shared
   // `buildInventoryWhere` helper. The helper handles area/itemName/kelompok

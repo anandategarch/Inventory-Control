@@ -70,7 +70,10 @@ export async function GET(req: NextRequest) {
       // clear rows of ALL shapes.
       extra: { limit, v: 3 },
     });
-    const REC_CACHE_TTL = 5 * 60 * 1000; // 5 min
+    // PERF-FILTER1 (A): 5 min → 30 min — mutations delete
+    // 'recommendations\x1f' rows (invalidate.ts) AND the shared
+    // 'q-outlet-agg' scan row; the TTL only caps untouched-row survival.
+    const REC_CACHE_TTL = 30 * 60 * 1000; // 30 min (PERF-FILTER1 A)
 
     const { data: cachedOrFresh, cached, stale } = await withCacheAndDedup<{ success: boolean; recommendations: unknown[]; priorityCount?: number; cached?: boolean }>(earlyCacheKey, REC_CACHE_TTL, async () => {
       const resolver = await getMonthResolver();

@@ -42,8 +42,8 @@
 //  used by the Resto tab's "Riwayat Multi-Bulan" section
 //  (MonthlySeriesCard).
 // ============================================================
-import { withStatementTimeout } from '../shared';
-import { monthWindowBound, toNum } from '../waste/shared';
+import { toNum } from '../waste/shared';
+import { getPeerBandScan, selectTargetScanRows, type PeerBandScan } from './peer-band-scan';
 
 /** Max months in the series / track-record window (incl. running month). */
 export const OUTLET_MONTHLY_SERIES_WINDOW_MONTHS = 12;
@@ -188,67 +188,45 @@ export async function queryOutletMonthlySeries(
   toleranceFallback: number,
   highLossNominal: number,
 ): Promise<{ rows: MonthlySeriesRow[]; total: MonthlySeriesTotal }> {
-  // Same query pattern as outlet-recurrence.ts / peer-comparison.ts:
-  // Prisma tagged template + withStatementTimeout (30s kill switch).
-  // Shape:
-  //   months        — DISTINCT same-week monthKeys for THIS outlet, most
-  //                   recent 12 (incl. running month), = the window
-  //   period_aggs   — per month aggregates for THIS outlet (same week)
-  //   sales         — MODE per monthLabel from the precomputed
-  //                   OutletPeriodSales table (DB-06 pattern)
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<MonthlySeriesRawRow[]>`
-    WITH months AS (
-      SELECT sf."monthKey"
-      FROM "InventoryRecord" ir
-      JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
-      JOIN "Outlet" o ON ir."outletId" = o.id
-      WHERE o.code = ${outletCode}
-        AND ir."weekLabel" = ${week}
-        ${monthWindowBound(currentMonthKey)}
-      GROUP BY sf."monthKey"
-      ORDER BY sf."monthKey" DESC
-      LIMIT ${OUTLET_MONTHLY_SERIES_WINDOW_MONTHS}
-    ),
-    period_aggs AS (
-      SELECT
-        sf."monthKey",
-        MIN(sf."monthLabel") as "monthLabel",
-        COALESCE(SUM(ABS(ir."qtyBom")), 0) as "qtyBom",
-        COALESCE(SUM(ir."nominalDeviasi"), 0) as "nominalDeviasi",
-        CASE WHEN SUM(ABS(ir."qtyBom")) > 0
-          THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
-          ELSE 0 END as "devBom",
-        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "totalLoss",
-        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" > 0 THEN ir."nominalLossSurplus" ELSE 0 END), 0) as "totalSurplus"
-      FROM "InventoryRecord" ir
-      JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
-      JOIN "Outlet" o ON ir."outletId" = o.id
-      WHERE o.code = ${outletCode}
-        AND ir."weekLabel" = ${week}
-        AND sf."monthKey" IN (SELECT "monthKey" FROM months)
-      GROUP BY sf."monthKey"
-    ),
-    sales AS (
-      SELECT ops."monthLabel", MAX(ops."salesMode") as sales
-      FROM "OutletPeriodSales" ops
-      WHERE ops."weekLabel" = ${week}
-        AND ops."outletId" IN (SELECT id FROM "Outlet" WHERE code = ${outletCode})
-      GROUP BY ops."monthLabel"
-    )
-    SELECT
-      pa."monthKey",
-      pa."monthLabel",
-      COALESCE(s.sales, 0) as "sales",
-      pa."qtyBom",
-      pa."nominalDeviasi",
-      pa."devBom",
-      pa."totalLoss",
-      pa."totalSurplus"
-    FROM period_aggs pa
-    LEFT JOIN sales s ON s."monthLabel" = pa."monthLabel"
-    ORDER BY pa."monthKey" ASC
-  `);
+  // PERF-FILTER1 (B): the per-outlet multi-month SQL is replaced by the
+  // SHARED cached band scan ('q-peer-band-scan' — one row per (outlet,
+  // month) for ALL outlets, 30-min TTL, mutation-invalidated; the same
+  // row also serves peer-track-record + waste-peer-zscore). The target
+  // outlet's rows are selected + mapped through the SAME pure builders
+  // (buildMonthlySeriesRows/Total) — column-for-column identical to the
+  // old SQL: qtyBom=ΣABS, nominalDeviasi signed, devBom=ΣABS(qtyDeviasi)
+  // /ΣABS(qtyBom) (0 when qtyBom=0), sales=MAX(salesMode) (0 when
+  // absent), totalLoss/totalSurplus from the nominalLossSurplus sign
+  // convention.
+  const scan = await getPeerBandScan(week, currentMonthKey);
+  return computeOutletMonthlySeriesFromScan(
+    scan, outletCode, toleranceFallback, highLossNominal,
+  );
+}
 
-  const mapped = buildMonthlySeriesRows(rows, toleranceFallback, highLossNominal);
+/**
+ * Pure scan→series mapping (exported for vitest). selectTargetScanRows
+ * applies the SAME window rule the old `months ... LIMIT 12` CTE used
+ * (the target's most recent OUTLET_MONTHLY_SERIES_WINDOW_MONTHS
+ * same-week months, chronological).
+ */
+export function computeOutletMonthlySeriesFromScan(
+  scan: PeerBandScan,
+  outletCode: string,
+  toleranceFallback: number,
+  highLossNominal: number,
+): { rows: MonthlySeriesRow[]; total: MonthlySeriesTotal } {
+  const targetRows = selectTargetScanRows(scan, outletCode, OUTLET_MONTHLY_SERIES_WINDOW_MONTHS);
+  const raw: MonthlySeriesRawRow[] = targetRows.map((r) => ({
+    monthKey: r.monthKey,
+    monthLabel: r.monthLabel,
+    sales: r.sales,
+    qtyBom: r.absQtyBom,
+    nominalDeviasi: r.nominalDeviasi,
+    devBom: r.absQtyBom > 0 ? r.absQtyDeviasi / r.absQtyBom : 0,
+    totalLoss: r.totalLoss,
+    totalSurplus: r.totalSurplus,
+  }));
+  const mapped = buildMonthlySeriesRows(raw, toleranceFallback, highLossNominal);
   return { rows: mapped, total: buildMonthlySeriesTotal(mapped) };
 }

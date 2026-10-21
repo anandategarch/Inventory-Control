@@ -68,7 +68,13 @@ export async function GET(req: NextRequest) {
     // After: cache the full response payload (5-min TTL) keyed by outletCode +
     // month + week + compareWeek + compareMonth. Cache hit returns in ~50ms.
     // Mutations (ingest/settings/pic/data) clear this via invalidateAnalysisCache.
-    const OUTLET_ITEMS_CACHE_TTL = 5 * 60 * 1000; // 5 min
+    // PERF-FILTER1 (A): 5 min → 30 min. Safe: every mutation path calls
+    // invalidateAnalysisCache() which deletes 'outlet-items\x1f' rows
+    // (invalidate.ts routes list) — the TTL only bounds how long an
+    // UNTOUCHED row survives; data is immutable between mutations. The
+    // CDN s-maxage stays 5 min (edge caches are NOT invalidatable — that
+    // layer must keep the short window).
+    const OUTLET_ITEMS_CACHE_TTL = 30 * 60 * 1000; // 30 min (PERF-FILTER1 A)
     // PERF (TAHAP-2 / P2-11): resolve month + compareMonth to actual DB case
     // BEFORE building the cache key (getMonthResolver is process-cached ~0ms).
     // Previously "juli 2026" vs "Juli 2026" built two cache rows for the same

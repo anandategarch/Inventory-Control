@@ -7,9 +7,6 @@
 //  The monthly-series pipeline lives in ./monthly-series.ts
 //  (window constant OUTLET_MONTHLY_SERIES_WINDOW_MONTHS + the
 //  GRAIN header); outlet-monthly-series.ts is now a barrel.
-//  toNum + monthWindowBound are IMPORTED from ../waste/shared —
-//  verbatim duplicates consolidated at GODSPLIT-W3-A (they were
-//  flagged in waste/shared.ts at GODSPLIT-W1-B).
 //
 //  Multi-month, SAME-weekLabel peer view for ONE outlet — the
 //  in-app version of the "Peer Comparison track-record" sheet
@@ -36,30 +33,32 @@
 //  PURELY ADDITIVE: feeds the /api/peer-track-record route used
 //  by the Resto tab's "Riwayat Multi-Bulan" section
 //  (PeerTrackRecordCard).
+//
+//  PERF-FILTER1 (B): the heavy multi-month × all-outlet scan now
+//  lives in ./peer-band-scan.ts as ONE shared, cached, outlet-
+//  independent row ('q-peer-band-scan' — 30-min TTL, mutation-
+//  invalidated). This module keeps its public signature but the
+//  per-outlet band/rank/median math is the PURE function below
+//  (computePeerTrackRecordFromScan — exported for vitest, same
+//  compute/classify split convention as monthly-series.ts).
+//  Behavior is byte-equivalent to the former SQL: RANK() ties
+//  share a rank, the median is the AVG of the middle 1-2 rows,
+//  months without positive target sales are absent (the old
+//  target_sales inner-join semantics), and kelompok scopes the
+//  peer set while ALWAYS keeping the focus outlet in scope.
 // ============================================================
-import { Prisma } from '@prisma/client';
-import { withStatementTimeout } from '../shared';
-import { monthWindowBound, toNum } from '../waste/shared';
 import { OUTLET_MONTHLY_SERIES_WINDOW_MONTHS } from './monthly-series';
-// GODSPLIT-W4: ±10% band predicate — shared builder (was inline text
-// here; strict targetSales-alias variant).
-import { peerBandPredicate } from './peer-band';
+import {
+  buildPeerBands,
+  getPeerBandScan,
+  medianOf,
+  rankWithTies,
+  type PeerBandScan,
+} from './peer-band-scan';
 
 // ------------------------------------------------------------
 // 2. Peer track record — types
 // ------------------------------------------------------------
-
-interface PeerTrackRecordRawRow {
-  monthKey: string;
-  monthLabel: string;
-  targetSales: number | bigint;
-  nominalDeviasi: number | bigint;
-  totalLoss: number | bigint;
-  rankNetDev: number | bigint;
-  rankLoss: number | bigint;
-  bandSize: number | bigint;
-  medianLoss: number | bigint;
-}
 
 export interface PeerTrackRecordRow {
   monthKey: string;
@@ -129,8 +128,47 @@ export function summarizeTrackRecord(rows: PeerTrackRecordRow[]): PeerTrackRecor
 }
 
 // ------------------------------------------------------------
-// 2. queryPeerTrackRecord
+// 2. queryPeerTrackRecord — shared-scan + pure compute
 // ------------------------------------------------------------
+
+/**
+ * Compute the track record for ONE outlet from the shared band scan
+ * (pure — no DB). Mirrors the former SQL's band/ranked/band_stats CTEs:
+ *
+ *   rankNetDev = RANK() OVER (PARTITION BY month ORDER BY
+ *                nominalDeviasi ASC)  — 1 = most negative = TERBURUK
+ *   rankLoss   = RANK() OVER (PARTITION BY month ORDER BY
+ *                totalLoss DESC)      — 1 = largest
+ *   bandSize   = COUNT(*) OVER (PARTITION BY month)
+ *   medianLoss = AVG of the middle 1-2 totalLoss values (the
+ *                ROW_NUMBER/COUNT median form)
+ */
+export function computePeerTrackRecordFromScan(
+  scan: PeerBandScan,
+  outletCode: string,
+  kelompok?: string | null,
+  windowMonths: number = OUTLET_MONTHLY_SERIES_WINDOW_MONTHS,
+): { rows: PeerTrackRecordRow[]; summary: PeerTrackRecordSummary } {
+  const bands = buildPeerBands(scan, outletCode, windowMonths, kelompok);
+  const rows: PeerTrackRecordRow[] = bands.map((band) => {
+    // RANK() with ties sharing a rank (SQL RANK semantics).
+    const ranksNetDev = rankWithTies(band.members, (a, b) => a.nominalDeviasi < b.nominalDeviasi);
+    const ranksLoss = rankWithTies(band.members, (a, b) => a.totalLoss > b.totalLoss);
+    const targetIdx = band.members.indexOf(band.target);
+    return {
+      monthKey: band.monthKey,
+      monthLabel: band.monthLabel,
+      targetSales: band.targetSales,
+      nominalDeviasi: band.target.nominalDeviasi,
+      totalLoss: band.target.totalLoss,
+      rankNetDev: ranksNetDev[targetIdx],
+      rankLoss: ranksLoss[targetIdx],
+      bandSize: band.members.length,
+      medianLoss: medianOf(band.members.map((m) => m.totalLoss)),
+    };
+  });
+  return { rows, summary: summarizeTrackRecord(rows) };
+}
 
 export async function queryPeerTrackRecord(
   outletCode: string,
@@ -138,146 +176,9 @@ export async function queryPeerTrackRecord(
   currentMonthKey: string | null,
   kelompok?: string | null,
 ): Promise<{ rows: PeerTrackRecordRow[]; summary: PeerTrackRecordSummary }> {
-  // kelompok scopes the PEER set only — the focus outlet is always
-  // included (same predicate as peer-comparison.ts peerKelompokFilter).
-  const peerKelompokFilter = kelompok
-    ? Prisma.sql`AND (o.code = ${outletCode} OR LEFT(SUBSTRING(o.code FROM '[^.]+$'), 3) = UPPER(${kelompok}))`
-    : Prisma.empty;
-
-  // Shape:
-  //   months / month_labels — the window (same as the series query)
-  //   metrics        — per (outlet, month) net deviation + total loss
-  //                    for ALL outlets in scope (band candidates)
-  //   sales          — per (outlet, month) MODE sales
-  //   target_sales   — the focus outlet's sales per month
-  //   band           — outlets with sales within ±10% of the target's
-  //                    sales THAT month (dynamic band, sales > 0)
-  //   band_stats     — median loss + size via ROW_NUMBER/COUNT (median
-  //                    without ordered-set window aggregates)
-  //   ranked         — RANK() per month: net deviation ASC (1 = worst),
-  //                    total loss DESC (1 = largest)
-  //   final          — target outlet's rows only, chronological
-  const rows = await withStatementTimeout((tx) => tx.$queryRaw<PeerTrackRecordRawRow[]>`
-    WITH months AS (
-      SELECT sf."monthKey"
-      FROM "InventoryRecord" ir
-      JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
-      JOIN "Outlet" o ON ir."outletId" = o.id
-      WHERE o.code = ${outletCode}
-        AND ir."weekLabel" = ${week}
-        ${monthWindowBound(currentMonthKey)}
-      GROUP BY sf."monthKey"
-      ORDER BY sf."monthKey" DESC
-      LIMIT ${OUTLET_MONTHLY_SERIES_WINDOW_MONTHS}
-    ),
-    month_labels AS (
-      SELECT sf."monthKey", MIN(sf."monthLabel") as "monthLabel"
-      FROM "SourceFile" sf
-      WHERE sf."monthKey" IN (SELECT "monthKey" FROM months)
-      GROUP BY sf."monthKey"
-    ),
-    metrics AS (
-      SELECT
-        o.code as "outletCode",
-        sf."monthKey",
-        COALESCE(SUM(ir."nominalDeviasi"), 0) as "nominalDeviasi",
-        COALESCE(SUM(CASE WHEN ir."nominalLossSurplus" < 0 THEN ABS(ir."nominalLossSurplus") ELSE 0 END), 0) as "totalLoss"
-      FROM "InventoryRecord" ir
-      JOIN "Outlet" o ON ir."outletId" = o.id
-      JOIN "SourceFile" sf ON ir."sourceFileId" = sf.id
-      WHERE ir."weekLabel" = ${week}
-        AND sf."monthKey" IN (SELECT "monthKey" FROM months)
-        ${peerKelompokFilter}
-      GROUP BY o.code, sf."monthKey"
-    ),
-    sales AS (
-      SELECT
-        o.code as "outletCode",
-        ml."monthKey",
-        MAX(ops."salesMode") as sales
-      FROM "OutletPeriodSales" ops
-      JOIN "Outlet" o ON ops."outletId" = o.id
-      JOIN month_labels ml ON ml."monthLabel" = ops."monthLabel"
-      WHERE ops."weekLabel" = ${week}
-      GROUP BY o.code, ml."monthKey"
-    ),
-    target_sales AS (
-      SELECT "monthKey", MAX(sales) as "targetSales"
-      FROM sales
-      WHERE "outletCode" = ${outletCode}
-      GROUP BY "monthKey"
-    ),
-    band AS (
-      SELECT
-        m."outletCode",
-        m."monthKey",
-        COALESCE(s.sales, 0) as "sales",
-        m."nominalDeviasi",
-        m."totalLoss",
-        ts."targetSales"
-      FROM metrics m
-      JOIN target_sales ts ON ts."monthKey" = m."monthKey"
-      LEFT JOIN sales s
-        ON s."outletCode" = m."outletCode"
-        AND s."monthKey" = m."monthKey"
-      WHERE COALESCE(s.sales, 0) > 0
-        ${peerBandPredicate('s.sales', 'ts."targetSales"')}
-    ),
-    band_stats AS (
-      SELECT
-        "monthKey",
-        AVG("totalLoss") as "medianLoss",
-        COUNT(*) as "bandSize"
-      FROM (
-        SELECT
-          b."monthKey",
-          b."totalLoss",
-          ROW_NUMBER() OVER (PARTITION BY b."monthKey" ORDER BY b."totalLoss") as rn,
-          COUNT(*) OVER (PARTITION BY b."monthKey") as n
-        FROM band b
-      ) x
-      WHERE rn IN ((n + 1) / 2, (n + 2) / 2)
-      GROUP BY "monthKey"
-    ),
-    ranked AS (
-      SELECT
-        b."outletCode",
-        b."monthKey",
-        b."nominalDeviasi",
-        b."totalLoss",
-        b."targetSales",
-        RANK() OVER (PARTITION BY b."monthKey" ORDER BY b."nominalDeviasi" ASC) as "rankNetDev",
-        RANK() OVER (PARTITION BY b."monthKey" ORDER BY b."totalLoss" DESC) as "rankLoss",
-        COUNT(*) OVER (PARTITION BY b."monthKey") as "bandSize"
-      FROM band b
-    )
-    SELECT
-      r."monthKey",
-      ml."monthLabel",
-      r."targetSales",
-      r."nominalDeviasi",
-      r."totalLoss",
-      r."rankNetDev",
-      r."rankLoss",
-      r."bandSize",
-      COALESCE(bs."medianLoss", 0) as "medianLoss"
-    FROM ranked r
-    JOIN month_labels ml ON ml."monthKey" = r."monthKey"
-    LEFT JOIN band_stats bs ON bs."monthKey" = r."monthKey"
-    WHERE r."outletCode" = ${outletCode}
-    ORDER BY r."monthKey" ASC
-  `);
-
-  const mapped: PeerTrackRecordRow[] = rows.map((r) => ({
-    monthKey: r.monthKey,
-    monthLabel: r.monthLabel,
-    targetSales: toNum(r.targetSales),
-    nominalDeviasi: toNum(r.nominalDeviasi),
-    totalLoss: toNum(r.totalLoss),
-    rankNetDev: toNum(r.rankNetDev),
-    rankLoss: toNum(r.rankLoss),
-    bandSize: toNum(r.bandSize),
-    medianLoss: toNum(r.medianLoss),
-  }));
-  return { rows: mapped, summary: summarizeTrackRecord(mapped) };
+  // PERF-FILTER1 (B): ONE shared cached scan (all outlets × window months)
+  // replaces the per-outlet multi-month SQL — switching the Filter Resto
+  // outlet now re-reads the cached scan instead of re-scanning history.
+  const scan = await getPeerBandScan(week, currentMonthKey);
+  return computePeerTrackRecordFromScan(scan, outletCode, kelompok);
 }
