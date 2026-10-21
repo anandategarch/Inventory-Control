@@ -9,6 +9,17 @@
 // ============================================================
 import type { AnalysisData } from './types';
 
+// FIX (RETRYABLE-1): Error yang dibungkus flag `retryable` dari
+// errorResponse produksi (pool-timeout P2024 / statement-timeout /
+// connection-terminated). useAnalysis membaca properti ini untuk
+// memutuskan auto-retry — di produksi teks mentah error disembunyikan
+// ("Gagal memproses permintaan"), jadi substring matching lama tidak
+// pernah aktif di sana.
+export interface RetryableError extends Error {
+  retryable?: boolean;
+  errorClass?: string;
+}
+
 export async function fetchAnalysis(params: URLSearchParams): Promise<AnalysisData> {
   // FIX (LOADING-TIMEOUT): AbortController — if server doesn't respond in 90s,
   // abort the fetch so TanStack Query can retry (instead of infinite loading).
@@ -24,7 +35,7 @@ export async function fetchAnalysis(params: URLSearchParams): Promise<AnalysisDa
       throw new Error(`Server error (HTTP ${res.status}). Server mungkin crash atau timeout. Coba refresh halaman.`);
     }
     if (!res.ok) {
-      const e = (await res.json().catch(() => ({ message: 'Request failed' }))) as { message?: string; error?: string; success?: boolean; dbUnreachable?: boolean };
+      const e = (await res.json().catch(() => ({ message: 'Request failed' }))) as { message?: string; error?: string; success?: boolean; dbUnreachable?: boolean; retryable?: boolean; errorClass?: string };
       // FIX (DBDOWN-1): DB tidak bisa dijangkau (mis. project Supabase paused —
       // insiden 21 Okt 2026) — backend mengirim flag dbUnreachable + pesan
       // panduan restore di field `error`. Pastikan pesan itu yang sampai ke
@@ -50,7 +61,15 @@ export async function fetchAnalysis(params: URLSearchParams): Promise<AnalysisDa
         }
         throw new Error(`Tidak ada data untuk periode ini. Upload file Excel untuk bulan/week yang dipilih.`);
       }
-      throw new Error(e.message || e.error || `HTTP ${res.status}`);
+      // FIX (RETRYABLE-1): bawa flag retryable/errorClass dari body ke
+      // objek Error — useAnalysis membacanya untuk auto-retry kondisi
+      // transient (insiden "Gagal Memuat Analisis" saat filter resto).
+      const err: RetryableError = new Error(e.message || e.error || `HTTP ${res.status}`);
+      if (e.retryable === true) {
+        err.retryable = true;
+        if (e.errorClass) err.errorClass = e.errorClass;
+      }
+      throw err;
     }
     return res.json();
   } catch (err: unknown) {

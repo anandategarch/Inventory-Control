@@ -19,7 +19,7 @@ import { useQuery, keepPreviousData, useQueryClient } from '@tanstack/react-quer
 import { useCallback } from 'react';
 import type { QueryClient } from '@tanstack/react-query';
 import type { AnalysisParams } from './types';
-import { fetchAnalysis } from './fetchAnalysis';
+import { fetchAnalysis, type RetryableError } from './fetchAnalysis';
 
 // PERF-OPT: Build the URLSearchParams for an analysis request.
 // Mirrors the param-building logic that used to live inline in useAnalysis
@@ -49,6 +49,34 @@ export function buildAnalysisQueryKey(params: AnalysisParams) {
   return ['analysis', params] as const;
 }
 
+// ============================================================
+//  FIX (RETRYABLE-1): shouldRetryAnalysis — retry predicate for the
+//  main dashboard query, extracted as a pure function (repo test
+//  convention — cf. use-toast reducer test) so the production
+//  incident chain is unit-testable:
+//    server errorResponse (retryable flag) → fetchAnalysis (Error
+//    property) → THIS predicate.
+//  History: the old inline predicate matched substrings of the RAW
+//  error text ('connection', 'timeout', 'ECHECKOUTRETRIES', …) —
+//  text that only reaches the client in DEV mode. In production
+//  errorResponse hides it ("Gagal memproses permintaan") → 0
+//  auto-retry for transient pool/statement timeouts (insiden
+//  "Gagal Memuat Analisis" saat filter resto, 21 Okt 2026; the
+//  analysis query was the ONLY query without self-heal — every
+//  other query uses the global providers.tsx retry:1). The server
+//  now sends a machine-readable `retryable` flag; honor it FIRST.
+// ============================================================
+export function shouldRetryAnalysis(failureCount: number, error: unknown): boolean {
+  if (failureCount >= 3) return false; // max 3 retries (was 2 — increased for pool errors)
+  if ((error as RetryableError)?.retryable === true) return true;
+  const msg = error instanceof Error ? error.message : '';
+  // DEV-mode / raw-text legacy path — retry on 504/502/503, timeout,
+  // Server error (Vercel platform HTML), or connection pool errors:
+  return msg.includes('504') || msg.includes('502') || msg.includes('503') ||
+    msg.includes('timeout') || msg.includes('Server error') ||
+    msg.includes('ECHECKOUTRETRIES') || msg.includes('connection');
+}
+
 // PERF-OPT: staleTime + gcTime constants. Bumped from 60s → 120s staleTime
 // (analysis is heavy — 6-8s cold) and added 10-min gcTime so the data stays
 // in memory across tab switches / filter toggles.
@@ -72,14 +100,10 @@ export function useAnalysis(params: AnalysisParams) {
     // before the heavy query (with outlet filter) completes. The 2nd attempt
     // usually hits the in-flight cache or completes faster (DB warm).
     // FIX (BUG6-POOL): also retry on ECHECKOUTRETRIES (connection pool exhaustion).
-    retry: (failureCount, error) => {
-      if (failureCount >= 3) return false; // max 3 retries (was 2 — increased for pool errors)
-      const msg = error instanceof Error ? error.message : '';
-      // Retry on 504, 502, 503, timeout, Server error, or connection pool errors
-      return msg.includes('504') || msg.includes('502') || msg.includes('503') ||
-        msg.includes('timeout') || msg.includes('Server error') ||
-        msg.includes('ECHECKOUTRETRIES') || msg.includes('connection');
-    },
+    // FIX (RETRYABLE-1): predicate extracted to shouldRetryAnalysis (above) —
+    // honors the production `retryable` flag first, then the legacy dev-mode
+    // substring matches.
+    retry: (failureCount, error) => shouldRetryAnalysis(failureCount, error),
     retryDelay: (attemptIndex) => Math.min(2000 * (attemptIndex + 1), 5000), // 2s, 4s, 5s — longer delays for pool recovery
     // PERF-OPT: staleTime 60s → 120s. Analysis is expensive (6-8s cold,
     // 100ms warm). 2 min keeps the data fresh enough for filter toggles

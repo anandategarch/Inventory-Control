@@ -17,7 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 // (custom amber styling), the shadcn Button was never referenced.
 // FILTERDROP-1 dead-code audit: the Badge import was removed with
 // SectionHeader's dead `badge` prop (no other usage in this file).
-import { Loader2, Calendar, ShieldAlert, Upload, RefreshCw, ArrowUp, Boxes, CloudDownload, Sparkles, Database, ExternalLink } from 'lucide-react';
+import { Loader2, Calendar, ShieldAlert, Upload, RefreshCw, ArrowUp, Boxes, CloudDownload, Sparkles, Database, ExternalLink, Hourglass } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 
 export const EmptyState = memo(function EmptyState() {
@@ -172,6 +172,13 @@ export function ErrorState({ message }: { message: string }) {
     /^database tidak dapat dijangkau/i.test(message) ||
     /can't reach database server/i.test(message) ||
     /tenant\/user [^\s]+ not found/i.test(message);
+  // FIX (RETRYABLE-1): error DB transient (pool-timeout P2024 / statement
+  // timeout / koneksi terputus — khas tepat setelah Supabase restore atau
+  // saat filter resto menembakkan banyak query berat bersamaan). Marker:
+  // prefix stabil TRANSIENT_ERROR_MESSAGE (src/lib/transient-db-error.ts).
+  // Amber + hint "mencoba ulang biasanya berhasil" — bukan merah generik
+  // yang membuat user mengira aplikasi rusak.
+  const isTransient = /^server database sedang sibuk/i.test(message);
   // FIX (504-RETRY): invalidate analysis query to trigger refetch
   const queryClient = useQueryClient();
   const handleRetry = () => {
@@ -183,23 +190,23 @@ export function ErrorState({ message }: { message: string }) {
     queryClient.invalidateQueries({ queryKey: ['status'] });
   };
   return (
-    <Card className={isNoData || isDbDown
+    <Card className={isNoData || isDbDown || isTransient
       ? 'border-amber-200/70 bg-gradient-to-br from-amber-50 to-amber-50/30 dark:from-amber-950/40 dark:to-amber-950/10 dark:border-amber-900/70 shadow-sm'
       : 'border-red-200/70 bg-gradient-to-br from-red-50 to-red-50/30 dark:from-red-950/40 dark:to-red-950/10 dark:border-red-900/70 shadow-sm'}>
       <CardContent className="p-6">
         <div className="flex items-start gap-3">
           <div className={`shrink-0 flex h-9 w-9 items-center justify-center rounded-lg ${
-            isNoData || isDbDown
+            isNoData || isDbDown || isTransient
               ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400'
               : 'bg-red-100 dark:bg-red-950/60 text-red-600 dark:text-red-400'
           }`}>
-            {isDbDown ? <Database className="h-5 w-5" /> : isNoData ? <Calendar className="h-5 w-5" /> : <ShieldAlert className="h-5 w-5" />}
+            {isDbDown ? <Database className="h-5 w-5" /> : isNoData ? <Calendar className="h-5 w-5" /> : isTransient ? <Hourglass className="h-5 w-5" /> : <ShieldAlert className="h-5 w-5" />}
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className={`text-base font-semibold ${isNoData || isDbDown ? 'text-amber-700 dark:text-amber-400' : 'text-red-700 dark:text-red-400'}`}>
-              {isDbDown ? 'Database Tidak Dapat Dijangkau' : isNoData ? 'Data Belum Tersedia' : 'Gagal Memuat Analisis'}
+            <h2 className={`text-base font-semibold ${isNoData || isDbDown || isTransient ? 'text-amber-700 dark:text-amber-400' : 'text-red-700 dark:text-red-400'}`}>
+              {isDbDown ? 'Database Tidak Dapat Dijangkau' : isNoData ? 'Data Belum Tersedia' : isTransient ? 'Server Sedang Sibuk' : 'Gagal Memuat Analisis'}
             </h2>
-            <p className={`text-sm mt-1 leading-relaxed ${isNoData || isDbDown ? 'text-amber-600/90 dark:text-amber-400/80' : 'text-red-600/90 dark:text-red-400/80'}`}>
+            <p className={`text-sm mt-1 leading-relaxed ${isNoData || isDbDown || isTransient ? 'text-amber-600/90 dark:text-amber-400/80' : 'text-red-600/90 dark:text-red-400/80'}`}>
               {message}
             </p>
             {/* Fix #12: Actionable empty state — CTA buttons */}
@@ -244,7 +251,20 @@ export function ErrorState({ message }: { message: string }) {
                 </button>
               </div>
             )}
-            {!isNoData && !isDbDown && (
+            {/* FIX (RETRYABLE-1): CTA transient — amber, Coba Lagi saja
+                (tanpa link Supabase; DB tidak down, hanya sibuk sesaat). */}
+            {isTransient && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleRetry}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-all active:scale-95"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Coba Lagi
+                </button>
+              </div>
+            )}
+            {!isNoData && !isDbDown && !isTransient && (
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   onClick={handleRetry}
