@@ -2,5 +2,11 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "bunx prisma generate && bun run next build",
   "framework": "nextjs",
-  "fluid": true
+  "fluid": true,
+  "crons": [
+    {
+      "path": "/api/status",
+      "schedule": "21 20 * * *"
+    }
+  ]
 }

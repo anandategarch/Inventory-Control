@@ -49,8 +49,17 @@ export function useStatus() {
         throw new Error(`Server error (HTTP ${res.status}). Server mungkin crash atau timeout. Coba refresh halaman.`);
       }
       if (!res.ok) {
-        const e = (await res.json().catch(() => ({ message: 'Request failed' }))) as { message?: string };
-        throw new Error(e.message || `HTTP ${res.status}`);
+        // FIX (DBDOWN-1): body error API ini memakai field `error` (bukan
+        // `message`) — fallback lama `e.message || HTTP n` menghasilkan teks
+        // telanjang "HTTP 500" saat DB down (insiden Supabase paused 21 Okt
+        // 2026), tanpa satu pun petunjuk penyebab. Utamakan `error` (berisi
+        // pesan ramah + panduan restore saat dbUnreachable), lalu `message`.
+        const e = (await res.json().catch(() => ({ message: 'Request failed' }))) as {
+          message?: string;
+          error?: string;
+          dbUnreachable?: boolean;
+        };
+        throw new Error(e.error || e.message || `HTTP ${res.status}`);
       }
       return res.json() as Promise<StatusData>;
     },

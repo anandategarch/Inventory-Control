@@ -17,7 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 // (custom amber styling), the shadcn Button was never referenced.
 // FILTERDROP-1 dead-code audit: the Badge import was removed with
 // SectionHeader's dead `badge` prop (no other usage in this file).
-import { Loader2, Calendar, ShieldAlert, Upload, RefreshCw, ArrowUp, Boxes, CloudDownload, Sparkles } from 'lucide-react';
+import { Loader2, Calendar, ShieldAlert, Upload, RefreshCw, ArrowUp, Boxes, CloudDownload, Sparkles, Database, ExternalLink } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 
 export const EmptyState = memo(function EmptyState() {
@@ -163,6 +163,15 @@ export function LoadingState({ text = 'Memuat data analisis...' }: { text?: stri
 export function ErrorState({ message }: { message: string }) {
   const isNoData = message.includes('Tidak ada data untuk periode ini');
   const isTimeout = message.includes('504') || message.includes('timeout') || message.includes('Server error');
+  // FIX (DBDOWN-1): DB tidak bisa dijangkau (mis. project Supabase paused —
+  // insiden 21 Okt 2026: seluruh API 500 setelah ~5,5s; dashboard hanya
+  // menampilkan "HTTP 500" tanpa arah). Marker: prefix stabil
+  // DB_UNREACHABLE_MESSAGE (src/lib/db-unreachable.ts) + fallback signature
+  // Prisma/Supavisor mentah (mode dev / jalur lain yang belum ter-cover).
+  const isDbDown =
+    /^database tidak dapat dijangkau/i.test(message) ||
+    /can't reach database server/i.test(message) ||
+    /tenant\/user [^\s]+ not found/i.test(message);
   // FIX (504-RETRY): invalidate analysis query to trigger refetch
   const queryClient = useQueryClient();
   const handleRetry = () => {
@@ -174,23 +183,23 @@ export function ErrorState({ message }: { message: string }) {
     queryClient.invalidateQueries({ queryKey: ['status'] });
   };
   return (
-    <Card className={isNoData
+    <Card className={isNoData || isDbDown
       ? 'border-amber-200/70 bg-gradient-to-br from-amber-50 to-amber-50/30 dark:from-amber-950/40 dark:to-amber-950/10 dark:border-amber-900/70 shadow-sm'
       : 'border-red-200/70 bg-gradient-to-br from-red-50 to-red-50/30 dark:from-red-950/40 dark:to-red-950/10 dark:border-red-900/70 shadow-sm'}>
       <CardContent className="p-6">
         <div className="flex items-start gap-3">
           <div className={`shrink-0 flex h-9 w-9 items-center justify-center rounded-lg ${
-            isNoData
+            isNoData || isDbDown
               ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400'
               : 'bg-red-100 dark:bg-red-950/60 text-red-600 dark:text-red-400'
           }`}>
-            {isNoData ? <Calendar className="h-5 w-5" /> : <ShieldAlert className="h-5 w-5" />}
+            {isDbDown ? <Database className="h-5 w-5" /> : isNoData ? <Calendar className="h-5 w-5" /> : <ShieldAlert className="h-5 w-5" />}
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className={`text-base font-semibold ${isNoData ? 'text-amber-700 dark:text-amber-400' : 'text-red-700 dark:text-red-400'}`}>
-              {isNoData ? 'Data Belum Tersedia' : 'Gagal Memuat Analisis'}
+            <h2 className={`text-base font-semibold ${isNoData || isDbDown ? 'text-amber-700 dark:text-amber-400' : 'text-red-700 dark:text-red-400'}`}>
+              {isDbDown ? 'Database Tidak Dapat Dijangkau' : isNoData ? 'Data Belum Tersedia' : 'Gagal Memuat Analisis'}
             </h2>
-            <p className={`text-sm mt-1 leading-relaxed ${isNoData ? 'text-amber-600/90 dark:text-amber-400/80' : 'text-red-600/90 dark:text-red-400/80'}`}>
+            <p className={`text-sm mt-1 leading-relaxed ${isNoData || isDbDown ? 'text-amber-600/90 dark:text-amber-400/80' : 'text-red-600/90 dark:text-red-400/80'}`}>
               {message}
             </p>
             {/* Fix #12: Actionable empty state — CTA buttons */}
@@ -212,7 +221,30 @@ export function ErrorState({ message }: { message: string }) {
                 </button>
               </div>
             )}
-            {!isNoData && (
+            {/* FIX (DBDOWN-1): CTA khusus DB-down — tombol langsung ke
+                dashboard Supabase (langkah restore) + Coba Lagi yang sudah
+                ada (invalidasi analysis + status). */}
+            {isDbDown && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <a
+                  href="https://supabase.com/dashboard"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium bg-amber-600 text-white shadow-sm hover:bg-amber-700 transition-all"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Buka Dashboard Supabase
+                </a>
+                <button
+                  onClick={handleRetry}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-all active:scale-95"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Coba Lagi
+                </button>
+              </div>
+            )}
+            {!isNoData && !isDbDown && (
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   onClick={handleRetry}

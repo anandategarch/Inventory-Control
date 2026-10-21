@@ -9,6 +9,10 @@ import { db } from '@/lib/db';
 import { statusCache } from '@/lib/cache';
 import { validateQuery, statusQuerySchema } from '@/lib/validation';
 import { NO_STORE } from '@/lib/cache-headers';
+// FIX (DBDOWN-1): deteksi "database tidak bisa dijangkau" (mis. project
+// Supabase paused) — dipakai di catch untuk mengembalikan pesan spesifik
+// + flag dbUnreachable, bukan 500 generik. Insiden 21 Okt 2026.
+import { isDbUnreachable, DB_UNREACHABLE_MESSAGE } from '@/lib/db-unreachable';
 // FIX (BUG-PERF-5): use shared kelompok extractor instead of inline duplication
 import { extractKelompokFromCode } from '@/lib/kelompok-resolver';
 // PERF-CACHE-07: opportunistic cleanup of expired AggregationCache rows.
@@ -203,6 +207,25 @@ export async function GET(req: NextRequest) {
     // If tables don't exist, return empty state (not error 500)
     if (errMsg.includes('does not exist') || errMsg.includes('relation') || errMsg.includes('table') || errMsg.includes('no such table')) {
       return NextResponse.json(EMPTY_STATE);
+    }
+    // FIX (DBDOWN-1): DB tidak bisa dijangkau (mis. project Supabase paused —
+    // insiden 21 Okt 2026, Prisma "Can't reach database server at ..." setelah
+    // ~5s). 500 generik "Gagal memproses permintaan" membuat dashboard hanya
+    // menampilkan "HTTP 500" tanpa arah. Kembalikan pesan spesifik + flag
+    // dbUnreachable (client-safe) + NO_STORE (jangan biarkan CDN/middleware
+    // men-cache respons error ini).
+    if (isDbUnreachable(e)) {
+      const isDev = process.env.NODE_ENV === 'development';
+      logger.error('[/api/status] DB unreachable (DBDOWN-1)', { error: errMsg });
+      return NextResponse.json(
+        {
+          success: false,
+          dbUnreachable: true,
+          error: DB_UNREACHABLE_MESSAGE,
+          ...(isDev ? { detail: errMsg } : {}),
+        },
+        { status: 500, headers: NO_STORE },
+      );
     }
     logger.error("[/api/status] Error:", { error: errMsg });
     // SEC-03: Don't leak DB internals in production

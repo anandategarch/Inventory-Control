@@ -24,7 +24,15 @@ export async function fetchAnalysis(params: URLSearchParams): Promise<AnalysisDa
       throw new Error(`Server error (HTTP ${res.status}). Server mungkin crash atau timeout. Coba refresh halaman.`);
     }
     if (!res.ok) {
-      const e = (await res.json().catch(() => ({ message: 'Request failed' }))) as { message?: string; error?: string; success?: boolean };
+      const e = (await res.json().catch(() => ({ message: 'Request failed' }))) as { message?: string; error?: string; success?: boolean; dbUnreachable?: boolean };
+      // FIX (DBDOWN-1): DB tidak bisa dijangkau (mis. project Supabase paused —
+      // insiden 21 Okt 2026) — backend mengirim flag dbUnreachable + pesan
+      // panduan restore di field `error`. Pastikan pesan itu yang sampai ke
+      // ErrorState (bukan teks mentah/HTTP n) agar cabang tampilan khusus
+      // aktif.
+      if (e.dbUnreachable) {
+        throw new Error(e.error || 'Database tidak dapat dijangkau — buka dashboard Supabase → Restore project, lalu tekan Coba Lagi.');
+      }
       // FIX: 404 with "No records found" is NOT always a missing-data issue.
       // It can also mean the user selected contradictory filters (e.g.,
       // kelompok=BDG + outlet=JKT, or kelompok=BDG + area=JAWA TIMUR 1 where
