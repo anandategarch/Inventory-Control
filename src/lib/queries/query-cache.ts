@@ -58,6 +58,19 @@ export async function cachedSharedQuery<T>(
     extra?: Record<string, string | number | null | undefined>;
   },
   computeFn: () => Promise<T>,
+  /**
+   * PERF-FILTER1 (B — write durability): when true, the cache write is
+   * AWAITED before the response returns (withCacheAndDedup's
+   * awaitWrite=true). Production verification of the PERF-FILTER1 deploy
+   * showed the DEFAULT fire-and-forget path (scheduleBackground → after())
+   * does NOT reliably land the row on this deployment — every request then
+   * re-pays the full scan compute. Awaited writes cost ~150-300ms ONCE per
+   * cache key (vs seconds of recompute per request), so the SHARED scans
+   * (q-peer-band-scan / q-devrank-scan) opt in. The default stays false so
+   * the analysis cold path's 6+ auxiliary q-* writes keep their
+   * non-blocking behavior (unchanged pre-existing semantics).
+   */
+  awaitWrite: boolean = false,
 ): Promise<T> {
   const f = params.filters;
   const cacheKey = buildCacheKey({
@@ -80,7 +93,7 @@ export async function cachedSharedQuery<T>(
         : {}),
     },
   });
-  const { data } = await withCacheAndDedup<T>(cacheKey, SHARED_QUERY_CACHE_TTL_MS, computeFn, false);
+  const { data } = await withCacheAndDedup<T>(cacheKey, SHARED_QUERY_CACHE_TTL_MS, computeFn, awaitWrite);
   return data;
 }
 

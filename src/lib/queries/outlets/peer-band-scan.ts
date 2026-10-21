@@ -270,6 +270,11 @@ async function queryPeerBandScan(
  * affecting inputs are exactly (week, upper monthKey bound).
  */
 export async function getPeerBandScan(week: string, currentMonthKey: string | null): Promise<PeerBandScan> {
+  // awaitWrite=true (PERF-FILTER1 B write-durability): production
+  // verification showed the fire-and-forget after() write does NOT
+  // reliably land on the deployment — awaiting costs ~150-300ms ONCE per
+  // (week, monthKey) and guarantees the 30-min warm window for every
+  // subsequent outlet switch.
   return cachedSharedQuery<PeerBandScan>(
     'q-peer-band-scan',
     {
@@ -279,6 +284,7 @@ export async function getPeerBandScan(week: string, currentMonthKey: string | nu
       extra: { w: PEER_BAND_SCAN_WINDOW_MONTHS },
     },
     () => queryPeerBandScan(week, currentMonthKey),
+    true,
   );
 }
 

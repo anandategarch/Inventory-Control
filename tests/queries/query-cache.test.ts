@@ -74,6 +74,13 @@ describe('cachedSharedQuery', () => {
     expect(keyA).toBe(keyB);
   });
 
+  it('PERF-FILTER1 (B write-durability): awaitWrite=true opts the scan into an AWAITED cache write', async () => {
+    mockWithCacheAndDedup.mockResolvedValueOnce({ data: { rows: [] }, cached: false });
+    await cachedSharedQuery('q-peer-band-scan', { month: '2026-09', week: 'WEEK 4', filters: {} }, vi.fn().mockResolvedValue({ rows: [] }), true);
+    const awaitWrite = mockWithCacheAndDedup.mock.calls[0][3];
+    expect(awaitWrite).toBe(true); // fire-and-forget after() writes were observed NOT to land in production
+  });
+
   it('falls back to withCacheAndDedup errors (rejects) — no swallowing', async () => {
     mockWithCacheAndDedup.mockRejectedValueOnce(new Error('db down'));
     await expect(

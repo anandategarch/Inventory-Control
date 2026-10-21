@@ -123,6 +123,9 @@ export async function getDeviasiNationalScan(
   week: string,
   month: string,
 ): Promise<DeviasiNationalScan> {
+  // awaitWrite=true (PERF-FILTER1 B write-durability): same rationale as
+  // q-peer-band-scan — the ~2MB national table must LAND before the
+  // response returns, or every outlet switch re-pays the multi-second scan.
   return cachedSharedQuery<DeviasiNationalScan>(
     'q-devrank-scan',
     {
@@ -134,5 +137,6 @@ export async function getDeviasiNationalScan(
       extra: { v: 2 },
     },
     () => queryDeviasiNationalScan(week, month),
+    true,
   );
 }
