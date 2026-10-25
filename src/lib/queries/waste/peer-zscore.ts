@@ -33,7 +33,8 @@
 //  bandStd via STDDEV_SAMP (0 when n < 2 — the SQL COALESCE),
 //  and z guarded on bandSize ≥ WASTE_ZSCORE_MIN_BAND AND std > 0.
 // ============================================================
-import { WASTE_WINDOW_MONTHS, WASTE_ZSCORE_MIN_BAND } from './shared';
+import { WASTE_ZSCORE_MIN_BAND } from './shared';
+import { DASHBOARD_LOOKBACK_MONTHS } from '../window-config';
 import {
   buildPeerBands,
   getPeerBandScan,
@@ -153,7 +154,10 @@ export function computeWastePeerZScoreFromScan(
   scan: PeerBandScan,
   outletCode: string,
   kelompok?: string | null,
-  windowMonths: number = WASTE_WINDOW_MONTHS,
+  // PERF-FILTER3 ("3 BULAN"): default window 12 → DASHBOARD_LOOKBACK_MONTHS
+  // (3) — see window-config.ts. WASTE_ZSCORE_MIN_BAND=3 is still exactly
+  // satisfiable (band months = window months).
+  windowMonths: number = DASHBOARD_LOOKBACK_MONTHS,
 ): { rows: WastePeerZScoreRow[]; summary: WastePeerZScoreSummary } {
   const bands = buildPeerBands(scan, outletCode, windowMonths, kelompok);
   const rows: WastePeerZScoreRow[] = bands.map((band) => {

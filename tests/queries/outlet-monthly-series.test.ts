@@ -280,9 +280,9 @@ describe('queryOutletMonthlySeries', () => {
     expect(sql).toContain('"OutletPeriodSales"');
     // Excel loss/surplus convention from nominalLossSurplus (same as peer-comparison).
     expect(sql).toContain('nominalLossSurplus" < 0');
-    // PERF-FILTER1 B: the scan caps the UNION window at 24 months (2× the
-    // 12-month consumers) and NEVER references the target outlet — one row
-    // serves every outlet.
+    // PERF-FILTER1 B + PERF-FILTER3: the scan caps the UNION window at
+    // PEER_BAND_SCAN_WINDOW_MONTHS (now the 3-month dashboard lookback) and
+    // NEVER references the target outlet — one row serves every outlet.
     expect(sql).toContain(String(PEER_BAND_SCAN_WINDOW_MONTHS));
     expect(sql).not.toContain('1357.TJPPLU');
 
@@ -296,9 +296,12 @@ describe('queryOutletMonthlySeries', () => {
     expect(total.abnormalCount).toBe(1);
   });
 
-  it('caps the TARGET window to the last 12 months from the 24-month scan', async () => {
+  it('caps the TARGET window to the last DASHBOARD_LOOKBACK_MONTHS months from the shared scan', async () => {
     // 14 chronological months (2024-08 … 2025-09) of scan rows for the
-    // outlet — only the last 12 may surface.
+    // outlet — only the chronologically LAST window may surface.
+    // PERF-FILTER3 ("3 BULAN"): the consumer window is 3 (was 12) — the
+    // scan itself also fetches ≤3 months in production, but the slice must
+    // still cap whatever the (cache-hit) scan row contains.
     const monthKeys = [
       '2024-08', '2024-09', '2024-10', '2024-11', '2024-12',
       '2025-01', '2025-02', '2025-03', '2025-04', '2025-05',
@@ -308,8 +311,8 @@ describe('queryOutletMonthlySeries', () => {
     mockQueryRaw.mockResolvedValueOnce(many);
     const { rows } = await queryOutletMonthlySeries('1357.TJPPLU', 'WEEK 4', '2025-09', TOL, HI_LOSS);
     expect(rows.length).toBe(OUTLET_MONTHLY_SERIES_WINDOW_MONTHS);
-    // ...and they are the CHRONOLOGICALLY LAST 12 (slice(-12) of ASC order).
-    expect(rows[0].monthKey).toBe(monthKeys[2]);
+    // ...and they are the CHRONOLOGICALLY LAST 3 (slice(-3) of ASC order).
+    expect(rows[0].monthKey).toBe(monthKeys[11]);
     expect(rows[rows.length - 1].monthKey).toBe(monthKeys[13]);
   });
 

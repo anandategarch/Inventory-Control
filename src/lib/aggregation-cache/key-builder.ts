@@ -50,6 +50,19 @@ const SEP = '\x1f';
 const SENTINEL_ALL = '\u001bALL';
 const SENTINEL_NONE = '\u001bNONE';
 
+// PERF-FILTER3 ("3 BULAN", 22 Okt 2026): global cache-key schema version —
+// APPENDED as the last key part (`ckv=N`), AFTER the route prefix, so
+// invalidateCache's `startsWith(route + SEP)` prefix matching is UNCHANGED.
+// Bumping it orphans every pre-bump row on deploy (they age out via
+// cleanupExpiredCache) — used when a change alters what an EXISTING key
+// computes (this deploy: interactive windows 12/24-month → 3-month change
+// the results of route-level caches whose key shape itself did not change,
+// e.g. waste-series / waste-top-items / waste-rate-league / outlet-monthly-
+// series / peer-track-record / waste-peer-zscore / analysis / pareto /
+// recommendations rows). Without it, up to 30 minutes of stale 12-month
+// responses would be served after the deploy under identical keys.
+const CACHE_KEY_SCHEMA_VERSION = 2;
+
 // FIX (BUG-3): last-resort sanitizer — strips control characters (C0, DEL,
 // C1) from any part before it is embedded in the cache key, guaranteeing
 // the key is always a legal PostgreSQL TEXT value. This is defense-in-depth:
@@ -133,5 +146,7 @@ export function buildCacheKey(parts: {
       filter.push(extras.join(','));
     }
   }
+  // PERF-FILTER3: schema version rides LAST (see CACHE_KEY_SCHEMA_VERSION).
+  filter.push(`ckv=${CACHE_KEY_SCHEMA_VERSION}`);
   return `${parts.route}${SEP}${filter.join(SEP)}`;
 }

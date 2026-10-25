@@ -8,8 +8,12 @@
 //  pre-split import path resolving unchanged.
 // ============================================================
 
-/** Max months in the waste window (incl. running month) — shared with waste-series. */
-export const WASTE_TOP_ITEMS_WINDOW_MONTHS = 12;
+/**
+ * Max months in the waste window (incl. running month) — shared with waste-series.
+ * PERF-FILTER3 ("3 BULAN"): 12 → 3 — see window-config.ts (user request
+ * "tarik data 3 bulan terakhir dari filter terpilih agar ringan").
+ */
+export const WASTE_TOP_ITEMS_WINDOW_MONTHS = 3;
 
 /** Default + max top-N items returned. */
 export const WASTE_TOP_ITEMS_DEFAULT_LIMIT = 20;

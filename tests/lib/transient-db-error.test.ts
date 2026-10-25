@@ -294,3 +294,69 @@ describe('shouldRetryAnalysis (RETRYABLE-1 — retry predicate query utama)', ()
     expect(shouldRetryAnalysis(0, 'odd')).toBe(false);
   });
 });
+
+// ============================================================
+//  PERF-FILTER3 (22 Okt 2026): kelas lanjutan dari insiden "Gagal
+//  Memuat Analisis / Gagal memproses permintaan" TIAP ganti filter —
+//  fan-out 6 endpoint berat paralel menjenuhkan Supabase free tier;
+//  error yang muncul (40-60 detik) TIDAK cocok pola RETRYABLE-1
+//  manapun → kartu MERAH tanpa auto-retry. Pola baru yang kini
+//  dikenali (lihat TRANSIENT_DB_ERROR_PATTERNS):
+//    • Prisma P2028 interactive-transaction/query timeout
+//    • Supavisor "connection pool exhausted"
+//    • PgBouncer "no more connections in pool"
+//    • PG 53300 "remaining connection slots are reserved"
+//    • Network "connection reset by peer"
+// ============================================================
+describe('classifyTransientDbError (PERF-FILTER3 — insiden 22 Okt 2026)', () => {
+  it('mengenali Prisma P2028 (interactive-transaction timeout — withStatementTimeout)', () => {
+    expect(classifyTransientDbError(new Error(
+      'PrismaClientKnownRequestError: A query or transaction timed out during query execution (P2028)',
+    ))).toBe('statement-timeout');
+    expect(classifyTransientDbError(new Error('P2028'))).toBe('statement-timeout');
+  });
+
+  it('mengenali "Timed out during query execution" tanpa kode P', () => {
+    expect(classifyTransientDbError(new Error('Timed out during query execution'))).toBe('statement-timeout');
+    expect(classifyTransientDbError(new Error('query execution timed out after 30000ms'))).toBe('statement-timeout');
+  });
+
+  it('mengenali Supavisor/Supabase pooler "connection pool exhausted"', () => {
+    expect(classifyTransientDbError(new Error(
+      'db error: timeout: connection pool exhausted (Supavisor)',
+    ))).toBe('pool-timeout');
+  });
+
+  it('mengenali PgBouncer "no more connections in pool"', () => {
+    expect(classifyTransientDbError(new Error('ERROR: no more connections in pool'))).toBe('pool-timeout');
+  });
+
+  it('mengenali PG 53300 "remaining connection slots are reserved"', () => {
+    expect(classifyTransientDbError(new Error(
+      'remaining connection slots are reserved for non-replication superuser connections',
+    ))).toBe('pool-timeout');
+  });
+
+  it('mengenali network "connection reset by peer" (TLS serverless→DB blip)', () => {
+    expect(classifyTransientDbError(new Error('read ECONNRESET: connection reset by peer'))).toBe('connection-terminated');
+  });
+
+  it('errorResponse: P2028 produksi → retryable:true + errorClass (bukan kartu merah generik)', async () => {
+    const res = errorResponse(new Error(
+      'PrismaClientKnownRequestError: A query or transaction timed out during query execution (P2028)',
+    ), 'analysis');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(res.status).toBe(500);
+    expect(body.retryable).toBe(true);
+    expect(body.errorClass).toBe('statement-timeout');
+    expect(body.error).toBe(TRANSIENT_ERROR_MESSAGE);
+  });
+
+  it('errorResponse: pool exhausted produksi → retryable:true (kartu amber + auto-retry)', async () => {
+    const res = errorResponse(new Error('connection pool exhausted'), 'waste-series');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.retryable).toBe(true);
+    expect(body.errorClass).toBe('pool-timeout');
+    expect(String(body.error)).toMatch(/^Server database sedang sibuk/);
+  });
+});

@@ -182,3 +182,62 @@ describe('queryTrendAgg', () => {
     expect(sqlText).toContain('period_aggs');
   });
 });
+
+// ============================================================
+//  PERF-FILTER3 ("3 BULAN", 22 Okt 2026): queryTrendAgg gains an
+//  optional monthLabels whitelist — the interactive /api/analysis
+//  wave passes the DASHBOARD_LOOKBACK_MONTHS window ending at the
+//  selected filter month, so the trend scan no longer aggregates
+//  ALL DB periods. Absent/empty = unbounded (export deep path).
+// ============================================================
+describe('queryTrendAgg — PERF-FILTER3 monthLabels window', () => {
+  beforeEach(() => {
+    mockQueryRaw.mockReset();
+  });
+
+  // Embedded Prisma.Sql / Prisma.join fragments ride as VALUES inside the
+  // tagged template, so a strings-only join can't see them. Flatten the
+  // whole call (strings + nested Sql fragments) before asserting.
+  const flattenCall = (call: unknown[]): { text: string; values: unknown[] } => {
+    const strings: string[] = [];
+    const values: unknown[] = [];
+    const walk = (v: unknown): void => {
+      if (v && typeof v === 'object' && 'strings' in (v as object) && 'values' in (v as object)) {
+        const sql = v as { strings: string[]; values: unknown[] };
+        sql.strings.forEach((s) => strings.push(s));
+        sql.values.forEach(walk);
+      } else if (Array.isArray(v)) {
+        v.forEach(walk);
+      } else {
+        values.push(v);
+      }
+    };
+    // Tagged template: args = [stringsArray, ...values]
+    (call[0] as string[]).forEach((s) => strings.push(s));
+    call.slice(1).forEach(walk);
+    return { text: strings.join('\u00a7'), values };
+  };
+
+  it('injects an ir/ops "monthLabel IN (...)" bound on every alias when monthLabels is passed', async () => {
+    mockQueryRaw.mockResolvedValueOnce([]);
+    await queryTrendAgg({ weekLabel: 'WEEK 4', monthLabels: ['Juni 2026', 'Juli 2026', 'Agustus 2026'] });
+    const { text, values } = flattenCall(mockQueryRaw.mock.calls[0] as unknown as unknown[]);
+    expect(text).toContain('ir."monthLabel" IN (');
+    expect(text).toContain('ops."monthLabel" IN (');
+    // The three window labels travel as bound parameters (inside the
+    // Prisma.join fragments).
+    expect(values).toContain('Juni 2026');
+    expect(values).toContain('Juli 2026');
+    expect(values).toContain('Agustus 2026');
+  });
+
+  it('empty array / null / absent monthLabels → NO month IN() bound (export deep path stays unbounded)', async () => {
+    for (const monthLabels of [undefined, null, []] as (string[] | null | undefined)[]) {
+      mockQueryRaw.mockReset();
+      mockQueryRaw.mockResolvedValueOnce([]);
+      await queryTrendAgg({ weekLabel: 'WEEK 4', monthLabels });
+      const { text } = flattenCall(mockQueryRaw.mock.calls[0] as unknown as unknown[]);
+      expect(text).not.toContain('"monthLabel" IN (');
+    }
+  });
+});

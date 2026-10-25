@@ -54,10 +54,29 @@ const TRANSIENT_DB_ERROR_PATTERNS: ReadonlyArray<{ re: RegExp; errorClass: Trans
   { re: /canceling statement due to statement_timeout/i, errorClass: 'statement-timeout' },
   // Prisma interactive-transaction timeout ("Timed out during ... transaction"):
   { re: /timed out during.*transaction|transaction.*timed out/i, errorClass: 'statement-timeout' },
+  // PERF-FILTER3 (22 Okt 2026): kelas lanjutan dari insiden "Gagal Memuat
+  // Analisis / Gagal memproses permintaan" tiap ganti filter — fan-out 6
+  // endpoint berat paralel menjenuhkan Supabase free tier, dan error yang
+  // muncul (40-60 detik) TIDAK cocok pola manapun di atas → kartu MERAH
+  // tanpa auto-retry. Pola baru:
+  // Prisma P2028 — interactive-transaction/query timeout (withStatementTimeout
+  // membungkus hampir semua query berat pipeline ini dengan $transaction):
+  { re: /\bP2028\b/, errorClass: 'statement-timeout' },
+  { re: /timed out during query execution|query execution timed out/i, errorClass: 'statement-timeout' },
+  // Supavisor/Supabase pooler "connection pool exhausted" (menunggu slot
+  // koneksi > batas waktu pooler):
+  { re: /connection pool exhausted/i, errorClass: 'pool-timeout' },
+  // PgBouncer-style "no more connections in pool":
+  { re: /no more connections in pool/i, errorClass: 'pool-timeout' },
+  // PG 53300 "remaining connection slots are reserved ..." (max_connections
+  // server tercapai — teksnya TIDAK memuat "too many clients"):
+  { re: /remaining connection slots are reserved/i, errorClass: 'pool-timeout' },
   // Koneksi terputus DI TENGAH query (bukan saat init — itu P1001/P1002,
   // milik db-unreachable). Terjadi saat network blip / DB restart / restore:
   { re: /connection terminated( unexpectedly| due to connection timeout)?/i, errorClass: 'connection-terminated' },
   { re: /connection closed unexpectedly/i, errorClass: 'connection-terminated' },
+  // Network-level reset di tengah round-trip TLS serverless→DB (blip singkat):
+  { re: /connection reset by peer/i, errorClass: 'connection-terminated' },
 ];
 
 /**

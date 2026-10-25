@@ -31,8 +31,8 @@ import {
   monthWindowBound,
   WASTE_SPIKE_MIN_MONTHS,
   WASTE_SPIKE_SIGMA,
-  WASTE_WINDOW_MONTHS,
 } from '../shared';
+import { DASHBOARD_LOOKBACK_MONTHS } from '../../window-config';
 import { buildWasteAttribution } from './attribution';
 import { buildWasteKpis, buildWasteMonthlyRows, buildWasteOutlets } from './builders';
 import { buildWastePersistence } from './persistence';
@@ -48,10 +48,17 @@ export async function queryWasteNetwork(
   currentMonthKey: string | null,
   filters: SqlFilterOpts,
   highLossNominal: number,
+  // PERF-FILTER3 ("3 BULAN"): interactive callers (/api/waste-series) keep
+  // the default 3-month dashboard window; the export-report deep path
+  // passes DEEP_REPORT_WINDOW_MONTHS (12) explicitly AND stamps it into
+  // its q-waste-network cache key (extra.w) so the two windows can never
+  // share a row. See window-config.ts.
+  windowMonths: number = DASHBOARD_LOOKBACK_MONTHS,
 ): Promise<WasteNetworkResult> {
   const f = buildSqlFilters(filters);
   // Shape:
-  //   months          — DISTINCT same-week monthKeys in scope, most recent 12
+  //   months          — DISTINCT same-week monthKeys in scope, most recent
+  //                     `windowMonths` (3 interactive / 12 export)
   //   month_labels    — monthKey → label + DQ (BOOL_OR over the month's files)
   //   per_month       — per (outlet, month) waste aggregates (same week)
   //   sales           — per (outlet, month) MODE sales (OutletPeriodSales)
@@ -71,7 +78,7 @@ export async function queryWasteNetwork(
         ${f}
       GROUP BY sf."monthKey"
       ORDER BY sf."monthKey" DESC
-      LIMIT ${WASTE_WINDOW_MONTHS}
+      LIMIT ${windowMonths}
     ),
     month_labels AS (
       SELECT sf."monthKey",

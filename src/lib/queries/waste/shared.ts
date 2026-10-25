@@ -22,9 +22,19 @@
 //  its own split (SPLIT-NEXT per findings-GODSPLIT-A).
 // ============================================================
 import { Prisma } from '@prisma/client';
+import { DASHBOARD_LOOKBACK_MONTHS } from '../window-config';
 
-/** Max months in the waste window (incl. running month). */
-export const WASTE_WINDOW_MONTHS = 12;
+/**
+ * Max months in the waste window (incl. running month).
+ * PERF-FILTER3 ("3 BULAN"): 12 → DASHBOARD_LOOKBACK_MONTHS (3) for the
+ * INTERACTIVE path (/api/waste-series + waste-peer-zscore defaults) —
+ * see window-config.ts. The export-report deep path overrides to
+ * DEEP_REPORT_WINDOW_MONTHS (12) explicitly at its call site + cache
+ * key (`extra.w`). Trade-off (disclosed): klasifikasi "kronis"
+ * (WASTE_KRONIS_MIN_MONTHS=6) can no longer trigger in the 3-month
+ * interactive window — it degrades gracefully to non-kronis classes.
+ */
+export const WASTE_WINDOW_MONTHS = DASHBOARD_LOOKBACK_MONTHS;
 
 /** P2 rule "waste/sales < 0,1%" — under-recording threshold (fraction). */
 export const WASTE_UNDER_RECORD_PCT = 0.001;

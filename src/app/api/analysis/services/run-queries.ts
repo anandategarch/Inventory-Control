@@ -44,6 +44,7 @@ import {
 import { queryGrowthDrivers, queryTopGrowth } from '@/lib/queries/growth-drivers';
 import { evaluateRulesSql, evaluateHistoricalRulesSql, evaluateWasteRulesSql, type SqlRuleFlag } from '@/lib/queries/rule-evaluation';
 import { cachedSharedQuery } from '@/lib/queries/query-cache';
+import { DASHBOARD_LOOKBACK_MONTHS } from '@/lib/queries/window-config';
 import { buildExecSummaryFromSql } from './exec-summary';
 import type { FetchedRecords, FilterOpts } from './fetch-records';
 import type { ResolvedParams } from './validate-and-resolve';
@@ -103,6 +104,30 @@ export interface QueryResults {
 }
 
 /**
+ * PERF-FILTER3 ("3 BULAN", 22 Okt 2026): monthLabels for the trend window —
+ * the DASHBOARD_LOOKBACK_MONTHS most recent distinct monthKeys that are ≤ the
+ * SELECTED filter month's monthKey, mapped back to their DB monthLabels.
+ * Returns null when the selected month is unknown (no SourceFile row) — the
+ * trend query then falls back to its legacy UNBOUNDED scan (the 404 guard
+ * will fail that request anyway, so the fallback is unreachable in practice).
+ * PURE (derived from FetchedRecords' preloaded metadata) — exported for tests.
+ */
+export function lookbackMonthLabels(
+  records: Pick<FetchedRecords, 'allPeriods' | 'monthKeyByLabel' | 'monthLabelByKey'>,
+  month: string,
+): string[] | null {
+  const monthKey = records.monthKeyByLabel.get(month);
+  if (!monthKey) return null;
+  const keys = [...new Set(records.allPeriods.map((p) => p.monthKey))]
+    .filter((k) => k <= monthKey)
+    .sort();
+  return keys
+    .slice(-DASHBOARD_LOOKBACK_MONTHS)
+    .map((k) => records.monthLabelByKey.get(k))
+    .filter((l): l is string => Boolean(l));
+}
+
+/**
  * Stage 3 — run all SQL aggregate queries in ONE parallel wave + map raw rows.
  *
  * PERF (H-8 QUICK WIN 2): all independent queries (formerly Groups 1-4 /
@@ -145,7 +170,11 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
   );
   const histFlagsSqlPromise = cachedSharedQuery(
     'q-hist-rules',
-    { month, week, filters: filterOpts },
+    // PERF-FILTER3 ("3 BULAN"): `lb` forks a fresh namespace for the capped
+    // historical baseline (2 prior months) — the compute now derives from a
+    // shorter historicalPeriods list, so pre-change rows (full-history
+    // baseline) must never be served under the same key.
+    { month, week, filters: filterOpts, extra: { lb: DASHBOARD_LOOKBACK_MONTHS } },
     () => evaluateHistoricalRulesSql(week, month, historicalPeriods, filterOpts, thresholds),
   );
   // DEEP-WASTE-1: WASTE_SPIKE_2SIGMA — waste z-score vs own history, same
@@ -154,7 +183,8 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
   // aggregation-cache/invalidate.ts).
   const wasteFlagsSqlPromise = cachedSharedQuery(
     'q-waste-rules',
-    { month, week, filters: filterOpts },
+    // PERF-FILTER3 ("3 BULAN"): same `lb` namespace fork as q-hist-rules.
+    { month, week, filters: filterOpts, extra: { lb: DASHBOARD_LOOKBACK_MONTHS } },
     () => evaluateWasteRulesSql(week, month, historicalPeriods, filterOpts, thresholds),
   );
   // H-10 (G1 scan-share): health ranking now goes through the shared
@@ -201,8 +231,16 @@ export async function runQueries(params: ResolvedParams, records: FetchedRecords
   );
   const trendAggPromise = cachedSharedQuery(
     'q-trend',
-    { month, week, filters: filterOpts, extra: { weekLabel: week || 'ALL' } },
-    () => queryTrendAgg({ ...filterOpts, weekLabel: week }),
+    // PERF-FILTER3 ("3 BULAN"): `lb` BOTH forks the namespace away from the
+    // export pipeline's full-history q-trend row (identical other key parts —
+    // without `lb` a 3-month compute and an all-periods compute would poison
+    // each other) AND documents the window in the key.
+    { month, week, filters: filterOpts, extra: { weekLabel: week || 'ALL', lb: DASHBOARD_LOOKBACK_MONTHS } },
+    () => queryTrendAgg({
+      ...filterOpts,
+      weekLabel: week,
+      monthLabels: lookbackMonthLabels(records, month),
+    }),
   );
 
   // FIX (BUG6-1+BUG6-POOL): paretoDevBom wrapped in .catch() so a failure

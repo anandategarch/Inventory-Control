@@ -117,9 +117,16 @@ describe('isSistematikWasteItem', () => {
     expect(isSistematikWasteItem(3, 3, 8)).toBe(false);
   });
 
-  it('defaults to the 12-month cap when no window is passed (back-compat)', () => {
-    expect(isSistematikWasteItem(6, 2)).toBe(true);
-    expect(isSistematikWasteItem(5, 2)).toBe(false);
+  it('defaults to the PERF-FILTER3 3-month window when no window is passed', () => {
+    // PERF-FILTER3 ("3 BULAN", 22 Okt 2026): the default window cap dropped
+    // 12 → 3, so the adaptive threshold is ceil(3/2) = 2 months active
+    // (with ≥2 outlets) — "sistematik" remains reachable on the short
+    // interactive window instead of demanding half a year.
+    expect(isSistematikWasteItem(2, 2)).toBe(true);
+    expect(isSistematikWasteItem(1, 2)).toBe(false);
+    // Explicit windows still override the default (export deep path).
+    expect(isSistematikWasteItem(6, 2, 12)).toBe(true);
+    expect(isSistematikWasteItem(5, 2, 12)).toBe(false);
   });
 });
 

@@ -44,9 +44,14 @@
 // ============================================================
 import { toNum } from '../waste/shared';
 import { getPeerBandScan, selectTargetScanRows, type PeerBandScan } from './peer-band-scan';
+import { DASHBOARD_LOOKBACK_MONTHS } from '../window-config';
 
-/** Max months in the series / track-record window (incl. running month). */
-export const OUTLET_MONTHLY_SERIES_WINDOW_MONTHS = 12;
+/**
+ * Max months in the series / track-record window (incl. running month).
+ * PERF-FILTER3 ("3 BULAN"): 12 → DASHBOARD_LOOKBACK_MONTHS (3) — see
+ * window-config.ts. Also the default window for queryPeerTrackRecord.
+ */
+export const OUTLET_MONTHLY_SERIES_WINDOW_MONTHS = DASHBOARD_LOOKBACK_MONTHS;
 
 // ------------------------------------------------------------
 // 1. Monthly series — types

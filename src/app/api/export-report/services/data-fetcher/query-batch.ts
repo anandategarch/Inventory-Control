@@ -41,6 +41,7 @@ import { queryWeeklyComposition } from '@/lib/queries/weekly-composition';
 import type { SelfHistoryAnomalyRow } from '@/lib/queries/items/self-history-anomaly';
 import type { WeeklyCompositionRow } from '@/lib/queries/weekly-composition';
 import { cachedSharedQuery, cachedSharedQueryMap, histPeriodsKeyParts } from '@/lib/queries/query-cache';
+import { DEEP_REPORT_WINDOW_MONTHS } from '@/lib/queries/window-config';
 import type { AreaCategoryAvg } from '@/lib/queries/items/top-items';
 import type { WasteSectionData } from '../types';
 import type { FetcherContext } from './context';
@@ -291,17 +292,22 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
     // aggregation-cache/invalidate.ts). Key notes:
     //   - month = the EXPORTED month: it bounds the 12-month same-week
     //     window INCLUSIVELY (queryWasteNetwork's currentMonthKey — same
-    //     semantics as /api/waste-series).
+    //     semantics as /api/waste-series pre-PERF-FILTER3).
     //   - itemName is stripped (the waste network is outlet-grain — same
     //     convention as q-item-trend-matrix's filters).
     //   - sv 1 forks a fresh namespace for the projected row shape.
+    //   - PERF-FILTER3 ("3 BULAN"): the INTERACTIVE /api/waste-series now
+    //     defaults to a 3-month window — the export deep path keeps the
+    //     full 12-month window via the explicit windowMonths param, and
+    //     stamps it into the cache key (extra.w) so a 3-month row and a
+    //     12-month row can never share a key.
     //   - The computeFn caches ONLY the W10 projection (months + kpis +
     //     attribution): the full result's monthly/outlets arrays (~MBs of
     //     JSON) stay in the /api/waste-series route's own 5-min cache —
     //     the q-row keeps repeat exports cheap without duplicating them.
     needWaste ? cachedSharedQuery<WasteSectionData>(
       'q-waste-network',
-      { month, week, filters: { ...filterOpts, itemName: null }, extra: { weekLabel: week, sv: 1 } },
+      { month, week, filters: { ...filterOpts, itemName: null }, extra: { weekLabel: week, sv: 1, w: DEEP_REPORT_WINDOW_MONTHS } },
       async () => {
         // currentMonthKey from the setup phase's monthLabel→monthKey map
         // (the same lookup /api/waste-series does via sourceFile.findFirst;
@@ -313,6 +319,7 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
           currentMonthKey,
           { ...filterOpts, itemName: null },
           thresholds.HIGH_LOSS_NOMINAL_THRESHOLD,
+          DEEP_REPORT_WINDOW_MONTHS,
         );
         return { months: r.months, kpis: r.kpis, attribution: r.attribution };
       },

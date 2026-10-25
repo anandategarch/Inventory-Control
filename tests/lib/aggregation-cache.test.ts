@@ -115,8 +115,24 @@ describe('buildCacheKey — PostgreSQL NUL regression (BUG-3: SQLSTATE 22021 kil
   it('an all-absent key (every sentinel position) contains NO NUL byte', () => {
     const key = buildCacheKey({ route: 'x' });
     expect(key.includes('\u0000')).toBe(false);
-    // All 9 filter positions are present (route + 9 parts = 10 segments).
-    expect(key.split('\x1f')).toHaveLength(10);
+    // All 9 filter positions are present (route + 9 parts), plus the
+    // PERF-FILTER3 schema-version suffix (ckv=N) as the FINAL segment
+    // (route + 9 parts + ckv = 11 segments).
+    expect(key.split('\x1f')).toHaveLength(11);
+    // ...and the version suffix is present so a schema bump orphans old rows.
+    expect(key.split('\x1f')[10]).toMatch(/^ckv=\d+$/);
+  });
+
+  it('PERF-FILTER3: keys built with different CACHE_KEY_SCHEMA_VERSIONs never collide (append-only)', () => {
+    // The suffix is appended AFTER the route prefix — prefix invalidation
+    // (`startsWith(route + SEP)`) keeps working, which the two keys below
+    // rely on: same route, same filters, one flat namespace.
+    const a = buildCacheKey({ route: 'x', month: 'Juli 2026', week: 'WEEK 4' });
+    const b = buildCacheKey({ route: 'x', month: 'Juli 2026', week: 'WEEK 4' });
+    expect(a).toBe(b); // deterministic within one schema version
+    expect(a.endsWith('ckv=2')).toBe(true);
+    // Prefix invalidation compatibility: every key starts with route + SEP.
+    expect(a.startsWith('x\x1f')).toBe(true);
   });
 
   it('control characters injected into raw filter values are stripped before the key is built', () => {

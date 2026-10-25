@@ -99,12 +99,14 @@ import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../sh
 // ------------------------------------------------------------
 
 /**
- * Max months in the league window (incl. running month) — mirrors
- * WASTE_WINDOW_MONTHS / WASTE_TOP_ITEMS_WINDOW_MONTHS. Local
- * (not imported from ./shared.ts) so this module owns its whole
- * footprint; the value is pinned by test to stay in sync.
+ * Max months in the league window (incl. running month).
+ * PERF-FILTER3 ("3 BULAN"): 12 → DASHBOARD_LOOKBACK_MONTHS (3) — see
+ * window-config.ts (user request "tarik data 3 bulan terakhir agar
+ * ringan"; this endpoint 504-timeout'd at 60s under parallel filter
+ * fan-out). Local (not imported from ./shared.ts) so this module owns
+ * its whole footprint; the value is pinned by test to stay in sync.
  */
-export const WASTE_RATE_LEAGUE_WINDOW_MONTHS = 12;
+export const WASTE_RATE_LEAGUE_WINDOW_MONTHS = 3;
 
 /** Default + max top-N items returned (house limit convention). */
 export const WASTE_RATE_LEAGUE_DEFAULT_LIMIT = 20;

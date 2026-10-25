@@ -210,11 +210,15 @@ describe('clampRateLeagueLimit', () => {
     expect(clampRateLeagueLimit(Number.POSITIVE_INFINITY)).toBe(WASTE_RATE_LEAGUE_DEFAULT_LIMIT);
   });
 
-  it('knobs pinned: default 20, max 50, min outlets 5, window cap 12', () => {
+  it('knobs pinned: default 20, max 50, min outlets 5, window cap 3 (PERF-FILTER3 "3 BULAN")', () => {
     expect(WASTE_RATE_LEAGUE_DEFAULT_LIMIT).toBe(20);
     expect(WASTE_RATE_LEAGUE_MAX_LIMIT).toBe(50);
     expect(WASTE_RATE_LEAGUE_MIN_OUTLETS).toBe(5);
-    expect(WASTE_RATE_LEAGUE_WINDOW_MONTHS).toBe(12);
+    // PERF-FILTER3 ("3 BULAN", 22 Okt 2026): interactive window 12 → 3 per
+    // user request "tarik data 3 bulan terakhir agar ringan" — this endpoint
+    // 504-timeout'd at the 60s function cap under the parallel filter
+    // fan-out (see window-config.ts).
+    expect(WASTE_RATE_LEAGUE_WINDOW_MONTHS).toBe(3);
   });
 });
 

@@ -29,6 +29,7 @@ import { buildInventoryWhere } from '@/lib/build-where';
 import { resolveComparePeriod } from '@/lib/period-resolver';
 import { queryHistoricalStatsMultiMetric, type MultiMetricHistoricalStats } from '@/lib/queries/historical';
 import { cachedSharedQueryMap, histPeriodsKeyParts } from '@/lib/queries/query-cache';
+import { DASHBOARD_LOOKBACK_MONTHS } from '@/lib/queries/window-config';
 import { logger } from '@/lib/logger';
 import type { ResolvedParams, WeekDayRange } from './validate-and-resolve';
 
@@ -251,12 +252,23 @@ export async function fetchRecords(params: ResolvedParams): Promise<FetchedRecor
   //  must compare W4 vs W4 (prev months), NOT W4 vs W1+W2+W4 (mixed).
   //  Mixed weeks inflate mean (W1 is smaller) → false positive Z-Score.
   // ============================================================
-  const historicalPeriods = allPeriods.filter(
-    (p) => p.weekLabel === week && p.monthLabel !== resolvedMonth
-  ).filter((p) => {
-    const current = allPeriods.find(ap => ap.monthLabel === resolvedMonth && ap.weekLabel === week);
-    return !current || p.sortKey < current.sortKey;
-  });
+  const historicalPeriods = allPeriods
+    .filter((p) => p.weekLabel === week && p.monthLabel !== resolvedMonth)
+    .filter((p) => {
+      const current = allPeriods.find(ap => ap.monthLabel === resolvedMonth && ap.weekLabel === week);
+      return !current || p.sortKey < current.sortKey;
+    })
+    // PERF-FILTER3 ("3 BULAN", 22 Okt 2026): keep only the MOST RECENT
+    // (DASHBOARD_LOOKBACK_MONTHS − 1) prior same-week months → the whole
+    // analysis wave's historical baseline (q-hist-stats / q-hist-rules /
+    // q-waste-rules) now spans the selected month + 2 prior months, per the
+    // user request "hanya tarik data 3 bulan terakhir dari filter terpilih
+    // agar ringan". allPeriods is sortKey-ascending, so slice(-N) keeps the
+    // NEWEST N. q-hist-stats' cache key derives from the period LIST
+    // (histPeriodsKeyParts) → auto-forked; q-hist-rules/q-waste-rules carry
+    // an explicit `lb` extra for the same reason. Unchanged semantics when
+    // fewer prior months exist (slice is a no-op then).
+    .slice(-(DASHBOARD_LOOKBACK_MONTHS - 1));
 
   const [currRecordCount, historicalByOutletItem] = await Promise.all([
     // PERF (TAHAP-2 / P2-7): COUNT replaces the 35K-row slim findMany —

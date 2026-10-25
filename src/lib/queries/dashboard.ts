@@ -31,10 +31,29 @@ export interface TrendAggRow {
 
 export async function queryTrendAgg(filters: SqlFilterOpts & {
   weekLabel?: string | null; // FIX: filter trend to same weekLabel only (cumulative weeks)
+  // PERF-FILTER3 ("3 BULAN", 22 Okt 2026): optional month-label whitelist —
+  // the interactive /api/analysis path passes the DASHBOARD_LOOKBACK_MONTHS
+  // (3) window ending at the SELECTED filter month, so the trend scan no
+  // longer aggregates ALL DB periods (the largest unbounded scan in the
+  // 19-query analysis wave). Absent/null/empty = UNBOUNDED — the
+  // /api/export-report deep path keeps the full-history trend.
+  monthLabels?: string[] | null;
 }): Promise<TrendAggRow[]> {
   const f = buildSqlFilters(filters);
   const weekFilter = filters.weekLabel
     ? Prisma.sql`AND ir."weekLabel" = ${filters.weekLabel}`
+    : Prisma.empty;
+  // PERF-FILTER3: same-week month whitelist fragments for both aliases.
+  // Empty IN () would be a SQL syntax error, so an absent window yields
+  // Prisma.empty (the pre-FILTER3 all-periods behavior).
+  const trendMonths = filters.monthLabels && filters.monthLabels.length > 0
+    ? filters.monthLabels
+    : null;
+  const irMonthFilter = trendMonths
+    ? Prisma.sql`AND ir."monthLabel" IN (${Prisma.join(trendMonths)})`
+    : Prisma.empty;
+  const opsMonthFilter = trendMonths
+    ? Prisma.sql`AND ops."monthLabel" IN (${Prisma.join(trendMonths)})`
     : Prisma.empty;
   // DB-06: same weekFilter but for the OutletPeriodSales alias (`ops`).
   // Used by the refactored sales_per_period CTE.
@@ -76,6 +95,7 @@ export async function queryTrendAgg(filters: SqlFilterOpts & {
       WHERE 1=1
         ${f}
         ${weekFilter}
+        ${irMonthFilter}
     `;
   } else if (hasOutletResolvableFilter) {
     // Same Outlet predicates buildSqlFilters generates (kelompok / outletCode /
@@ -98,6 +118,7 @@ export async function queryTrendAgg(filters: SqlFilterOpts & {
       FROM "OutletPeriodSales" ops
       WHERE 1=1
         ${weekFilterOps}
+        ${opsMonthFilter}
         AND ops."outletId" IN (SELECT id FROM "Outlet" WHERE ${outletWhere})
     `;
   } else {
@@ -106,6 +127,7 @@ export async function queryTrendAgg(filters: SqlFilterOpts & {
       FROM "OutletPeriodSales" ops
       WHERE 1=1
         ${weekFilterOps}
+        ${opsMonthFilter}
     `;
   }
   // FIX H4 (AUDIT-7): wrap in withStatementTimeout — trend query scans all periods.
@@ -128,6 +150,7 @@ export async function queryTrendAgg(filters: SqlFilterOpts & {
         AND fp."weekLabel" = ops."weekLabel"
       WHERE 1=1
         ${weekFilterOps}
+        ${opsMonthFilter}
       GROUP BY ops."monthLabel", ops."weekLabel"
     ),
     period_aggs AS (
@@ -145,6 +168,7 @@ export async function queryTrendAgg(filters: SqlFilterOpts & {
       WHERE 1=1
         ${f}
         ${weekFilter}
+        ${irMonthFilter}
       GROUP BY ir."monthLabel", ir."weekLabel"
     )
     SELECT pa."monthLabel", pa."weekLabel",

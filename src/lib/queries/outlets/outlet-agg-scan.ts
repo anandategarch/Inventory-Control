@@ -312,5 +312,13 @@ export async function queryOutletAggregateScan(
       extra: { hlt, v: 3 },
     },
     () => computeOutletAggregateScan(week, month, filters, hlt),
+    // PERF-FILTER3 / PERF-FILTER2 partial (22 Okt 2026): awaitWrite=true —
+    // the fire-and-forget after() write does NOT reliably land on this
+    // deployment (see cachedSharedQuery's awaitWrite doc). This scan feeds
+    // BOTH the analysis health-ranking AND /api/recommendations (part of
+    // the 6-endpoint filter fan-out); an unlanded row = full national
+    // recompute on EVERY filter change. ~150-300ms once per key buys the
+    // 30-min warm window for both consumers.
+    true,
   );
 }

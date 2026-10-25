@@ -32,15 +32,18 @@
 //  kelompok-resolver.ts). Result: one scan row serves every outlet
 //  AND every kelompok value.
 //
-//  Window: the consumers each want the target's most recent 12
-//  same-week months. The scan fetches the most recent
-//  PEER_BAND_SCAN_WINDOW_MONTHS (24) months of the UNION month set
-//  (months where ANY outlet has records for the weekLabel) — 2×
-//  headroom so any single outlet's last-12 is fully contained for
-//  any outlet whose active span fits in 24 months (guaranteed while
-//  total data history ≤ 24 months; the drift edge — an outlet whose
-//  data ends > 24 months before currentMonthKey — merely shows a
-//  shorter window, never wrong numbers).
+//  Window: the consumers each want the target's most recent
+//  same-week months within the dashboard lookback window. The
+//  scan fetches the most recent PEER_BAND_SCAN_WINDOW_MONTHS
+//  months of the UNION month set (months where ANY outlet has
+//  records for the weekLabel).
+//
+//  PERF-FILTER3 ("3 BULAN", 22 Okt 2026): window 24 →
+//  DASHBOARD_LOOKBACK_MONTHS (3) — user request "tarik data 3 bulan
+//  terakhir dari filter terpilih agar ringan". The cache key embeds
+//  the window (`extra.w`) so pre-change rows (w=24) can never be
+//  served to post-change consumers. The 2×-headroom design is
+//  retired with it (a 24-month scan was 8× the interactive need).
 //
 //  Freshness: cachedSharedQuery TTL 30 min + mutation-triggered
 //  invalidation ('q-peer-band-scan' is listed in invalidate.ts's
@@ -49,6 +52,7 @@
 import { withStatementTimeout, type SqlFilterOpts } from '../shared';
 import { monthWindowBound } from '../waste/shared';
 import { cachedSharedQuery } from '../query-cache';
+import { DASHBOARD_LOOKBACK_MONTHS } from '../window-config';
 import { extractKelompokFromCode } from '@/lib/kelompok-resolver';
 
 // ------------------------------------------------------------
@@ -57,9 +61,11 @@ import { extractKelompokFromCode } from '@/lib/kelompok-resolver';
 
 /**
  * Months fetched by the shared scan (union month set, ≤ currentMonthKey).
- * 2× the consumers' 12-month windows — see module header.
+ * PERF-FILTER3 ("3 BULAN"): dashboard lookback window (default 3) — see
+ * window-config.ts. The value is embedded in the cache key (`extra.w`),
+ * so changing it forks a fresh namespace instead of poisoning old rows.
  */
-export const PEER_BAND_SCAN_WINDOW_MONTHS = 24;
+export const PEER_BAND_SCAN_WINDOW_MONTHS = DASHBOARD_LOOKBACK_MONTHS;
 
 /** ±10% band tolerance — the JS twin of peerBandPredicate's SQL literal. */
 export { PEER_BAND_TOLERANCE } from './peer-band';
