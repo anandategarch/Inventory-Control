@@ -7,7 +7,7 @@
 import { NextResponse } from 'next/server';
 import { logger } from './logger';
 import { isDbUnreachable, DB_UNREACHABLE_MESSAGE } from './db-unreachable';
-import { classifyTransientDbError, TRANSIENT_ERROR_MESSAGE } from './transient-db-error';
+import { classifyTransientDbError, collectErrorMessages, TRANSIENT_ERROR_MESSAGE } from './transient-db-error';
 
 /**
  * Log error server-side + return generic 500 to client.
@@ -26,6 +26,12 @@ export function errorResponse(
 
   const isDev = process.env.NODE_ENV === 'development';
 
+  // PERF-FILTER4: prioritas db-unreachable kini dicek atas SEMUA teks
+  // error (message + cause-chain + Prisma meta) — P1001 yang tersembunyi
+  // di error.cause dulunya lolos cabang ini dan jatuh ke 500 generik.
+  const allMessages = collectErrorMessages(error);
+  const dbDown = allMessages.some((m) => isDbUnreachable(m)) || isDbUnreachable(message);
+
   // FIX (DBDOWN-1): "database tidak bisa dijangkau" (mis. project Supabase
   // paused — insiden 21 Okt 2026) BUKAN bug aplikasi, dan 500 generik
   // "Gagal memproses permintaan" membuat user tidak tahu satu-satunya jalan
@@ -33,7 +39,7 @@ export function errorResponse(
   // spesifik + flag dbUnreachable agar frontend menampilkan panduan restore.
   // Teks DB_UNREACHABLE_MESSAGE client-safe (tanpa host/schema internal);
   // detail mentah hanya ikut di development.
-  if (isDbUnreachable(message)) {
+  if (dbDown) {
     return NextResponse.json(
       {
         success: false,
@@ -55,7 +61,9 @@ export function errorResponse(
   // 21 Okt 2026). Sekarang: pesan ramah + flag machine-readable
   // `retryable:true` + `errorClass` (client-safe) agar frontend tahu
   // kapan boleh mencoba ulang otomatis.
-  const transientClass = classifyTransientDbError(message);
+  // PERF-FILTER4: klasifikasi kini menerima ERROR OBJECT (bukan hanya teks)
+  // — cek error.code (P2024/P2028/P2034, errno socket) + cause-chain.
+  const transientClass = classifyTransientDbError(error);
   if (transientClass) {
     return NextResponse.json(
       {

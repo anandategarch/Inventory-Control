@@ -24,6 +24,7 @@
 import { useQuery, keepPreviousData, useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 import type { QueryClient } from '@tanstack/react-query';
+import { waitForCriticalPathThenDelay } from '@/lib/critical-path-gate';
 import type { OutletItemsResponse } from '@/components/dashboard/resto-analysis/types';
 
 export interface OutletItemsParams {
@@ -58,8 +59,16 @@ export function buildOutletItemsQueryKey(params: OutletItemsParams) {
   return ['outlet-items', params.outletCode, params.month, params.week, params.compareWeek, params.compareMonth] as const;
 }
 
-/** The fetch — extracted verbatim from RestoAnalysis's inline queryFn. */
+/** The fetch — extracted verbatim from RestoAnalysis's inline queryFn.
+ *  PERF-FILTER4 Layer 2: outlet-items = non-kritis — menunggu analysis
+ *  outlet-scope (critical path) settle dulu (delay 2s). Saat outlet
+ *  dipilih, /api/analysis menembak ulang dengan filter outlet (key baru
+ *  → dingin) — tanpa gate, outlet-items + waste keluarga + analysis
+ *  bertabrakan di pooler seperti insiden Sep-W4. Covered di sini (bukan
+ *  di tiap call-site) karena fetcher ini dipakai bersama oleh useQuery
+ *  dan hover-prefetch. */
 export async function fetchOutletItems(params: OutletItemsParams): Promise<OutletItemsResponse> {
+  await waitForCriticalPathThenDelay(2_000);
   const p = buildOutletItemsSearchParams(params);
   const res = await fetch(`/api/outlet-items?${p.toString()}`);
   const contentType = res.headers.get('content-type') || '';

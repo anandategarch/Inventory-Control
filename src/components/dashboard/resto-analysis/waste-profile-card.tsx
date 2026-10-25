@@ -17,6 +17,7 @@
 
 import { memo, useMemo } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { waitForCriticalPathThenDelay } from '@/lib/critical-path-gate';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -51,6 +52,10 @@ export const WasteProfileCard = memo(function WasteProfileCard({
   const series = useQuery<WasteSeriesResponse>({
     queryKey: ['waste-series', monthLabel, currentWeek, null, null, null, outletCode],
     queryFn: async () => {
+      // PERF-FILTER4 Layer 2: waste-series outlet-scope = non-kritis —
+      // tunggu analysis outlet-scope (critical path, di-arm ulang saat
+      // outlet dipilih karena analysis key berubah → dingin lagi).
+      await waitForCriticalPathThenDelay(0);
       const p = new URLSearchParams();
       p.set('month', monthLabel);
       p.set('week', currentWeek);
@@ -73,6 +78,9 @@ export const WasteProfileCard = memo(function WasteProfileCard({
   const zScoreQuery = useQuery<WastePeerZScoreResponse>({
     queryKey: ['waste-peer-zscore', outletCode, monthLabel, currentWeek, kelompok],
     queryFn: async () => {
+      // PERF-FILTER4 Layer 2: waste-peer-zscore = non-kritis — tunggu
+      // analysis settle + delay 2s (setelah waste-series outlet-scope).
+      await waitForCriticalPathThenDelay(2_000);
       const p = new URLSearchParams();
       p.set('outletCode', outletCode);
       p.set('month', monthLabel);

@@ -21,6 +21,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   classifyTransientDbError,
+  collectErrorMessages,
   TRANSIENT_ERROR_MESSAGE,
 } from '@/lib/transient-db-error';
 import { errorResponse } from '@/lib/error-response';
@@ -358,5 +359,163 @@ describe('classifyTransientDbError (PERF-FILTER3 — insiden 22 Okt 2026)', () =
     expect(body.retryable).toBe(true);
     expect(body.errorClass).toBe('pool-timeout');
     expect(String(body.error)).toMatch(/^Server database sedang sibuk/);
+  });
+});
+
+// ============================================================
+//  PERF-FILTER4 (25 Okt 2026): insiden "Gagal Memuat Analisis"
+//  September WEEK 4 — laporan user ke-3. Reproduksi live: fan-out
+//  6 endpoint paralel → analysis/waste-top-items/waste-rate-league
+//  500 @54-58s; ketiganya SUKSES solo. Root cause dua lapis:
+//    (a) kontensi pooler (→ critical-path-gate, Layer 2), dan
+//    (b) error yang muncul TIDAK cocok regex message manapun —
+//        klasifikasi lama buta terhadap error.code + cause-chain.
+//  Blok ini menguji lapisan (b): klasifikasi by Prisma P-code,
+//  Node errno, cause-chain, dan prioritas db-unreachable atas
+//  SEMUA teks error.
+// ============================================================
+describe('classifyTransientDbError — by ERROR CODE (PERF-FILTER4)', () => {
+  // Bentuk produksi PrismaClientKnownRequestError: {code, message,
+  // meta} — message-nya bisa generik dan TIDAK memuat signature.
+  const prismaError = (code: string, message: string) =>
+    Object.assign(new Error(message), { code, meta: {} });
+
+  it('P2024 via .code (message generik) → pool-timeout', () => {
+    expect(classifyTransientDbError(prismaError('P2024', 'Error querying the database'))).toBe('pool-timeout');
+  });
+
+  it('P2028 via .code (message generik) → statement-timeout', () => {
+    expect(classifyTransientDbError(prismaError('P2028', 'Error occurred during query execution'))).toBe('statement-timeout');
+  });
+
+  it('P2034 via .code (transaction failed — koneksi putus di tengah transaksi) → connection-terminated', () => {
+    // Insiden Sep-W4: pooler kick koneksi saat jenuh → interactive
+    // transaction gagal. P2034 TIDAK ada di daftar pola lama sama sekali.
+    expect(
+      classifyTransientDbError(prismaError('P2034', 'Transaction failed due to a write conflict or a connection failure')),
+    ).toBe('connection-terminated');
+  });
+
+  it('P2034 teks saja tanpa .code → connection-terminated', () => {
+    expect(classifyTransientDbError(new Error('Transaction failed due to a connection failure'))).toBe('connection-terminated');
+    expect(classifyTransientDbError(new Error('Transaction failed due to a write conflict'))).toBe('connection-terminated');
+  });
+
+  it('Node errno via .code (ECONNRESET/ETIMEDOUT/EPIPE) → connection-terminated', () => {
+    expect(classifyTransientDbError(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }))).toBe('connection-terminated');
+    expect(classifyTransientDbError(Object.assign(new Error('connect ETIMEDOUT 10.0.0.1:5432'), { code: 'ETIMEDOUT' }))).toBe('connection-terminated');
+    expect(classifyTransientDbError(Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))).toBe('connection-terminated');
+  });
+
+  it('kode Node LAIN (ERR_*) TIDAK ikut transient — allowlist exact-match', () => {
+    expect(classifyTransientDbError(Object.assign(new Error('The "fetch" failed'), { code: 'ERR_INVALID_ARG_TYPE' }))).toBeNull();
+    expect(classifyTransientDbError(Object.assign(new Error('boom'), { code: 'EACCES' }))).toBeNull();
+    expect(classifyTransientDbError(Object.assign(new Error('boom'), { code: 'UNKNOWN_PRISMA_CODE' }))).toBeNull();
+  });
+
+  it('teks errno NAKED di message (tanpa .code) → connection-terminated', () => {
+    expect(classifyTransientDbError(new Error('read ECONNRESET'))).toBe('connection-terminated');
+    expect(classifyTransientDbError(new Error('connect ETIMEDOUT 127.0.0.1:6543'))).toBe('connection-terminated');
+    expect(classifyTransientDbError(new Error('getaddrinfo EAI_AGAIN db.example.com'))).toBe('connection-terminated');
+    expect(classifyTransientDbError(new Error('socket connection timeout'))).toBe('connection-terminated');
+  });
+});
+
+describe('classifyTransientDbError — cause-chain (PERF-FILTER4)', () => {
+  it('signature transient tersembunyi di error.cause → terklasifikasi', () => {
+    const err = new Error('Error occurred during query execution', {
+      cause: new Error('read ECONNRESET'),
+    });
+    expect(classifyTransientDbError(err)).toBe('connection-terminated');
+  });
+
+  it('rantai cause 2 level → signature di level terdalam terbaca', () => {
+    const err = new Error('Request failed', {
+      cause: new Error('fetch failed', { cause: new Error('Connection terminated unexpectedly') }),
+    });
+    expect(classifyTransientDbError(err)).toBe('connection-terminated');
+  });
+
+  it('Prisma meta.cause berisi signature → terklasifikasi', () => {
+    const err = Object.assign(new Error('Error querying the database'), {
+      meta: { cause: 'Timed out fetching a new connection from the connection pool' },
+    });
+    expect(classifyTransientDbError(err)).toBe('pool-timeout');
+  });
+
+  it('semua teks bersih → tetap null (tidak over-classify)', () => {
+    const err = new Error('Wrapper', { cause: new Error('inner biasa tanpa signature') });
+    expect(classifyTransientDbError(err)).toBeNull();
+  });
+
+  it('cause-chain SIKLIS tidak menggantung (depth cap)', () => {
+    const a: { message: string; cause?: unknown } = { message: 'a' };
+    const b: { message: string; cause?: unknown } = { message: 'b', cause: a };
+    a.cause = b;
+    expect(classifyTransientDbError(a as unknown as Error)).toBeNull();
+  });
+});
+
+describe('errorResponse — PERF-FILTER4 integrasi', () => {
+  it('P2034 via .code (message generik) → 500 retryable:true + errorClass + pesan amber', async () => {
+    // Bentuk insiden Sep-W4 yang lolos klasifikasi lama: error Prisma
+    // dengan code P2034 tapi message generik — dulunya jatuh ke 500
+    // "Gagal memproses permintaan" tanpa retryable → kartu MERAH.
+    const err = Object.assign(new Error('Error occurred during query execution'), { code: 'P2034' });
+    const res = errorResponse(err, 'analysis');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(res.status).toBe(500);
+    expect(body.retryable).toBe(true);
+    expect(body.errorClass).toBe('connection-terminated');
+    expect(body.error).toBe(TRANSIENT_ERROR_MESSAGE);
+    expect(body.error).not.toBe('Gagal memproses permintaan');
+  });
+
+  it('ECONNRESET via cause-chain → retryable:true (kartu amber + auto-retry)', async () => {
+    const err = new Error('Error querying the database', { cause: new Error('read ECONNRESET') });
+    const res = errorResponse(err, 'waste-top-items');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.retryable).toBe(true);
+    expect(body.errorClass).toBe('connection-terminated');
+  });
+
+  it('P1001 tersembunyi di cause-chain TETAP menang → cabang dbUnreachable (bukan transient)', async () => {
+    // Prioritas db-down dijaga atas SEMUA teks (message + cause):
+    // P1001 di cause dulunya lolos → salah klaim transient.
+    const err = new Error('Request failed', {
+      cause: new Error("Can't reach database server at `aws-0-ap-southeast-1.pooler.supabase.com:6543`"),
+    });
+    const res = errorResponse(err, 'analysis');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.dbUnreachable).toBe(true);
+    expect(body.retryable).toBeUndefined();
+    expect(String(body.error)).toMatch(/^Database tidak dapat dijangkau/i);
+  });
+
+  it('error aplikasi murni TETAP 500 generik tanpa retryable (tidak over-classify)', async () => {
+    const err = Object.assign(new Error('TypeError: cannot read property of undefined'), { code: 'ERR_JS' });
+    const res = errorResponse(err, 'analysis');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.retryable).toBeUndefined();
+    expect(body.error).toBe('Gagal memproses permintaan');
+  });
+});
+
+describe('collectErrorMessages (PERF-FILTER4 helper)', () => {
+  it('mengumpulkan message + cause berjenjang', () => {
+    const msgs = collectErrorMessages(
+      new Error('outer', { cause: new Error('inner', { cause: new Error('deepest') }) }),
+    );
+    expect(msgs).toEqual(['outer', 'inner', 'deepest']);
+  });
+
+  it('menerima input string', () => {
+    expect(collectErrorMessages('plain string')).toEqual(['plain string']);
+  });
+
+  it('input kosong → array kosong', () => {
+    expect(collectErrorMessages(null)).toEqual([]);
+    expect(collectErrorMessages(undefined)).toEqual([]);
+    expect(collectErrorMessages({ odd: true })).toEqual([]);
   });
 });

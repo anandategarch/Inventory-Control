@@ -26,6 +26,7 @@
 
 import { memo, useMemo } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { waitForCriticalPathThenDelay } from '@/lib/critical-path-gate';
 import { Card, CardContent } from '@/components/ui/card';
 import { CalendarClock } from 'lucide-react';
 import { useDashboard } from '@/hooks/useDashboard';
@@ -63,6 +64,11 @@ export const WasteTab = memo(function WasteTab() {
   const { data, isLoading, error } = useQuery<WasteSeriesResponse>({
     queryKey: ['waste-series', monthLabel, currentWeek, areaParam, kelompokParam, picParam],
     queryFn: async () => {
+      // PERF-FILTER4 Layer 2: waste-series = non-kritis — beri jalan pada
+      // analysis (critical path) agar fan-out tidak menjenuhkan pooler
+      // (insiden 500 beruntun Sep-W4). Delay 0: pertama bangun setelah
+      // analysis settle. Kombinasi hangat: gate tidak armed → nol delay.
+      await waitForCriticalPathThenDelay(0);
       const p = new URLSearchParams();
       // enabled guards null/empty — the '' fallbacks below never reach the wire.
       p.set('month', monthLabel || '');

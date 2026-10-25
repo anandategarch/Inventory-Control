@@ -16,6 +16,7 @@
 //  import issues.
 // ============================================================
 import { useQuery, keepPreviousData, useQueryClient } from '@tanstack/react-query';
+import { criticalPathStart } from '@/lib/critical-path-gate';
 import { useCallback } from 'react';
 import type { QueryClient } from '@tanstack/react-query';
 import type { AnalysisParams } from './types';
@@ -93,7 +94,21 @@ export function useAnalysis(params: AnalysisParams) {
 
   return useQuery({
     queryKey: buildAnalysisQueryKey(params),
-    queryFn: () => fetchAnalysis(searchParams),
+    // PERF-FILTER4 Layer 2: analysis = CRITICAL PATH. Saat queryFn ini
+    // berjalan (kombinasi DINGIN — cache miss di client & server), gate
+    // di-arm sehingga query non-kritis (waste family, pareto,
+    // recommendations) menunggu analysis settle dulu — memutus kontensi
+    // pooler Supabase yang menyebabkan 500 beruntun pada fan-out 6
+    // endpoint (insiden Sep-W4). Kombinasi hangat: queryFn tidak jalan
+    // → gate tidak armed → nol delay untuk semua pihak.
+    queryFn: async () => {
+      const settleGate = criticalPathStart(searchParams.toString());
+      try {
+        return await fetchAnalysis(searchParams);
+      } finally {
+        settleGate();
+      }
+    },
     enabled: Boolean(params.month && params.week),
     placeholderData: keepPreviousData,
     // FIX (504-RETRY): retry once on 504/timeout — gateway proxy may timeout
@@ -143,7 +158,17 @@ export function prefetchAnalysis(
   const searchParams = buildAnalysisSearchParams(params);
   void queryClient.prefetchQuery({
     queryKey: buildAnalysisQueryKey(params),
-    queryFn: () => fetchAnalysis(searchParams),
+    // PERF-FILTER4 Layer 2: prefetch hover (PERF-FILTER1-C) menjalankan
+    // compute dingin yang SAMA dengan useAnalysis — arm gate juga di sini
+    // (TanStack dedupe dengan useAnalysis per key, jadi tidak double-arm).
+    queryFn: async () => {
+      const settleGate = criticalPathStart(searchParams.toString());
+      try {
+        return await fetchAnalysis(searchParams);
+      } finally {
+        settleGate();
+      }
+    },
     staleTime: ANALYSIS_STALE_TIME,
     gcTime: ANALYSIS_GC_TIME,
   });

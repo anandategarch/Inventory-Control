@@ -23,6 +23,7 @@
 // ============================================================
 
 import { useQuery, keepPreviousData, useQueryClient } from '@tanstack/react-query';
+import { waitForCriticalPathThenDelay } from '@/lib/critical-path-gate';
 import { useShallow } from 'zustand/shallow';
 import { useDashboard } from './useDashboard';
 import type { Recommendation } from '@/components/dashboard/PrioritySummaryCard';
@@ -114,6 +115,10 @@ export function useRecommendations(
   return useQuery<RecommendationsResponse>({
     queryKey: recommendationsKey(scope, outlet),
     queryFn: async () => {
+      // PERF-FILTER4 Layer 2: recommendations = non-kritis — tunggu
+      // analysis (critical path) settle + delay 1,5s (bangun awal tapi
+      // tidak bersamaan dengan waste-series).
+      await waitForCriticalPathThenDelay(1_500);
       const p = new URLSearchParams();
       p.set('month', scope.monthLabel!);
       p.set('week', scope.currentWeek!);

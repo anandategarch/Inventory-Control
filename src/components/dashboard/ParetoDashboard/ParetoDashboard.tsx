@@ -11,6 +11,7 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { waitForCriticalPathThenDelay } from '@/lib/critical-path-gate';
 import { Button } from '@/components/ui/button';
 import { Loader2, TrendingDown, Package, Store, MapPin, Users, Boxes, RotateCcw, ChevronsUpDown } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -55,6 +56,10 @@ export function ParetoDashboard({ analysisData }: { analysisData?: any }) {
   const { data: paretoData, isLoading, error, refetch } = useQuery<ParetoData>({
     queryKey: ['pareto', monthLabel, currentWeek, area, kelompok, pic, parentDim, childDim],
     queryFn: async () => {
+      // PERF-FILTER4 Layer 2: pareto = non-kritis — tunggu analysis
+      // (critical path) settle + delay 3s (bergiliran dengan keluarga
+      // waste — tab ini hanya fetch saat tab dikunjungi).
+      await waitForCriticalPathThenDelay(3_000);
       const p = new URLSearchParams({
         month: monthLabel!,
         week: currentWeek!,

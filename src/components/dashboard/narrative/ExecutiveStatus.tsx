@@ -27,6 +27,7 @@
 
 import { memo } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { waitForCriticalPathThenDelay } from '@/lib/critical-path-gate';
 import { Card } from '@/components/ui/card';
 import { TrendingUp, TrendingDown, Minus, ArrowRight } from 'lucide-react';
 import { fmtIDR, fmtNum, fmtPct, numberColorNeg } from '@/lib/format';
@@ -192,6 +193,10 @@ export const ExecutiveStatus = memo(function ExecutiveStatus({ data }: { data: A
   >({
     queryKey: ['waste-series', scopeMonth, scopeWeek, scopeAreaParam, scopeKelompokParam, scopePicParam],
     queryFn: async () => {
+      // PERF-FILTER4 Layer 2: waste-series (exec line) = non-kritis —
+      // beri jalan pada analysis (critical path) agar fan-out tidak
+      // menjenuhkan pooler (insiden 500 beruntun Sep-W4). Delay 0 ms.
+      await waitForCriticalPathThenDelay(0);
       const p = new URLSearchParams();
       p.set('month', scopeMonth || '');
       p.set('week', scopeWeek || '');

@@ -49,6 +49,7 @@
 
 import { memo, Fragment, useState } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { waitForCriticalPathThenDelay } from '@/lib/critical-path-gate';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -311,6 +312,10 @@ export const WasteParetoCard = memo(function WasteParetoCard({
     // only the susut/trial views get their own entries.
     queryKey: ['waste-top-items', monthLabel, currentWeek, area, kelompok, pic, ...(metric === 'waste' ? [] : [metric])],
     queryFn: async () => {
+      // PERF-FILTER4 Layer 2: waste-top-items = non-kritis — tunggu
+      // analysis (critical path) settle + delay 3s (bangun bergiliran
+      // setelah waste-series supaya tidak burst kontensi kedua).
+      await waitForCriticalPathThenDelay(3_000);
       const p = new URLSearchParams();
       p.set('month', monthLabel);
       p.set('week', currentWeek);

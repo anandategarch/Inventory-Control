@@ -44,6 +44,7 @@
 
 import { memo, useMemo, useState } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { waitForCriticalPathThenDelay } from '@/lib/critical-path-gate';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -166,6 +167,10 @@ export const WasteRateLeagueCard = memo(function WasteRateLeagueCard({
   const { data, isLoading, error } = useQuery<WasteRateLeagueResponse>({
     queryKey: ['waste-rate-league', monthLabel, currentWeek, area, kelompok, pic],
     queryFn: async () => {
+      // PERF-FILTER4 Layer 2: waste-rate-league = non-kritis TERBERAT di
+      // keluarga waste (dulu 504 @60s) — tunggu analysis settle + delay 6s
+      // (terakhir bangun, supaya pooler tidak dijenuhkan burst kedua).
+      await waitForCriticalPathThenDelay(6_000);
       const p = new URLSearchParams();
       p.set('month', monthLabel);
       p.set('week', currentWeek);

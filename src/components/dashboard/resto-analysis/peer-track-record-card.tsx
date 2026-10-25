@@ -14,6 +14,7 @@
 
 import { memo } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { waitForCriticalPathThenDelay } from '@/lib/critical-path-gate';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -74,6 +75,9 @@ export const PeerTrackRecordCard = memo(function PeerTrackRecordCard({
     // kelompok scopes the peer set (same param semantics as the Peer tab).
     queryKey: ['peer-track-record', outletCode, monthLabel, currentWeek, kelompok],
     queryFn: async () => {
+      // PERF-FILTER4 Layer 2: non-kritis — tunggu analysis (critical path)
+      // settle + delay bergiliran antar kartu resto (insiden fan-out Sep-W4).
+      await waitForCriticalPathThenDelay(2000);
       const p = new URLSearchParams();
       p.set('outletCode', outletCode);
       p.set('month', monthLabel);

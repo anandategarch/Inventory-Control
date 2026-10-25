@@ -39,6 +39,7 @@
 
 import { memo, useMemo } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { waitForCriticalPathThenDelay } from '@/lib/critical-path-gate';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -223,6 +224,10 @@ export const WasteQuadrantCard = memo(function WasteQuadrantCard({
   const { data, isLoading, error } = useQuery<WasteQuadrantResponse>({
     queryKey: ['waste-top-items', monthLabel, currentWeek, area, kelompok, pic],
     queryFn: async () => {
+      // PERF-FILTER4 Layer 2: waste-top-items = non-kritis — tunggu
+      // analysis (critical path) settle + delay 3s (bangun bergiliran
+      // setelah waste-series supaya tidak burst kontensi kedua).
+      await waitForCriticalPathThenDelay(3_000);
       const p = new URLSearchParams();
       p.set('month', monthLabel);
       p.set('week', currentWeek);
