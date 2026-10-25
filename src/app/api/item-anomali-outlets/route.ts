@@ -114,7 +114,7 @@ export async function GET(req: NextRequest) {
     const pic = params.pic ?? null;
 
     // 3. Resolve month label to the actual DB case (handles "AGUSTUS 2026"
-    //    vs "Agustus 2026" mismatch). Same pattern as /api/area-item-heatmap.
+    //    vs "Agustus 2026" mismatch). Shared month-case resolution pattern.
     const resolver = await getMonthResolver();
     const month = resolveMonthLabel(rawMonth, resolver) || rawMonth;
 

@@ -10,9 +10,9 @@
 // → Postgres syntax error at runtime, 500s on every drilldown with an active
 // filter).
 //
-// These tests capture the composed SQL text (NO DB) for the 3 refactored
-// callers (queryItemAnomaliOutlets, queryFlipDrilldown, queryHeatmapCellDetail)
-// and queryParetoNested, then assert:
+// These tests capture the composed SQL text (NO DB) for the 2 refactored
+// callers (queryItemAnomaliOutlets, queryFlipDrilldown — queryHeatmapCellDetail
+// was removed with the Heatmap tab) and queryParetoNested, then assert:
 //   1. JUNCTION SAFETY — no keyword glued to the previous token, in BOTH
 //      directions of every optional fragment (no filters / with filters,
 //      extraWhere present — the exact matrix that produced the bug).
@@ -22,7 +22,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { queryItemAnomaliOutlets } from '@/lib/queries/items/item-anomali-outlets';
 import { queryFlipDrilldown } from '@/lib/queries/items/flip-drilldown';
-import { queryHeatmapCellDetail } from '@/lib/queries/heatmap';
 import { queryParetoNested } from '@/lib/queries/pareto/nested';
 
 const { mockQueryRaw, mockExecuteRaw } = vi.hoisted(() => ({
@@ -165,13 +164,6 @@ describe('H-12 SQL junction safety (no missing-whitespace keyword glue)', () => 
     expect(capturedSqlTexts()[0]).toContain('IS NOT NULL AND ir."outletId" IN (SELECT id FROM "Outlet" WHERE code = ?)');
   });
 
-  it('heatmap cell detail — no filters (extraWhere present, filter fragment empty)', async () => {
-    queueResults([]);
-    await queryHeatmapCellDetail('WEEK 4', 'Juli 2026', NO_FILTERS, 'Bandung', 'CABAI');
-    expect(mockQueryRaw).toHaveBeenCalledTimes(1);
-    expectNoGluedKeywords();
-  });
-
   it('pareto nested — item→outlet, area→outlet, outlet→item (both steps)', async () => {
     const parent = { name: 'FAKE', totalAbsNominal: 10, nominalDeviasi: 3, qtyDeviasi: 2, outletCount: 5 };
     const combos: Array<['item' | 'area' | 'outlet', 'item' | 'outlet']> = [
@@ -212,16 +204,6 @@ describe('H-12 structural invariants (per caller)', () => {
     expect(p1).toContain('ir."qtyDeviasi" IS NOT NULL');
     expect(p1).toContain('COALESCE(SUM(ir."qtyDeviasi"), 0) as "qtyDeviasiSigned"');
     expect(p1).toContain('ORDER BY ABS(SUM(ir."qtyDeviasi")) DESC NULLS LAST');
-  });
-
-  it('heatmap cell detail: no PIC join + area predicate + LIMIT cap', async () => {
-    queueResults([]);
-    await queryHeatmapCellDetail('WEEK 4', 'Juli 2026', NO_FILTERS, 'Bandung', 'CABAI');
-    const sql = capturedSqlTexts()[0];
-    expect(sql).not.toContain('OutletPIC');
-    expect(sql).toContain('AND ir.area = ?');
-    expect(sql).toContain('GROUP BY o.code, o.name, ir.area, ir."akunPenyesuaian"');
-    expect(sql).toContain('LIMIT ?');
   });
 
   it('pareto nested outlet child: label/area display cols + GROUP BY extension', async () => {

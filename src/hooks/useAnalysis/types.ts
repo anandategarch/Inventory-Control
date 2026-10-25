@@ -375,7 +375,7 @@ export interface AnalysisData {
   // DB cache entry (stale-while-revalidate). The client MAY use this to show a
   // "data might be stale" indicator or trigger a sooner refetch. Currently set
   // by withCacheAndDedup on the routes that use it (pareto, recommendations,
-  // outlet-items, item-history, drilldown, heatmap).
+  // outlet-items, item-history, drilldown).
   // /api/analysis has its own pipeline (not using withCacheAndDedup yet) so it
   // does not set this flag — added here for type-safety + future use.
   stale?: boolean;

@@ -55,7 +55,7 @@
 
 import { useEffect, useRef } from 'react';
 import type { QueryClient } from '@tanstack/react-query';
-import { prefetchAnalysis, prefetchHeatmap, type AnalysisParams, type StatusData } from '@/hooks/useAnalysis';
+import { prefetchAnalysis, type AnalysisParams, type StatusData } from '@/hooks/useAnalysis';
 import { findAutoCompareForStatus } from '@/lib/auto-compare';
 
 export interface UseDashboardEffectsParams {
@@ -64,13 +64,6 @@ export interface UseDashboardEffectsParams {
   currentWeek: string | null;
   comparisonWeek: string | null;
   comparisonMonth: string | null;
-  // FIX (H-12 / prefetchHeatmap filter mismatch): the warming effect needs the
-  // CURRENT dashboard filters so the heatmap prefetch key matches the card's
-  // live key (same reasoning as the resolved-compare PERF-1 fix below — the
-  // key must be built from the same state the live query will use).
-  area: string | null;
-  kelompok: string | null;
-  pic: string | null;
   // FIX (PERF-1 / AUDIT-FE): the hook now needs ONLY the atomic period setter.
   // Replaces the old setMonth/setWeek/setCompareWeek props whose three separate
   // store commits caused the double /api/analysis fetch.
@@ -84,9 +77,6 @@ export function useDashboardEffects({
   currentWeek,
   comparisonWeek,
   comparisonMonth,
-  area,
-  kelompok,
-  pic,
   setPeriod,
   queryClient,
 }: UseDashboardEffectsParams): void {
@@ -203,14 +193,9 @@ export function useDashboardEffects({
       pic: null,
     };
     prefetchAnalysis(queryClient, params);
-    // PERF-HEATMAP: also prefetch heatmap (independent API, not part of
-    // analysis). FIX (H-12 / prefetchHeatmap filter mismatch): carries the
-    // store's CURRENT filters (normalized inside prefetchHeatmap exactly
-    // like the heatmap card) so the warmed key matches the card's live key
-    // by construction — previously it omitted them, so the prefetch was a
-    // wasted fetch whenever a filter was active.
-    prefetchHeatmap(queryClient, { month: params.month, week: params.week, area, kelompok, pic });
-    // Filters participate in the effect deps so a filter change re-syncs
-    // the warming state (belt-and-braces for the key-parity invariant).
-  }, [status, queryClient, monthLabel, currentWeek, area, kelompok, pic]);
+    // HEATMAP-REMOVE: the old prefetchHeatmap() call (background warm-up for
+    // /api/area-item-heatmap) was removed together with the Heatmap tab —
+    // it added one more concurrent request to the initial fan-out.
+    // Filters no longer participate in this effect's deps.
+  }, [status, queryClient, monthLabel, currentWeek]);
 }

@@ -69,8 +69,6 @@ export async function invalidateAnalysisCache(): Promise<void> {
   // ALL cached data, not just /api/analysis. Without this, pareto/recommendations/
   // export-report serve stale data for 5 min after mutation.
   //
-  // PERF-CACHE-08: also invalidate `heatmap` (added in this task — Area × Item
-  // matrix reads from the same InventoryRecord table that mutations affect).
   // PERF-API-01/02/03 (Task PERF-API): added `outlet-items`, `item-history`,
   // and `drilldown` to the invalidation list — these routes now use
   // AggregationCache (5-min TTL via withCacheAndDedup) and must be cleared
@@ -108,9 +106,8 @@ export async function invalidateAnalysisCache(): Promise<void> {
   // H-8 QUICK WIN 6a: added `item-search` (autocomplete LIKE over the current
   // period's records — mutations change item names/records, and the 60s TTL
   // cache must not outlive a mutation).
-  // H-8 QUICK WIN 6b: added `heatmap-cell-detail` (per-outlet drill-down for
-  // one area × item cell — reads the same InventoryRecord rows the parent
-  // heatmap route reads, so mutations affect it identically).
+  // HEATMAP-REMOVE: `heatmap` + `heatmap-cell-detail` entries deleted with
+  // the Heatmap tab + both /api/area-item-heatmap routes.
   // TAHAP-2 / P2-9: added the shared per-query cache routes used by BOTH the
   // analysis + export pipelines (q-rules = evaluateRulesSql, q-hist-rules =
   // evaluateHistoricalRulesSql, q-variance, q-kpis, q-topcat, q-trend). A
@@ -126,7 +123,7 @@ export async function invalidateAnalysisCache(): Promise<void> {
   // the Δ chain).
   const routes = [
     'analysis', 'pareto', 'recommendations',
-    'export-report', 'heatmap', 'outlet-items', 'item-history', 'drilldown',
+    'export-report', 'outlet-items', 'item-history', 'drilldown',
     'item-trend', 'item-peer-comparison', 'item-trend-rank', 'flip-ranking',
     'flip-ranking-drilldown', 'item-anomali-outlets',
     'peer-comparison', 'peer-comparison-items', 'peer-comparison-trend',
@@ -141,7 +138,7 @@ export async function invalidateAnalysisCache(): Promise<void> {
     // 5-min TTL (plus the unbounded SWR stale-serve window) — the exact
     // stale-data incident class this list exists to prevent.
     'peer-comparison-top-items',
-    'price-effect', 'item-search', 'heatmap-cell-detail',
+    'price-effect', 'item-search',
     'benchmark-opportunity', 'change-analysis', 'change-analysis-items',
     'q-rules', 'q-hist-rules', 'q-variance', 'q-kpis', 'q-topcat', 'q-trend',
     'q-outlet-agg',

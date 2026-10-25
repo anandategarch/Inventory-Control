@@ -66,7 +66,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Resolve month label case (DB may have "AGUSTUS 2026" vs "Agustus 2026")
-    // BEFORE building the cache key — same PERF-HEATMAP fix as the heatmap route,
+    // BEFORE building the cache key — same PERF-HEATMAP fix pattern,
     // so "Agustus 2026" and "agustus 2026" share one cache entry.
     const monthResolver = await getMonthResolver();
     const month = resolveMonthLabel(monthRaw, monthResolver) || monthRaw;

@@ -38,7 +38,7 @@ export function DrillDownDrawer() {
   // (drilldown.months). The drawer then requests the comma-joined
   // monthLabel — /api/drilldown's documented multi-period path (each label
   // resolved to DB case + WHERE IN server-side). Legacy drill callers (Item
-  // tab TopItems, Historical cards, Heatmap sheet) leave months unset →
+  // tab TopItems, Historical cards) leave months unset →
   // drillMonthParam === the store's monthLabel, byte-identical scope to the
   // pre-WASTE-DRILL behavior.
   const drillMonths = drilldown.months && drilldown.months.length > 0 ? drilldown.months : null;

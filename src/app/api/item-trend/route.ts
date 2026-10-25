@@ -119,7 +119,7 @@ export async function GET(req: NextRequest) {
           };
         }
 
-        // Build filter opts (same pattern as heatmap route).
+        // Build filter opts (shared explore-route pattern).
         // NOTE: itemName is NOT passed through filters — queryItemTrendTimeline
         // applies an EXACT match (`i.name = ${itemName}`) in its WHERE clause
         // instead of buildSqlFilters' LIKE (which would over-match).

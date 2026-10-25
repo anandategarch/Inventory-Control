@@ -45,7 +45,7 @@ interface DashboardStore {
     // aggregate over a multi-month same-week window, so their drill passes
     // the window's monthLabels here (the drawer then requests comma-joined
     // monthLabel — /api/drilldown's multi-period path). Legacy drill callers
-    // (Item tab TopItems, Historical cards, Heatmap sheet, …) pass only
+    // (Item tab TopItems, Historical cards, …) pass only
     // {outletCode, itemName} → months undefined → the drawer keeps its
     // current-month scope exactly as before (object replace, no stale mix).
     months?: string[] | null;

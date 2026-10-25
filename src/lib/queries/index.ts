@@ -46,4 +46,5 @@ export * from './historical';
 // collision with src/app/api/analysis/services/growth-drivers.ts — callers
 // import directly from '@/lib/queries/growth-drivers' instead.)
 export * from './health-ranking';
-export * from './heatmap';
+// HEATMAP-REMOVE: './heatmap' (queryAreaItemHeatmap + queryHeatmapCellDetail)
+// was deleted together with the Heatmap tab + both /api/area-item-heatmap routes.

@@ -4,8 +4,9 @@
 //  src/lib/validation.ts (483 LOC). One schema per consumer route:
 //  /api/analysis, /api/drilldown, /api/outlet-items,
 //  /api/item-history, /api/recommendations, /api/pareto,
-//  /api/change-analysis (+/items), /api/area-item-heatmap
-//  (+/cell-detail), /api/item-trend.
+//  /api/change-analysis (+/items), /api/item-trend.
+//  HEATMAP-REMOVE: heatmapQuerySchema (/api/area-item-heatmap + /cell-detail)
+//  was deleted together with both routes.
 // ============================================================
 import { z } from 'zod';
 import {
@@ -116,22 +117,6 @@ export const changeAnalysisQuerySchema = z.object({
 export const changeAnalysisItemsQuerySchema = changeAnalysisQuerySchema.extend({
   outletCode: outletCodeSchema,
 });
-
-// /api/area-item-heatmap GET query params (BUG-A-01 from orphaned 400b538)
-export const heatmapQuerySchema = z.object({
-  // FIX (BUGHUNT-A2): free-form month lacked the control-char gate (shared
-  // monthLabelSchema has it; this inline field didn't) — see noControlChars.
-  month: z.string().min(3).max(50).refine(noControlChars),
-  week: weekLabelSchema,
-  metric: z.enum(['absNominalDeviasi', 'nominalWaste', 'nominalSusut', 'pctQtyDeviasiToBom', 'recordCount']).optional(),
-  itemLimit: z.coerce.number().int().min(5).max(100).optional(),
-  mode: z.enum(['pareto80', 'top']).optional(),
-  area: areaSchema,
-  kelompok: kelompokSchema,
-  outlet: outletCodeSchema,
-  item: itemNameSchema,
-  pic: picSchema,
-}).strict();
 
 // /api/item-trend GET query params (TREND-BACKEND — per-item QTY fluctuation
 // timeline across ALL periods). `month` + `week` are optional and used only

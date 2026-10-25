@@ -25,8 +25,6 @@
 //                       BomCorrelationFinding, etc.) — ~330 LOC
 //    ./fetchAnalysis  — fetchAnalysis(params) HTTP helper used by
 //                       useAnalysis + prefetchAnalysis — ~55 LOC
-//    ./prefetchHeatmap — prefetchHeatmap(queryClient, params)
-//                       background warm-up for heatmap card — ~35 LOC
 //    ./useAnalysis    — useAnalysis hook + buildAnalysisQueryKey +
 //                       ANALYSIS_STALE_TIME/GC_TIME constants +
 //                       prefetchAnalysis + usePrefetchAnalysis — ~135 LOC
@@ -39,7 +37,6 @@
 // ============================================================
 export * from './types';
 export * from './fetchAnalysis';
-export * from './prefetchHeatmap';
 export * from './useAnalysis';
 export * from './useStatus';
 export * from './useDrilldown';

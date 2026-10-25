@@ -195,7 +195,7 @@ export async function queryWasteTopItems(
   }
 
   // Round trip 2 — per-(item, outlet) breakdown for the top-N items only
-  // (Prisma.join for the IN list — same pattern as heatmap.ts item filter).
+  // (Prisma.join for the IN list — shared Prisma IN-filter pattern).
   // FIX 1 applies here too: monthsActive = distinct months with waste > 0.
   //
   // W11 (additive): two more same-scan SUMs — the per-outlet susut/trial

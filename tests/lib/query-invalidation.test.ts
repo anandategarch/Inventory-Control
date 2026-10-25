@@ -43,8 +43,6 @@ describe('invalidateAllData (BUG-3-b B1 regression)', () => {
       'item-history',
       'peer-comparison',
       'recommendations',
-      'area-item-heatmap',
-      'heatmap-cell-detail',
       'item-trend',
       'item-trend-rank',
       'item-search',

@@ -23,7 +23,6 @@
 //    • tabs/PeerTab          — peer comparison (lazy)
 //    • tabs/ParetoTab        — 80/20 Pareto analysis
 //    • tabs/HistoricalTab    — Z-Score + multi-period + BOM correlation (lazy) — VH-2
-//    • tabs/HeatmapTab       — Area × Item heatmap (lazy, self-fetch) — VH-2
 //    • tabs/WasteTab         — Deep Waste Analysis: multi-month waste
 //      network view + Pareto + anomali (lazy, self-fetch) — DEEP-WASTE-1/2
 //    • useDashboardEffects  — 2 useEffects (atomic auto-select + cache warming)
@@ -58,8 +57,7 @@ const ItemTab = lazy(() => import('@/components/dashboard/tabs/ItemTab').then(m 
 const PeerTab = lazy(() => import('@/components/dashboard/tabs/PeerTab').then(m => ({ default: m.PeerTab })));
 const ParetoTab = lazy(() => import('@/components/dashboard/tabs/ParetoTab').then(m => ({ default: m.ParetoTab })));
 const HistoricalTab = lazy(() => import('@/components/dashboard/tabs/HistoricalTab').then(m => ({ default: m.HistoricalTab })));
-const HeatmapTab = lazy(() => import('@/components/dashboard/tabs/HeatmapTab').then(m => ({ default: m.HeatmapTab })));
-// DEEP-WASTE-1/2: lazy + self-fetch (HeatmapTab pattern) — the tab pulls
+// DEEP-WASTE-1/2: lazy + self-fetch — the tab pulls
 // /api/waste-series + /api/waste-top-items itself, no analysis-payload prop.
 const WasteTab = lazy(() => import('@/components/dashboard/tabs/WasteTab').then(m => ({ default: m.WasteTab })));
 import { ExportDialog } from '@/components/dashboard/ExportDialog';
@@ -86,7 +84,7 @@ import {
   EmptyState, LoadingState, ErrorState, ScrollToTop, LayerHeader,
 } from '@/components/dashboard/shared';
 import {
-  Activity, History, LayoutGrid, Loader2, MapPin, Store, Trash2, TrendingDown, TrendingUp,
+  Activity, History, Loader2, MapPin, Store, Trash2, TrendingDown, TrendingUp,
 } from 'lucide-react';
 
 // ItemDeepDive — lazy-loaded (heavy). Custom spinner fallback.
@@ -145,17 +143,12 @@ export default function DashboardPage() {
   // 2 useEffect hooks: combined auto-select (month+week+compare resolved in
   // ONE atomic setPeriod — PERF-1 fix) + cache warming with resolved compare.
   // Side-effect-only — no return value.
-  // H-12: filters are passed in so the heatmap prefetch key matches the
-  // heatmap card's live key (prefetchHeatmap filter mismatch fix).
   useDashboardEffects({
     status,
     monthLabel,
     currentWeek,
     comparisonWeek,
     comparisonMonth,
-    area,
-    kelompok,
-    pic,
     setPeriod,
     queryClient,
   });
@@ -193,7 +186,7 @@ export default function DashboardPage() {
     // FIX (BUGHUNT-R2): 'waste' was missing from the whitelist — the sync
     // effect below WRITES ?tab=waste, but this mount-read REJECTED it, so a
     // reload on the Waste tab silently landed on Area (DEEPWASTE-1 tab #8).
-    const VALID_TABS = ['area', 'resto', 'item', 'peer', 'pareto', 'historical', 'heatmap', 'waste'];
+    const VALID_TABS = ['area', 'resto', 'item', 'peer', 'pareto', 'historical', 'waste'];
     const t = new URLSearchParams(window.location.search).get('tab');
     if (t && t !== 'area' && VALID_TABS.includes(t) && t !== activeTabRef.current) {
       setActiveTab(t);
@@ -299,7 +292,7 @@ export default function DashboardPage() {
                 -mx-6/px-6 breaks out of main's horizontal
                 padding so the band spans the content column edge-to-edge. */}
             <section id="l6-deep" aria-labelledby="l6-header" className="scroll-mt-40">
-              <LayerHeader number="05" title="DEEP ANALYSIS" id="l6-header" description="Butuh menggali lebih dalam? Eksplorasi penuh per area, resto, item, peer, pareto, historis, dan heatmap." />
+              <LayerHeader number="05" title="DEEP ANALYSIS" id="l6-header" description="Butuh menggali lebih dalam? Eksplorasi penuh per area, resto, item, peer, pareto, historis, dan waste." />
               <div className="-mx-6 px-6 border-t-2 border-border bg-muted/25 mt-4 pt-2 pb-4">
                 {/* PERF-FE (PAKET A): forceMount + data-[state=inactive]:hidden
                     = keep-alive tabs. Previously Radix unmounted every tab on
@@ -356,9 +349,6 @@ export default function DashboardPage() {
                     <TabsTrigger value="historical" className={tabTriggerClass}>
                       <History className="h-3.5 w-3.5" /> Historical
                     </TabsTrigger>
-                    <TabsTrigger value="heatmap" className={tabTriggerClass}>
-                      <LayoutGrid className="h-3.5 w-3.5" /> Heatmap
-                    </TabsTrigger>
                     <TabsTrigger value="waste" className={tabTriggerClass}>
                       <Trash2 className="h-3.5 w-3.5" /> Waste
                     </TabsTrigger>
@@ -410,15 +400,6 @@ export default function DashboardPage() {
                     {visitedTabs.includes('historical') ? (
                       <Suspense fallback={<TabSkeleton />}>
                         <HistoricalTab data={analysis.data} />
-                      </Suspense>
-                    ) : null}
-                  </TabsContent>
-
-                  {/* ====== HEATMAP TAB (Area × Item — self-fetch) ====== */}
-                  <TabsContent value="heatmap" forceMount aria-label="Heatmap tab" className="space-y-4 mt-2 data-[state=inactive]:hidden">
-                    {visitedTabs.includes('heatmap') ? (
-                      <Suspense fallback={<TabSkeleton />}>
-                        <HeatmapTab />
                       </Suspense>
                     ) : null}
                   </TabsContent>

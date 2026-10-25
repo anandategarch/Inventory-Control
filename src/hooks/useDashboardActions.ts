@@ -228,10 +228,10 @@ export function useDashboardActions({
   // Non-fatal by design: if /api/refresh fails (429 rate limit — 30/min —
   // or transient network), we still invalidate the client queries; the
   // refetch then serves whatever the server has (same as the old behavior).
-  // FIX FE-08: Added missing query invalidations (area-item-heatmap, item-trend, drilldown, pareto)
+  // FIX FE-08: Added missing query invalidations (item-trend, drilldown, pareto)
   // FIX FE-08 + H-12: the invalidation herd now lives in ONE place —
-  // src/lib/query-invalidation.ts (18 keys: core dashboard payload +
-  // heatmap incl. cell-detail + Trend tab incl. flip/rank/search + Pareto
+  // src/lib/query-invalidation.ts (16 keys: core dashboard payload +
+  // Trend tab incl. flip/rank/search + Pareto
   // + drilldown + price-effect + item-anomali-outlets). H-14/T3 extended
   // the same call to the six other mutation handlers (upload/delete/
   // reset/drive/ingest/settings/pic) which previously carried older
@@ -268,8 +268,8 @@ export function useDashboardActions({
   // UX-ENHANCE: Global keyboard shortcuts.
   // Cmd/Ctrl+E → open export dialog
   // Cmd/Ctrl+R → refresh data (prevents browser refresh)
-  // 1-8 → switch tabs (Area / Resto / Item / Peer / Pareto /
-  //       Historical / Heatmap / Waste)
+  // 1-7 → switch tabs (Area / Resto / Item / Peer / Pareto /
+  //       Historical / Waste)
   // Escape → close any open dialog/drawer
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -299,15 +299,15 @@ export function useDashboardActions({
         void handleRefresh(); // async since TASK H-3 — intentionally fire-and-forget
         return;
       }
-      // 1-8 → switch tabs (only when not typing in an input)
+      // 1-7 → switch tabs (only when not typing in an input)
       // FIX #6: Also block when a SearchableComboBox dropdown is open
       // (Radix uses [data-state=open] / [role=combobox][aria-expanded=true]).
       // P3-HYG-6: the querySelector probe now runs ONLY when the key is one
       // of the tab digits — cheap constant folding for every other keypress.
-      // FIX (BUGHUNT-R2): '8' was missing — the Waste tab (DEEPWASTE-1's 8th
-      // tab) was unreachable via keyboard while the shortcut comments still
-      // said "1-7".
-      if (!mod && !isTyping && !e.altKey && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4' || e.key === '5' || e.key === '6' || e.key === '7' || e.key === '8')) {
+      // FIX (BUGHUNT-R2): the 8th tab was originally unreachable via keyboard
+      // while the shortcut comments still said "1-7". HEATMAP-REMOVE: the tab
+      // strip is now 7 tabs — Waste moved to '7' (heatmap was removed).
+      if (!mod && !isTyping && !e.altKey && (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4' || e.key === '5' || e.key === '6' || e.key === '7')) {
         const isDropdownOpen = Boolean(document.querySelector(OPEN_DROPDOWN_SELECTOR));
         if (isDropdownOpen) return;
         // FIX (BUG-HUNT C18/BUG-3-08): also block while a Radix Popover/Dialog
@@ -318,9 +318,9 @@ export function useDashboardActions({
           (document.activeElement as HTMLElement | null)?.closest?.('[data-radix-popper-content-wrapper], [role="dialog"]')
         );
         if (focusInOverlay) return;
-        // VH-2 remap: 8 deep-analysis tabs (spec §6.8 — keyboard 1-7; '8' =
-        // Waste, added by DEEP-WASTE-1 + BUGHUNT-R2).
-        const tabMap: Record<string, string> = { '1': 'area', '2': 'resto', '3': 'item', '4': 'peer', '5': 'pareto', '6': 'historical', '7': 'heatmap', '8': 'waste' };
+        // VH-2 remap: 7 deep-analysis tabs after HEATMAP-REMOVE (spec §6.8
+        // keyboard 1-7; Waste sits at '7').
+        const tabMap: Record<string, string> = { '1': 'area', '2': 'resto', '3': 'item', '4': 'peer', '5': 'pareto', '6': 'historical', '7': 'waste' };
         setActiveTab(tabMap[e.key]);
         return;
       }

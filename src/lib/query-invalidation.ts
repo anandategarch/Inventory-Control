@@ -2,7 +2,7 @@
 //  query-invalidation — single source of truth for the client-side
 //  "all dashboard data" invalidation list.
 //  --------------------------------------------------------
-//  FIX (H-14 / UIUX-REVIEW T3): this list (19 keys — BUG-3-b B1 added
+//  FIX (H-14 / UIUX-REVIEW T3): this list (BUG-3-b B1 added
 //  ['change-analysis']) used to live ONLY
 //  inside handleRefresh (useDashboardActions). The six other mutation
 //  handlers (FileUploadDialog, DataManagementDialog, DriveImportDialog,
@@ -14,7 +14,7 @@
 //    - delete a non-current month → Trend tab still shows the deleted
 //      period (item-trend / item-trend-rank / flip-* keys missed);
 //    - delete + re-upload a corrected file → Dashboard tab refreshes
-//      but Pareto / heatmap / price-effect / drilldown keep showing
+//      but Pareto / price-effect / drilldown keep showing
 //      pre-correction numbers — two tabs, two truths.
 //  The SERVER-side AggregationCache is properly cleared by every
 //  mutation route — the browser just never refetched.
@@ -32,9 +32,8 @@ const ALL_DATA_QUERY_KEYS: readonly (readonly unknown[])[] = [
   ['item-history'],
   ['peer-comparison'],
   ['recommendations'],
-  // Heatmap (['area-item-heatmap'] does NOT prefix-match ['heatmap-cell-detail'])
-  ['area-item-heatmap'],
-  ['heatmap-cell-detail'],
+  // HEATMAP-REMOVE: ['area-item-heatmap'] + ['heatmap-cell-detail'] deleted
+  // with the Heatmap tab + both routes.
   // Trend tab
   ['item-trend'],
   ['item-trend-rank'],
