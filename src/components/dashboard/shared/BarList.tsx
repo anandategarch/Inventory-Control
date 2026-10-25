@@ -12,6 +12,12 @@
 //    - valueFormatter: format function (e.g. formatByPreset)
 //    - color: bar color (default: amber)
 //    - showAnimation: smooth bar growth on mount
+//    - highlightKeys: ITEM-HL-B — optional keys (item.key) whose rows get
+//      the amber "resto terpilih" tint + left border (same visual language
+//      as the target row in PeerTableRow). Backwards-compatible: omit it
+//      and rendering is byte-identical to before (all rows keep a
+//      transparent left border so the highlighted row introduces NO layout
+//      shift — the border width is reserved on every row).
 //
 //  Usage:
 //    <BarList
@@ -46,6 +52,11 @@ export interface BarListProps {
   showAnimation?: boolean;
   onValueChange?: (item: BarListItem) => void;
   className?: string;
+  /** ITEM-HL-B — rows whose `key` is in this list get the amber focused
+   *  tint + left border (e.g. bars belonging to the selected outlet in
+   *  TopItemsByNominal). Optional + additive — existing callers are
+   *  unaffected. */
+  highlightKeys?: Array<string | number>;
 }
 
 const colorMap = {
@@ -63,6 +74,7 @@ export const BarList = memo(function BarList({
   showAnimation = true,
   onValueChange,
   className,
+  highlightKeys,
 }: BarListProps) {
   const sortedData = useMemo(() => {
     if (sortOrder === 'none') return data;
@@ -76,6 +88,13 @@ export const BarList = memo(function BarList({
     [sortedData],
   );
 
+  // ITEM-HL-B: Set lookup (O(1) per row) — dep is the caller's memoized
+  // array, so the Set is only rebuilt when the selection actually changes.
+  const highlightSet = useMemo(
+    () => new Set(highlightKeys ?? []),
+    [highlightKeys],
+  );
+
   const isClickable = Boolean(onValueChange);
 
   return (
@@ -87,13 +106,22 @@ export const BarList = memo(function BarList({
           : 0;
         const itemColor = item.color ?? color;
         const Component = isClickable ? 'button' : 'div';
+        // ITEM-HL-B: amber tint + amber left border for keys in highlightKeys.
+        // Every row carries `border-l-2` (transparent when not highlighted)
+        // so the highlight adds zero layout shift — rows never re-align.
+        const highlighted = item.key != null && highlightSet.has(item.key);
         return (
           <Component
             key={item.key ?? index}
             onClick={isClickable ? () => onValueChange?.(item) : undefined}
             // FIX (BUG-SHARED-08): add type='button' to prevent accidental form submit.
             type={isClickable ? 'button' : undefined}
-            className={`group flex items-center w-full rounded-md ${isClickable ? 'cursor-pointer hover:bg-muted/40 transition-colors' : ''}`}
+            title={highlighted ? 'Resto terpilih (dari tab Resto)' : undefined}
+            className={`group flex items-center w-full rounded-md border-l-2 ${
+              highlighted
+                ? 'border-l-amber-500 bg-amber-50/80 dark:bg-amber-950/20'
+                : 'border-l-transparent'
+            } ${isClickable ? 'cursor-pointer hover:bg-muted/40 transition-colors' : ''}`}
           >
             {/* Name (left, fixed width) */}
             <div className="w-40 shrink-0 truncate text-xs font-medium pr-3 text-left" title={item.name}>

@@ -24,6 +24,12 @@ import { EmptyState } from '@/components/ui/empty-state';
 
 export const TopItemsByNominal = memo(function TopItemsByNominal({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
+  // ITEM-HL-B (user request): sama seperti TopItemsByDevBom — bar milik
+  // resto terpilih (focusOutlet dari picker tab Resto / cross-tab link)
+  // di-highlight amber. BarList menerima key `${itemName}-${outletCode}`
+  // (sudah dipakai sebagai key baris + handler drill-down), jadi match
+  // key = match baris resto.
+  const focusOutlet = useDashboard((s) => s.focusOutlet);
   // P3-HYG-7a: pin `items` identity FIRST — `data.topItemsByNominal || []`
   // created a NEW empty array whenever the field is undefined, which would
   // defeat both memos below (deps change every render). useMemo keeps the
@@ -46,6 +52,14 @@ export const TopItemsByNominal = memo(function TopItemsByNominal({ data }: { dat
       itemName: item.name,
     });
   }, [items, setDrilldown]);
+  // ITEM-HL-B: keys bar yang outlet-nya = resto terpilih (identity stabil
+  // via useMemo → memo BarList tetap hit saat focusOutlet tidak berubah).
+  const highlightKeys = useMemo(
+    () => (focusOutlet == null ? [] : items
+      .filter((it) => it.outletCode === focusOutlet)
+      .map((it) => `${it.itemName}-${it.outletCode}`)),
+    [items, focusOutlet],
+  );
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
@@ -66,7 +80,21 @@ export const TopItemsByNominal = memo(function TopItemsByNominal({ data }: { dat
             ]}
           />
         </CardTitle>
-        <p className="text-xs text-muted-foreground ml-9">Financial impact ranking (absolute)</p>
+        <p className="text-xs text-muted-foreground ml-9">
+          Financial impact ranking (absolute)
+          {/* ITEM-HL-B: legend saat ada bar milik resto terpilih — tanpa ini
+              asal warna amber tidak jelas bagi user baru. Bar ini TIDAK
+              menampilkan kolom outlet (nama bar = nama item), jadi legend
+              teks lebih penting daripada di kartu Dev/BOM. */}
+          {highlightKeys.length > 0 && (
+            <>
+              {' · '}
+              <span className="text-amber-700 dark:text-amber-400 font-medium" title="Resto terpilih di tab Resto (focusOutlet)">
+                item milik {focusOutlet} ter-highlight
+              </span>
+            </>
+          )}
+        </p>
       </CardHeader>
       <CardContent className="p-0">
         {/* HI-1 (UI-audit): fixed h-80 viewport — identical to the two sibling
@@ -84,6 +112,7 @@ export const TopItemsByNominal = memo(function TopItemsByNominal({ data }: { dat
                 sortOrder="descending"
                 showAnimation
                 onValueChange={handleBarClick}
+                highlightKeys={highlightKeys}
               />
             </div>
           </ScrollArea>

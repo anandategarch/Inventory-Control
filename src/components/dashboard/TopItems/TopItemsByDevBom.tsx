@@ -21,7 +21,14 @@ import { clickableRowProps } from '@/lib/a11y';
 
 export const TopItemsByDevBom = memo(function TopItemsByDevBom({ data }: { data: AnalysisData }) {
   const setDrilldown = useDashboard((s) => s.setDrilldown);
+  // ITEM-HL-B (user request): resto yang sedang dipilih (picker "Filter
+  // Resto" di tab Resto → focusOutlet; juga cross-tab link dari tabel
+  // peer/Top Growth) di-highlight pada baris tabel ini. Sebelumnya,
+  // pasca-FILTERDROP-1 tab Item tidak menerima info resto manapun —
+  // tidak ada cara melihat "item prio milik resto yang kuanal" di sini.
+  const focusOutlet = useDashboard((s) => s.focusOutlet);
   const items = data.topItemsByDevBom || [];
+  const hasFocusedRow = focusOutlet != null && items.some((it) => it.outletCode === focusOutlet);
   return (
     <Card className="overflow-hidden shadow-md shadow-black/5 dark:shadow-black/20">
       <CardHeader className="pb-3">
@@ -42,7 +49,19 @@ export const TopItemsByDevBom = memo(function TopItemsByDevBom({ data }: { data:
             ]}
           />
         </CardTitle>
-        <p className="text-xs text-muted-foreground ml-9">Operational abnormality ranking</p>
+        <p className="text-xs text-muted-foreground ml-9">
+          Operational abnormality ranking
+          {/* ITEM-HL-B: legend saat ada baris resto terpilih — tanpa ini
+              asal warna amber tidak jelas bagi user baru. */}
+          {hasFocusedRow && (
+            <>
+              {' · '}
+              <span className="text-amber-700 dark:text-amber-400 font-medium" title="Resto terpilih di tab Resto (focusOutlet)">
+                {focusOutlet} ter-highlight
+              </span>
+            </>
+          )}
+        </p>
       </CardHeader>
       <CardContent className="p-0">
         {/* HI-2 (UI-audit): h-72 → h-80 — matches every other table viewport
@@ -64,15 +83,27 @@ export const TopItemsByDevBom = memo(function TopItemsByDevBom({ data }: { data:
                 <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground text-xs py-8">Tidak ada data</TableCell></TableRow>
               ) : items.map((it, i) => {
                 const breach = it.tolerance != null && Math.abs(it.devBom) > Math.abs(it.tolerance);
+                // ITEM-HL-B: highlight resto terpilih — prioritas DI ATAS zebra
+                // + breach TINT (sinyal breach tetap hidup di sel Dev/BOM yang
+                // tetap merah + tooltip sel). Bahasa visual sama dengan baris
+                // target PeerTableRow (bg-amber + border-l-4 amber) agar
+                // konsisten lintas kartu.
+                const focused = focusOutlet != null && it.outletCode === focusOutlet;
                 return (
                   <TableRow
                     key={`${it.itemName}-${it.outletCode}`}
-                    className={`cursor-pointer hover:bg-muted/40 transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''} ${breach ? 'bg-red-50/40 dark:bg-red-950/10' : ''}`}
+                    title={focused ? `Resto terpilih: ${it.outletCode} (dari tab Resto)` : undefined}
+                    className={`cursor-pointer transition-colors ${
+                      focused
+                        ? 'bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 dark:hover:bg-amber-950/30 border-l-4 border-l-amber-500'
+                        : `hover:bg-muted/40 ${i % 2 === 1 ? 'bg-muted/20' : ''} ${breach ? 'bg-red-50/40 dark:bg-red-950/10' : ''}`
+                    }`}
                     {...clickableRowProps(() => setDrilldown({ outletCode: it.outletCode, itemName: it.itemName }))}
                   >
                     <TableCell className="text-xs text-muted-foreground tabular-nums">{i + 1}</TableCell>
                     <TableCell className="font-medium text-xs whitespace-normal" title={it.itemName}>{it.itemName}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground" title={it.outletCode}>{it.outletCode}</TableCell>
+                    {/* ITEM-HL-B: sel Outlet ikut menonjol saat barisnya ter-highlight. */}
+                    <TableCell className={`text-xs ${focused ? 'text-foreground font-medium' : 'text-muted-foreground'}`} title={it.outletCode}>{it.outletCode}</TableCell>
                     <TableCell className={`text-right font-semibold text-xs tabular-nums ${breach ? 'text-red-600 dark:text-red-400' : ''}`}>{fmtPctAbs(it.devBom)}</TableCell>
                     <TableCell className="text-right text-xs text-muted-foreground tabular-nums">{it.tolerance != null ? fmtPctAbs(it.tolerance) : '—'}</TableCell>
                   </TableRow>
