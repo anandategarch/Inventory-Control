@@ -27,7 +27,7 @@
  * (both were the literal '15' before GODSPLIT-W2-A) — both sites must
  * keep producing the identical string.
  */
-export const REPORT_DESIGN_VERSION = '18';
+export const REPORT_DESIGN_VERSION = '19';
 
 // ============================================================
 //  rv changelog — full history (GODSPLIT-W2-A moved it here so the
@@ -110,3 +110,13 @@ export const REPORT_DESIGN_VERSION = '18';
 // SAME q-area row the analysis pipeline builds); the outlet filter is
 // stripped at both fetches (populationFilters). Sales nominals stay
 // hidden (REFINE-1) — only the loss/sales RATIO prints.
+// CUSTOM-COMPARE: rv 19 — NEW PDF section 13 "Komparasi Pilihan" (user:
+// "pilih resto mlgpar, pembanding bdgsek … atau beberapa resto / pakai
+// area"): focus resto + USER-PICKED comparators (?compareOutlets /
+// ?compareAreas — areas expand to their whole outlet population
+// server-side) side by side — 13.1 KPI table (11.1 columns, focus amber),
+// 13.2 |nominal| bar chart, 13.3 per-item breakdown vs rata-rata
+// pembanding (queryCustomCompareItems — direct call, no new q-*).
+// ?compareOutlets/?compareAreas ride the route cache key (cmpOutlets /
+// cmpAreas extras) so two different comparator sets can never share a
+// cache row (the PERF-CACHE-04 bug class).

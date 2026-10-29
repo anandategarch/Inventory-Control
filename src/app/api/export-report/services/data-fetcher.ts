@@ -103,6 +103,11 @@ import { ensureRecordsExist } from './data-fetcher/record-guard';
 import { runSectionQueryBatch } from './data-fetcher/query-batch';
 import { deriveReportFields } from './data-fetcher/derive';
 import { fetchPeerComparison } from './data-fetcher/peer';
+// CUSTOM-COMPARE — section 13 "Komparasi Pilihan": shapes the user-picked
+// comparison set out of the UNSCOPED scan rows fetched by the wave + runs
+// the per-item breakdown (area picks expand first — a real input
+// dependency, hence a post-wave phase like the peer fetch).
+import { fetchCustomComparison } from './data-fetcher/custom-compare';
 import { assembleReport } from './data-fetcher/assemble';
 
 // ============================================================
@@ -142,6 +147,12 @@ export async function fetchReportData(params: ReportParams): Promise<FetchedRepo
   // or the target is unresolvable.
   const peerComparison = await fetchPeerComparison(ctx);
 
+  // CUSTOM-COMPARE — section 13: same post-wave position (the items query
+  // takes the comparator code list EXPANDED from the scan rows — a real
+  // data dependency on runSectionQueryBatch's result). Null when the
+  // section is off or no comparator was picked.
+  const customComparison = await fetchCustomComparison(ctx);
+
   // Assemble ReportData + ReportContext.
-  return assembleReport(ctx, derived, peerComparison);
+  return assembleReport(ctx, derived, peerComparison, customComparison);
 }

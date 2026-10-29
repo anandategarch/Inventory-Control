@@ -21,6 +21,9 @@ export * from './outlets/peer-comparison-items';
 // PEERTOP-1: "top item di tiap peer" — per-outlet top-N items + cross-peer
 // union (shared vs local problems, blind spots) for the Peer tab + PDF 8.3/8.4.
 export * from './outlets/peer-top-items';
+// CUSTOM-COMPARE: per-item breakdown of ONE focus outlet vs a USER-PICKED
+// comparator set (PDF export section 13.3 — /api/export-report).
+export * from './outlets/custom-compare-items';
 export * from './outlets/resto-recommendations';
 // ANA-1-D: outlet recurrence/persistence history (additive `history` field
 // for /api/recommendations — no interaction with the existing queries).

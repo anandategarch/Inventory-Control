@@ -46,6 +46,10 @@ import type { WasteSectionData } from '../types';
 // (q-area). Type-only imports (erased at compile — no runtime coupling).
 import type { queryOutletHealthRanking } from '@/lib/queries/health-ranking';
 import type { queryAreaAnalysis } from '@/lib/queries/areas';
+// CUSTOM-COMPARE — section 13 "Komparasi Pilihan": the UNSCOPED per-outlet
+// scan rows (the same q-outlet-agg row the analysis pipeline builds when
+// no filter is active) from which the comparison entity set is shaped.
+import type { OutletAggScanRow } from '@/lib/queries/outlets/outlet-agg-scan';
 import type { ReportParams } from '../types';
 import type { SectionGates } from './section-gates';
 
@@ -154,6 +158,11 @@ export interface FetcherContext extends SetupFields {
   // every area, one row each (outlet filter stripped; area filter nulled
   // inside the query itself).
   areaAnalysisRows: Array<Awaited<ReturnType<typeof queryAreaAnalysis>>[number]>;
+  // CUSTOM-COMPARE — section 13 ([] when the customCompare section is
+  // off): the UNSCOPED q-outlet-agg scan rows (every outlet with records
+  // in the period, zero-deviation included) — the fetch/shape phase in
+  // custom-compare.ts picks the focus + comparator rows out of it.
+  customCompareScanRows: OutletAggScanRow[];
 }
 
 // ============================================================
@@ -196,5 +205,8 @@ export function createFetcherContext(
     // LEAGUE-AREA — off-section placeholders (never rendered).
     outletLeagueRows: [],
     areaAnalysisRows: [],
+    // CUSTOM-COMPARE — off-section placeholder (never read: the section's
+    // fetch/shape phase only runs when needCustomCompare is true).
+    customCompareScanRows: [],
   };
 }

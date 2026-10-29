@@ -23,8 +23,14 @@ import {
   EXPORT_SECTIONS,
   exportSubToken,
   compactSectionTokens,
+  isSectionOn,
   type ExportSection,
 } from '@/lib/export-sections';
+// CUSTOM-COMPARE — section 13's comparator picker (resto + area picks).
+import {
+  ExportComparatorPicker,
+  type ComparatorOutlet,
+} from './ExportComparatorPicker';
 
 // H-5: '5. Analisis Korelasi BOM' removed per user request (same removal
 // series as Loss-to-Sales / Kepatuhan).
@@ -87,6 +93,8 @@ const SECTION_DESCRIPTIONS: Record<string, string> = {
     'Semua resto dalam scope filter SATU BARIS PER RESTO (satu per satu), peringkat dari nominal deviasi terbesar — resto terpilih di-highlight; nominal penjualan disembunyikan',
   areaCompare:
     'Semua area berdampingan satu per satu: jumlah resto, nominal deviasi, % Dev/BOM, % Loss to Sales + grafik per area',
+  customCompare:
+    'Resto fokus vs PEMBANDING PILIHAN SENDIRI: beberapa resto tertentu (mis. mlgpar vs bdgsek) dan/atau seluruh resto per area — tabel KPI, grafik, dan breakdown per item; pilih pembanding di panel di bawah',
 };
 
 /** Every selectable token: leaf bare keys + every parent's sub tokens. */
@@ -99,11 +107,40 @@ function allTokens(): Set<string> {
   return s;
 }
 
+/** The DEFAULT selection (dialog open + reset on close): everything
+ *  EXCEPT section 13 — CUSTOM-COMPARE needs a comparator set the legacy
+ *  flow never picked, so shipping it pre-checked would disable the
+ *  Export button on every dialog open (the "export everything in one
+ *  click" flow must stay untouched). Section 13 is opt-in: check it,
+ *  the comparator panel appears, pick resto/area, export. */
+function defaultTokens(): Set<string> {
+  const s = allTokens();
+  for (const t of [...s]) {
+    if (t === 'customCompare' || t.startsWith('customCompare:')) s.delete(t);
+  }
+  return s;
+}
+
+/** The comparator selection payload handed to the export action. */
+export interface ComparatorSelection {
+  outlets: string[];
+  areas: string[];
+}
+
 interface ExportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onExport: (sections: string[]) => void;
+  onExport: (sections: string[], compare?: ComparatorSelection) => void;
   isExporting: boolean;
+  /** CUSTOM-COMPARE — every outlet for the comparator picker (/api/status
+   *  cache; no extra fetch). */
+  outlets: ComparatorOutlet[];
+  /** CUSTOM-COMPARE — every area name. */
+  areas: string[];
+  /** CUSTOM-COMPARE — the Resto tab's Filter Resto (the export's focus). */
+  focusOutlet: string | null;
+  /** The focus outlet's display name (resolved from the status cache). */
+  focusOutletName: string | null;
 }
 
 export function ExportDialog({
@@ -111,8 +148,16 @@ export function ExportDialog({
   onOpenChange,
   onExport,
   isExporting,
+  outlets,
+  areas,
+  focusOutlet,
+  focusOutletName,
 }: ExportDialogProps) {
-  const [selected, setSelected] = useState<Set<string>>(() => allTokens());
+  const [selected, setSelected] = useState<Set<string>>(() => defaultTokens());
+  // CUSTOM-COMPARE — the comparator picks (reset together with the
+  // section selection on every open→false transition, BUG-3-b A5).
+  const [compareOutlets, setCompareOutlets] = useState<string[]>([]);
+  const [compareAreas, setCompareAreas] = useState<string[]>([]);
 
   // SUBSECTION-1: leaf rows toggle their bare key; parent rows toggle ALL
   // of their sub tokens (tri-state — see parentChecked below).
@@ -144,7 +189,7 @@ export function ExportDialog({
     });
   };
 
-  const selectAll = () => setSelected(allTokens());
+  const selectAll = () => setSelected(defaultTokens());
   const deselectAll = () => setSelected(new Set());
 
   // Parent tri-state: true (every sub on) | 'indeterminate' (some) | false.
@@ -165,6 +210,12 @@ export function ExportDialog({
       : selected.has(sec.key),
   ).length;
 
+  // CUSTOM-COMPARE — is section 13 (or any of its sub tokens) selected?
+  // Drives the comparator panel + the export-button validation.
+  const customCompareActive = isSectionOn([...selected], 'customCompare');
+  const compareCount = compareOutlets.length + compareAreas.length;
+  const compareMissing = customCompareActive && compareCount === 0;
+
   // FIX (BUG-3-b A5): handleExport in the parent (useDashboardActions) closes
   // the dialog PROGRAMMATICALLY via setExportDialogOpen(false) — that path
   // never ran the reset in handleOpenChange, so a reduced selection
@@ -176,7 +227,11 @@ export function ExportDialog({
   if (open !== prevOpen) {
     setPrevOpen(open);
     if (!open) {
-      setSelected(allTokens());
+      // CUSTOM-COMPARE: the comparator picks reset together with the
+      // section selection (same BUG-3-b A5 reset semantics).
+      setSelected(defaultTokens());
+      setCompareOutlets([]);
+      setCompareAreas([]);
     }
   }
 
@@ -185,7 +240,15 @@ export function ExportDialog({
     // its bare key (byte-compatible with the pre-SUBSECTION-1 full-section
     // URLs — shares the server cache row); a partial selection expands to
     // the selected sub tokens.
-    onExport(compactSectionTokens(selected));
+    const tokens = compactSectionTokens(selected);
+    // CUSTOM-COMPARE — hand the comparator picks to the export action ONLY
+    // when section 13 is actually in the token list (a stale pick with the
+    // section unchecked must not fork the server cache key).
+    if (customCompareActive && compareCount > 0) {
+      onExport(tokens, { outlets: compareOutlets, areas: compareAreas });
+    } else {
+      onExport(tokens);
+    }
   };
 
   const handleOpenChange = (next: boolean) => {
@@ -207,7 +270,8 @@ export function ExportDialog({
             Pilih section yang ingin di-export — sub-section di bawah tiap
             section juga bisa dicentang sendiri. Laporan PDF dengan desain penuh
             dan grafik. Filter resto mengikuti Filter Resto di tab Resto
-            Analysis.
+            Analysis. Section 13 membandingkan resto fokus dengan pembanding
+            pilihan sendiri (resto / area tertentu).
           </DialogDescription>
         </DialogHeader>
 
@@ -297,6 +361,35 @@ export function ExportDialog({
                     </label>
                   );
                 })}
+                {/* CUSTOM-COMPARE — the comparator picker rides directly
+                    under section 13's rows: checking the section makes the
+                    panel appear exactly where the user's eyes are (inside
+                    the scrollable list, not above it). */}
+                {section.key === 'customCompare' && customCompareActive && (
+                  <div className="ml-6 mr-1">
+                    <ExportComparatorPicker
+                      outlets={outlets}
+                      areas={areas}
+                      focusOutlet={focusOutlet}
+                      focusOutletName={focusOutletName}
+                      selectedOutlets={compareOutlets}
+                      selectedAreas={compareAreas}
+                      onChange={(nextOutlets, nextAreas) => {
+                        setCompareOutlets(nextOutlets);
+                        setCompareAreas(nextAreas);
+                      }}
+                    />
+                    {compareMissing && (
+                      <p
+                        className="text-[11px] text-destructive leading-tight px-1 pt-1"
+                        role="alert"
+                      >
+                        Pilih minimal satu resto atau area pembanding untuk
+                        section 13 — atau batalkan centangnya.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -314,7 +407,7 @@ export function ExportDialog({
           <Button
             size="sm"
             onClick={handleExport}
-            disabled={isExporting || activeSectionCount === 0}
+            disabled={isExporting || activeSectionCount === 0 || compareMissing}
             className="gap-1.5"
           >
             {isExporting ? (

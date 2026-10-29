@@ -172,6 +172,30 @@ export const EXPORT_SECTIONS: readonly ExportSection[] = [
       { key: 'grafik', label: 'Grafik batang Nominal Deviasi per Area' },
     ],
   },
+  {
+    // CUSTOM-COMPARE (user: "misal aku pilih resto mlgpar terus sebagai
+    // pembanding nya aku pilih resto lain lagi yaitu bdgsek ... atau aku
+    // juga bisa filter beberapa resto atau filter pakai area") — the
+    // comparison SET is user-chosen instead of section 9's automatic ±10%
+    // sales band or section 11's whole population: the focus resto (the
+    // Resto tab's Filter Resto) side by side with hand-picked comparator
+    // restos (?compareOutlets=) and/or every resto of hand-picked areas
+    // (?compareAreas=). Subs: 13.1 KPI table, 13.2 |nominal| bar chart,
+    // 13.3 per-item breakdown (focus vs rata-rata pembanding).
+    key: 'customCompare',
+    label: '13. Komparasi Pilihan',
+    subs: [
+      {
+        key: 'tabel',
+        label: 'Tabel resto fokus + pembanding terpilih (resto / area pilihan)',
+      },
+      { key: 'grafik', label: 'Grafik batang Nominal Deviasi per resto terpilih' },
+      {
+        key: 'items',
+        label: 'Breakdown per Item — fokus vs rata-rata pembanding (kuantitas, % to BOM)',
+      },
+    ],
+  },
 ];
 
 /** All bare section keys, in order ('exec' … 'flip'). */

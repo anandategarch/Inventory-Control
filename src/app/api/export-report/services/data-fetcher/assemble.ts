@@ -13,6 +13,7 @@ import type {
   ReportContext,
   FetchedReport,
   PeerComparisonData,
+  CustomCompareData,
 } from '../types';
 import type { FetcherContext } from './context';
 import type { DerivedReportFields } from './derive';
@@ -21,6 +22,7 @@ export function assembleReport(
   ctx: FetcherContext,
   derived: DerivedReportFields,
   peerComparison: PeerComparisonData | null,
+  customComparison: CustomCompareData | null,
 ): FetchedReport {
   const {
     month, prevWeek, prevMonth, historicalPeriods, varianceAnalysis,
@@ -76,6 +78,10 @@ export function assembleReport(
     // one row each (outlet filter stripped; area filter nulled inside the
     // query — dashboard AreaComparison parity).
     areaComparison: areaAnalysisRows,
+    // CUSTOM-COMPARE — section 13 'customCompare' (null when off / no
+    // comparator picked): focus resto + user-picked comparators side by
+    // side (13.1 KPI table, 13.2 bar chart, 13.3 per-item breakdown).
+    customComparison,
     durationMs: Date.now() - startedAt,
   };
 

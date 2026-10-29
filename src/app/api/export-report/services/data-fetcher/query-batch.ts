@@ -46,6 +46,11 @@ import type { SelfHistoryAnomalyRow } from '@/lib/queries/items/self-history-ano
 import type { WeeklyCompositionRow } from '@/lib/queries/weekly-composition';
 import { cachedSharedQuery, cachedSharedQueryMap, histPeriodsKeyParts } from '@/lib/queries/query-cache';
 import { DEEP_REPORT_WINDOW_MONTHS } from '@/lib/queries/window-config';
+// CUSTOM-COMPARE — section 13: the UNSCOPED q-outlet-agg scan (the cache
+// wrapper sits INSIDE outlet-agg-scan.ts, same as the section 11 call above
+// — direct module import, not via the barrel, mirroring the flip-ranking
+// precedent).
+import { queryOutletAggregateScan } from '@/lib/queries/outlets/outlet-agg-scan';
 import type { AreaCategoryAvg } from '@/lib/queries/items/top-items';
 import type { WasteSectionData } from '../types';
 import type { FetcherContext } from './context';
@@ -53,7 +58,7 @@ import type { FetcherContext } from './context';
 export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
   const { thresholds, month, prevWeek, prevMonth, filterOpts, historicalPeriods, gates } = ctx;
   const { week } = ctx.params;
-  const { needKpis, needPrevSummary, needTopItems, needTrend, needItemTrend, needAnomali, needFlip, needWaste, needOutletLeague, needAreaCompare } = gates;
+  const { needKpis, needPrevSummary, needTopItems, needTrend, needItemTrend, needAnomali, needFlip, needWaste, needOutletLeague, needAreaCompare, needCustomCompare } = gates;
 
   const topNItems = thresholds.TOP_N_ITEMS || 10;
 
@@ -65,6 +70,23 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
   // (data-fetcher/peer.ts). itemName/kelompok/pic/area still apply — the
   // league legitimately respects them.
   const populationFilters = { ...filterOpts, outletCode: null };
+
+  // CUSTOM-COMPARE — section 13's population scope: NO filters at all.
+  // The comparison entities are the USER's explicit picks (focus resto +
+  // ?compareOutlets + the outlet populations of ?compareAreas), so the
+  // scan must cover every outlet with records in the period — a comparator
+  // outside the active area/kelompok/pic filter must NOT silently vanish
+  // from the comparison. Converges on the SAME q-outlet-agg row the
+  // analysis pipeline builds when no filter is active (identical null
+  // filter set → one shared cache row); an active filter forks a second
+  // row that only custom-compare exports pay for.
+  const comparisonScanFilters = {
+    area: null,
+    kelompok: null,
+    outletCode: null,
+    itemName: null,
+    picOutletCodes: null,
+  };
 
   // Rev 2: Fetch previous period + historical category data for comparison
   const historicalPeriodsList = historicalPeriods.map(p => ({ monthLabel: p.monthLabel, weekLabel: p.weekLabel }));
@@ -114,6 +136,9 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
     // LEAGUE-AREA — sections 11/12 (see the notes at the entries below).
     outletLeagueRows,
     areaAnalysisRows,
+    // CUSTOM-COMPARE — section 13: the UNSCOPED scan rows (see the entry
+    // note below).
+    customCompareScanRows,
   ] = await Promise.all([
     // PERF (TAHAP-2 / P2-9): kpis + trendAgg + category tops use the shared
     // per-query cache (same queryIds as the analysis pipeline).
@@ -368,6 +393,17 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
           () => queryAreaAnalysis(week, month, populationFilters),
         )
       : Promise.resolve([]),
+    // CUSTOM-COMPARE — section 13 "Komparasi Pilihan": the UNSCOPED
+    // q-outlet-agg scan (comparisonScanFilters above). The cache wrapper
+    // sits INSIDE queryOutletAggregateScan (same as the section 11 call);
+    // the threshold is passed explicitly for key convergence with
+    // run-queries.ts / the league call. The focus + comparator rows are
+    // picked out of these rows by the fetch/shape phase (custom-compare.ts)
+    // which runs AFTER this wave — area picks are expanded there because
+    // the expansion needs these very rows. [] when the section is off.
+    needCustomCompare
+      ? queryOutletAggregateScan(week, month, comparisonScanFilters, thresholds.HIGH_LOSS_NOMINAL_THRESHOLD)
+      : Promise.resolve([]),
   ]);
 
   ctx.kpis = kpis;
@@ -390,4 +426,5 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
   ctx.wasteRes = wasteRes;
   ctx.outletLeagueRows = outletLeagueRows;
   ctx.areaAnalysisRows = areaAnalysisRows;
+  ctx.customCompareScanRows = customCompareScanRows;
 }

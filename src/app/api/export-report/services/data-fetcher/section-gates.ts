@@ -71,6 +71,10 @@ export function computeSectionGates(sections: ReportParams['sections']): Section
   // (user: "Export 1 by one 1 resto dan area").
   const needOutletLeague = isSectionOn(sections, 'outletLeague');
   const needAreaCompare = isSectionOn(sections, 'areaCompare');
+  // CUSTOM-COMPARE — section 13 "Komparasi Pilihan" (user: "pilih resto
+  // mlgpar, pembanding bdgsek … atau beberapa resto / pakai area"): the
+  // focus resto vs USER-PICKED comparators (?compareOutlets/?compareAreas).
+  const needCustomCompare = isSectionOn(sections, 'customCompare');
   // The kpis row feeds executiveSummary (exec + growth sections + the cover
   // KPI cards). Cheap: shared cached q-* row.
   const needKpis = needExec || needGrowth;
@@ -78,7 +82,7 @@ export function computeSectionGates(sections: ReportParams['sections']): Section
   return {
     needExec, needGrowth, needTopItems, needVariance, needTrend, needPeer, needFlip,
     needItemTrend, needAnomali, needWaste, needKpis, needPrevSummary,
-    needOutletLeague, needAreaCompare,
+    needOutletLeague, needAreaCompare, needCustomCompare,
   };
 }
 
@@ -99,6 +103,9 @@ export interface SectionGates {
   needOutletLeague: boolean;
   /** LEAGUE-AREA — section 12 'areaCompare' (Perbandingan Area). */
   needAreaCompare: boolean;
+  /** CUSTOM-COMPARE — section 13 'customCompare' (Komparasi Pilihan —
+   *  focus resto vs user-picked comparators). */
+  needCustomCompare: boolean;
   needKpis: boolean;
   needPrevSummary: boolean;
 }

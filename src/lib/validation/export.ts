@@ -15,6 +15,7 @@ import {
   outletCodeSchema,
   itemNameSchema,
   picSchema,
+  noControlChars,
 } from './shared';
 
 // /api/export-report?month=&week=&sections=&area=&kelompok=&outlet=&item=&pic=
@@ -48,7 +49,43 @@ import {
 // 'areaCompare' (section 12 — Perbandingan Area, every area one row +
 // bar chart). Fresh keys (the pre-EXPORT-TRIM 'area'/'outlets' keys stay
 // dead — different semantics).
-const EXPORT_SECTION_KEYS = ['exec', 'growth', 'topItems', 'variance', 'waste', 'itemTrend', 'anomali', 'trend', 'peer', 'flip', 'outletLeague', 'areaCompare'] as const;
+// CUSTOM-COMPARE (user: "pilih resto mlgpar, pembanding bdgsek … atau
+// beberapa resto / pakai area"): + 'customCompare' (section 13 — Komparasi
+// Pilihan: focus resto vs USER-PICKED comparators via ?compareOutlets /
+// ?compareAreas; subs tabel/grafik/items).
+const EXPORT_SECTION_KEYS = ['exec', 'growth', 'topItems', 'variance', 'waste', 'itemTrend', 'anomali', 'trend', 'peer', 'flip', 'outletLeague', 'areaCompare', 'customCompare'] as const;
+
+// CUSTOM-COMPARE — comparator selection params. Comma-separated outlet
+// codes / area names (neither contains commas in this dataset — codes are
+// dot-delimited like "1042.KWGGAL", areas are plain words like
+// "JAWA TENGAH 2"). Counts are capped so a hand-edited URL cannot ask the
+// pipeline to fan the per-item query over hundreds of outlets; area picks
+// legitimately expand to their whole outlet population server-side, so the
+// AREA cap is the real guard (14 areas exist today — allow a little slack).
+const MAX_COMPARE_OUTLETS = 30;
+const MAX_COMPARE_AREAS = 20;
+// Empty string ("?compareOutlets=" with nothing picked) = NO comparators —
+// valid, same convention as ?sections= (BUG-3-a C4): the section renders
+// its factual guidance note instead of 400-ing a hand-crafted URL.
+const compareOutletsSchema = z.string().refine(noControlChars).refine(
+  (v) => {
+    if (v.trim() === '') return true;
+    const parts = v.split(',').map((s) => s.trim()).filter(Boolean);
+    return parts.length <= MAX_COMPARE_OUTLETS
+      && parts.every((s) => s.length >= 1 && s.length <= 50);
+  },
+  { message: `compareOutlets must be 1-${MAX_COMPARE_OUTLETS} comma-separated outlet codes` },
+).optional();
+const compareAreasSchema = z.string().refine(noControlChars).refine(
+  (v) => {
+    if (v.trim() === '') return true;
+    const parts = v.split(',').map((s) => s.trim()).filter(Boolean);
+    return parts.length <= MAX_COMPARE_AREAS
+      && parts.every((s) => s.length >= 1 && s.length <= 50);
+  },
+  { message: `compareAreas must be 1-${MAX_COMPARE_AREAS} comma-separated area names` },
+).optional();
+
 export const exportReportQuerySchema = z.object({
   month: monthLabelSchema,
   week: weekLabelSchema,
@@ -65,4 +102,8 @@ export const exportReportQuerySchema = z.object({
   pic: picSchema,
   compareWeek: compareWeekSchema,
   compareMonth: monthLabelSchema,
+  // CUSTOM-COMPARE — comparator set for section 13 (ignored when the
+  // customCompare section is not selected).
+  compareOutlets: compareOutletsSchema,
+  compareAreas: compareAreasSchema,
 });

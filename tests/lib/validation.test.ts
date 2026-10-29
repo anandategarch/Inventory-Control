@@ -295,6 +295,51 @@ describe('exportReportQuerySchema', () => {
     });
     expect(r.success).toBe(true);
   });
+
+  // CUSTOM-COMPARE — section 13's comparator params (?compareOutlets /
+  // ?compareAreas): comma-separated outlet codes / area names.
+  it('accepts compareOutlets + compareAreas (CUSTOM-COMPARE)', () => {
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      sections: 'customCompare',
+      compareOutlets: 'B.1001.MLGPAR,1042.BDGSEK',
+      compareAreas: 'JABODETABEK, JAWA TENGAH 2',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('accepts empty-string comparator params (none picked)', () => {
+    // The FE omits the params entirely; a hand-crafted ?compareOutlets=
+    // (empty) must not 400 — it degrades to "no comparators" + the note.
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      sections: 'customCompare',
+      compareOutlets: '',
+      compareAreas: '',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects more than 30 compareOutlets (the fan-out guard)', () => {
+    const many = Array.from({ length: 31 }, (_, i) => `1042.OUT${i}`).join(',');
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      compareOutlets: many,
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects control characters in comparator params', () => {
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      compareOutlets: '1042.BDGSEK\x00',
+    });
+    expect(r.success).toBe(false);
+  });
 });
 
 describe('dataDeleteQuerySchema', () => {

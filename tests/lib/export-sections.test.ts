@@ -24,7 +24,7 @@ import {
 } from '@/lib/export-sections';
 
 describe('EXPORT_SECTIONS registry', () => {
-  it('carries the 12 sections in the FIXED pdf-builder order', () => {
+  it('carries the 13 sections in the FIXED pdf-builder order', () => {
     expect(EXPORT_SECTION_KEYS).toEqual([
       'exec',
       'growth',
@@ -38,6 +38,7 @@ describe('EXPORT_SECTIONS registry', () => {
       'flip',
       'outletLeague',
       'areaCompare',
+      'customCompare',
     ]);
   });
 
@@ -58,6 +59,7 @@ describe('EXPORT_SECTIONS registry', () => {
       'trend',
       'peer',
       'areaCompare',
+      'customCompare',
     ]) {
       expect(EXPORT_SECTION_SUBS[key].length).toBeGreaterThan(0);
     }
@@ -65,6 +67,10 @@ describe('EXPORT_SECTIONS registry', () => {
 
   it('areaCompare has the tabel + grafik blocks (LEAGUE-AREA)', () => {
     expect(EXPORT_SECTION_SUBS['areaCompare']).toEqual(['tabel', 'grafik']);
+  });
+
+  it('customCompare has the tabel + grafik + items blocks (CUSTOM-COMPARE)', () => {
+    expect(EXPORT_SECTION_SUBS['customCompare']).toEqual(['tabel', 'grafik', 'items']);
   });
 
   it('topItems has the 6 numbered rankings 3.1-3.6', () => {
@@ -110,6 +116,8 @@ describe('isExportSectionToken (validation basis)', () => {
     expect(isExportSectionToken('outlets')).toBe(false);
     expect(isExportSectionToken('outletLeague')).toBe(true);
     expect(isExportSectionToken('areaCompare')).toBe(true);
+    expect(isExportSectionToken('customCompare')).toBe(true);
+    expect(isExportSectionToken('compareCustom')).toBe(false); // typo guard
   });
 
   it('rejects unknown keys, unknown subs, and malformed tokens', () => {

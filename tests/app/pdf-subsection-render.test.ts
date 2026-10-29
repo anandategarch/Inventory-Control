@@ -426,6 +426,77 @@ function mockData(): ReportData {
         lossToSales: null,
       },
     ],
+    // CUSTOM-COMPARE — section 13: focus resto + user-picked comparators
+    // (1 direct pick + a 2-outlet area expansion) + 13.3 item rows
+    // (queryCustomCompareItems shape — ABS aggregation convention).
+    customComparison: {
+      focusCode: 'B.1001.MLGPAR',
+      focusName: 'MLGPAR',
+      compareOutletCodes: ['1042.BDGSEK'],
+      compareAreas: ['JABODETABEK'],
+      entities: [
+        {
+          outletCode: '1042.KWGGAL',
+          outletName: 'KWGGAL',
+          area: 'JABODETABEK',
+          isFocus: false,
+          fromPick: false,
+          fromArea: true,
+          nominalDeviasi: -450_000,
+          totalQtyDeviasi: 12,
+          totalQtyBom: 100,
+          lossNominal: 450_000,
+          sales: 12_000_000,
+          nonZeroDevCount: 8,
+        },
+        {
+          outletCode: 'B.1001.MLGPAR',
+          outletName: 'MLGPAR',
+          area: 'JATIM',
+          isFocus: true,
+          fromPick: false,
+          fromArea: false,
+          nominalDeviasi: -380_000,
+          totalQtyDeviasi: 9,
+          totalQtyBom: 80,
+          lossNominal: 380_000,
+          sales: 9_000_000,
+          nonZeroDevCount: 6,
+        },
+        {
+          outletCode: '1042.BDGSEK',
+          outletName: 'BDGSEK',
+          area: 'JABAR',
+          isFocus: false,
+          fromPick: true,
+          fromArea: false,
+          nominalDeviasi: 62_840,
+          totalQtyDeviasi: 31,
+          totalQtyBom: 120,
+          lossNominal: 0,
+          sales: 8_000_000,
+          nonZeroDevCount: 10,
+        },
+      ],
+      missingOutlets: [],
+      missingAreas: [],
+      items: [
+        {
+          itemName: 'Ayam Fillet',
+          satuan: 'KG',
+          target: { qtyDeviasi: 12, devBom: 0.25, nominal: 450_000 },
+          compareAvg: { qtyDeviasi: 8, devBom: 0.18, nominal: 200_000 },
+          compareCount: 2,
+        },
+        {
+          itemName: 'Tepung Batter',
+          satuan: 'KG',
+          target: null,
+          compareAvg: { qtyDeviasi: 5, devBom: 0.1, nominal: 90_000 },
+          compareCount: 1,
+        },
+      ],
+    },
   } as unknown as ReportData;
 }
 
@@ -529,5 +600,37 @@ describe('buildPdfReport — SUBSECTION-1 token rendering', () => {
     const areas = await renderSize(['areaCompare']);
     expect(league).toBeGreaterThan(coverOnly);
     expect(areas).toBeGreaterThan(coverOnly);
+  });
+
+  // CUSTOM-COMPARE — section 13 "Komparasi Pilihan" (focus resto vs
+  // user-picked comparators; the mock carries a picked resto + an
+  // area-expanded comparator + blind-spot 13.3 rows).
+  it('renders the CUSTOM-COMPARE section without throwing', async () => {
+    await expect(renderSize(['customCompare'])).resolves.toBeGreaterThan(0);
+  });
+
+  it('customCompare:tabel alone is smaller than the full customCompare section (sub gating)', async () => {
+    const full = await renderSize(['customCompare']);
+    const tabelOnly = await renderSize(['customCompare:tabel']);
+    expect(tabelOnly).toBeLessThan(full);
+  });
+
+  it('the CUSTOM-COMPARE section adds bytes over a cover-only document', async () => {
+    const coverOnly = await renderSize([]);
+    const cc = await renderSize(['customCompare']);
+    expect(cc).toBeGreaterThan(coverOnly);
+  });
+
+  it('customCompare without comparator data renders the guidance note, not a crash', async () => {
+    // The server sends customComparison = null when the section is on but
+    // no comparator rode the URL — the section must print its factual
+    // noteBox and keep the document renderable.
+    const data = mockData();
+    data.customComparison = null;
+    const { bufferBase64 } = await buildPdfReport(data, {
+      sections: ['customCompare'],
+      historicalPeriods: HISTORICAL,
+    });
+    expect(Buffer.from(bufferBase64, 'base64').length).toBeGreaterThan(0);
   });
 });

@@ -62,7 +62,7 @@ export interface UseDashboardActionsParams {
 }
 
 export interface UseDashboardActionsResult {
-  handleExport: (selectedSections: string[]) => Promise<void>;
+  handleExport: (selectedSections: string[], compare?: { outlets: string[]; areas: string[] }) => Promise<void>;
   /**
    * FIX (TASK H-3): now async — awaits the SERVER-side cache clear
    * (POST /api/refresh) before invalidating client queries, so the
@@ -112,7 +112,18 @@ export function useDashboardActions({
   // filter (focusOutlet — the in-tab picker / table row click), so "what I
   // see in Resto Analysis" == "what the report contains" (user request:
   // filter resto dari Filter resto analisis).
-  const handleExport = useCallback(async (selectedSections: string[]) => {
+  //
+  // CUSTOM-COMPARE (section 13 "Komparasi Pilihan"): `compare` carries the
+  // dialog's comparator picks — resto codes and/or area names — onto the
+  // URL as ?compareOutlets / ?compareAreas (comma-joined; skipped when
+  // absent so pre-CUSTOM-COMPARE URLs stay byte-identical). The server
+  // forks its cache key on them (cmpOutlets/cmpAreas extras — the
+  // PERF-CACHE-04 bug class), so every distinct comparator set is its own
+  // report.
+  const handleExport = useCallback(async (
+    selectedSections: string[],
+    compare?: { outlets: string[]; areas: string[] },
+  ) => {
     if (!analysisData) return;
     // Resto Analysis convention (RestoAnalysis.tsx): activeOutlet =
     // focusOutlet — the in-tab picker's selection (FILTERDROP-1: the global
@@ -137,6 +148,10 @@ export function useDashboardActions({
       if (itemName) params.set('item', itemName);
       if (pic) params.set('pic', pic);
       params.set('sections', selectedSections.join(','));
+      // CUSTOM-COMPARE — the comparator picks (only sent when the dialog
+      // actually produced them; empty lists are skipped).
+      if (compare?.outlets?.length) params.set('compareOutlets', compare.outlets.join(','));
+      if (compare?.areas?.length) params.set('compareAreas', compare.areas.join(','));
       // Report design version — busts the CDN/edge cache after a design
       // change. GODSPLIT-W2-A: single source of truth is
       // REPORT_DESIGN_VERSION in src/lib/report-version.ts — the server's

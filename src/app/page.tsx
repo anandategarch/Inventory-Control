@@ -430,6 +430,17 @@ export default function DashboardPage() {
         onOpenChange={setExportDialogOpen}
         onExport={handleExport}
         isExporting={isExporting}
+        // CUSTOM-COMPARE — the comparator picker's option sources (the
+        // /api/status cache; no extra fetch) + the focus resto (Filter
+        // Resto) so the panel can show WHAT is being compared against.
+        outlets={status?.outlets ?? []}
+        areas={status?.areas ?? []}
+        focusOutlet={focusOutlet}
+        focusOutletName={
+          focusOutlet
+            ? status?.outlets?.find((o) => o.code === focusOutlet)?.name ?? null
+            : null
+        }
       />
 
       {/* H-14/T1: upload + drive dialogs — page-level host (single listener) */}

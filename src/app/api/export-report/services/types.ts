@@ -60,6 +60,10 @@ import type { WasteAttributionResult, WasteKpis, WasteMonthMeta } from '@/lib/qu
 // convention).
 import type { queryOutletHealthRanking } from '@/lib/queries/health-ranking';
 import type { queryAreaAnalysis } from '@/lib/queries/areas';
+// CUSTOM-COMPARE — section 13 "Komparasi Pilihan": per-item rows of the
+// focus outlet vs the USER-PICKED comparator set (type-only import — the
+// same convention as the two above).
+import type { CustomCompareItemRow } from '@/lib/queries/outlets/custom-compare-items';
 
 // PERF-CACHE-06: helper used to short-circuit the cache wrapper for early-return
 // error paths (404 No records found). Throwing this error propagates through
@@ -112,6 +116,10 @@ export interface ReportParams {
   userCompareWeek: string | null;
   userCompareMonth: string | null;
   sections: string[] | null;
+  // CUSTOM-COMPARE — the user-picked comparator set for section 13
+  // (comma-split + trimmed by the route; null/empty = no comparators).
+  compareOutlets: string[];
+  compareAreas: string[];
   startedAt: number;
 }
 
@@ -336,6 +344,57 @@ export interface TrendRow {
 }
 
 // ============================================================
+// CUSTOM-COMPARE — section 13 "Komparasi Pilihan" payload (user: "pilih
+// resto mlgpar, pembanding bdgsek … atau beberapa resto / pakai area").
+// The comparison SET is user-chosen: the focus resto (the `outlet` param,
+// i.e. the Resto tab's Filter Resto) + every comparator outlet picked
+// directly (?compareOutlets) and/or every outlet of a picked area
+// (?compareAreas — expanded server-side from the population scan).
+// SALES SECRECY (REFINE-1): `sales` feeds only the loss/sales RATIO —
+// the nominal itself is never printed by the renderer.
+// ============================================================
+
+/** One side-by-side row of 13.1 (the focus resto or one comparator). */
+export interface CustomCompareEntity {
+  outletCode: string;
+  outletName: string;
+  area: string;
+  /** True for the focus resto (the `outlet` param) — amber + bold row. */
+  isFocus: boolean;
+  /** True when the outlet entered the set via a direct pick (vs an area
+   *  expansion) — drives the provenance note in the PDF. */
+  fromPick: boolean;
+  /** True when the outlet entered the set via a picked AREA. */
+  fromArea: boolean;
+  nominalDeviasi: number;
+  totalQtyDeviasi: number;
+  totalQtyBom: number;
+  lossNominal: number;
+  sales: number;
+  nonZeroDevCount: number;
+}
+
+/** Section 13's data (null when the section is off / no comparator set). */
+export interface CustomCompareData {
+  /** The focus outlet's code — null when no Filter Resto selection rode
+   *  the request (the table then compares the picked set alone). */
+  focusCode: string | null;
+  focusName: string | null;
+  /** The raw picks as they arrived (provenance: 13.1's subhead). */
+  compareOutletCodes: string[];
+  compareAreas: string[];
+  /** Focus + comparators, ranked by |nominal deviasi| DESC. */
+  entities: CustomCompareEntity[];
+  /** Directly-picked outlet codes with NO records in the period — the
+   *  PDF lists them so a silent drop can never masquerade as a zero. */
+  missingOutlets: string[];
+  /** Picked areas that matched no outlet in the scan (typo guard). */
+  missingAreas: string[];
+  /** 13.3 rows ([] when there is no focus resto or no comparator). */
+  items: CustomCompareItemRow[];
+}
+
+// ============================================================
 // ReportData — the full data object built by fetchReportData
 //  --------------------------------------------------------
 //  SQL-return fields use `Awaited<ReturnType<typeof ...>>` so a signature
@@ -405,6 +464,10 @@ export interface ReportData {
   // row each — jumlah resto, |nominal deviasi|, % Dev/BOM, % Loss to Sales
   // (the FE AreaComparison card carried into the PDF).
   areaComparison: Array<Awaited<ReturnType<typeof queryAreaAnalysis>>[number]>;
+  // CUSTOM-COMPARE — section 13 'customCompare' (null when off / no
+  // comparator set): the focus resto + USER-PICKED comparators side by
+  // side (13.1 KPI table, 13.2 bar chart, 13.3 per-item breakdown).
+  customComparison: CustomCompareData | null;
   durationMs: number;
 }
 

@@ -246,6 +246,7 @@
 //    10 flip        — Item yang Kemungkinan Plus Minus           sections/flip.ts
 //    11 outletLeague— Peringkat Resto (satu per satu)            sections/outlet-league.ts
 //    12 areaCompare — Perbandingan Area (tabel + grafik)         sections/area-compare.ts
+//    13 customCompare— Komparasi Pilihan (fokus vs pembanding)   sections/custom-compare.ts
 //
 //  Content rule (user request, EXPAND-1): EVERY rendered line is a SQL
 //  aggregate, a factual label, or a formula definition — no generated
@@ -276,6 +277,9 @@ import { drawFlipSection } from './sections/flip';
 // (user: "Export 1 by one 1 resto dan area").
 import { drawOutletLeagueSection } from './sections/outlet-league';
 import { drawAreaCompareSection } from './sections/area-compare';
+// CUSTOM-COMPARE — section 13 "Komparasi Pilihan" (user: "pilih resto
+// mlgpar, pembanding bdgsek … atau beberapa resto / pakai area").
+import { drawCustomCompareSection } from './sections/custom-compare';
 
 // ============================================================
 //  Main entry — buildPdfReport
@@ -361,4 +365,5 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   drawFlipSection(env);         // 10 — Item yang Kemungkinan Plus Minus
   drawOutletLeagueSection(env); // 11 — Peringkat Resto (satu per satu)
   drawAreaCompareSection(env);  // 12 — Perbandingan Area (tabel + grafik)
+  drawCustomCompareSection(env); // 13 — Komparasi Pilihan (fokus vs pembanding terpilih)
 }

@@ -1,6 +1,6 @@
 // ============================================================
 //  /api/export-report — Export analysis data to PDF
-//  GET: ?month=&week=&compareWeek=&compareMonth=&area=&outlet=&item=&pic=&kelompok=&sections=
+//  GET: ?month=&week=&compareWeek=&compareMonth=&area=&outlet=&item=&pic=&kelompok=&sections=&compareOutlets=&compareAreas=
 //  Fetches analysis data server-side, generates a .pdf, returns as download.
 //
 //  EXPORT-PDF: output switched .docx → .pdf (full design + vector charts
@@ -102,6 +102,13 @@ export async function GET(req: NextRequest) {
     // absent (null) still means all sections. The cache key below keeps the
     // two cases distinct.
     const sections = sectionsParam !== null ? sectionsParam.split(',').filter(Boolean) : null;
+    // CUSTOM-COMPARE — section 13's user-picked comparator set (comma-
+    // separated outlet codes / area names). Zod-validated upstream (count +
+    // length caps, no control chars); split + trim here, empty param → [].
+    const compareOutlets = (url.searchParams.get('compareOutlets') || '')
+      .split(',').map((s) => s.trim()).filter(Boolean);
+    const compareAreas = (url.searchParams.get('compareAreas') || '')
+      .split(',').map((s) => s.trim()).filter(Boolean);
 
     if (!monthParam || !week) {
       return NextResponse.json({ success: false, error: 'month and week required' }, { status: 400 });
@@ -152,6 +159,13 @@ export async function GET(req: NextRequest) {
       // cache layers (full rv changelog lives there).
       extra: {
         sections: sections === null ? null : (sections.length > 0 ? [...sections].sort().join(',') : '__NONE__'),
+        // CUSTOM-COMPARE — the comparator set MUST fork the cache key
+        // (the PERF-CACHE-04 bug class: two requests differing only in
+        // ?compareOutlets/?compareAreas used to share one row → the wrong
+        // comparators' PDF). Sorted for determinism; null when absent so
+        // pre-CUSTOM-COMPARE keys stay byte-identical (cache-row compat).
+        cmpOutlets: compareOutlets.length > 0 ? [...compareOutlets].sort().join(',') : null,
+        cmpAreas: compareAreas.length > 0 ? [...compareAreas].sort().join(',') : null,
         // Report design version (GODSPLIT-W2-A): imported from
         // src/lib/report-version.ts — single source of truth shared with
         // the client's `?rv=` URL param; the full rv changelog (REFINE-3
@@ -191,7 +205,8 @@ export async function GET(req: NextRequest) {
           // for the filter).
           const params: ReportParams = {
             monthParam, week, area, outletCode, itemName, pic, kelompok,
-            userCompareWeek, userCompareMonth, sections, startedAt,
+            userCompareWeek, userCompareMonth, sections,
+            compareOutlets, compareAreas, startedAt,
           };
           const { data, ctx } = await fetchReportData(params);
 
