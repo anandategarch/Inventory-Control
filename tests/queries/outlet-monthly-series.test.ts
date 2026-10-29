@@ -299,9 +299,10 @@ describe('queryOutletMonthlySeries', () => {
   it('caps the TARGET window to the last DASHBOARD_LOOKBACK_MONTHS months from the shared scan', async () => {
     // 14 chronological months (2024-08 … 2025-09) of scan rows for the
     // outlet — only the chronologically LAST window may surface.
-    // PERF-FILTER3 ("3 BULAN"): the consumer window is 3 (was 12) — the
-    // scan itself also fetches ≤3 months in production, but the slice must
-    // still cap whatever the (cache-hit) scan row contains.
+    // HIST-WINDOW-5 (29 Okt 2026): the consumer window is 5
+    // (PERF-FILTER3 era: 3; pre-PERF-FILTER3: 12) — the scan itself also
+    // fetches ≤5 months in production, but the slice must still cap
+    // whatever the (cache-hit) scan row contains.
     const monthKeys = [
       '2024-08', '2024-09', '2024-10', '2024-11', '2024-12',
       '2025-01', '2025-02', '2025-03', '2025-04', '2025-05',
@@ -311,8 +312,8 @@ describe('queryOutletMonthlySeries', () => {
     mockQueryRaw.mockResolvedValueOnce(many);
     const { rows } = await queryOutletMonthlySeries('1357.TJPPLU', 'WEEK 4', '2025-09', TOL, HI_LOSS);
     expect(rows.length).toBe(OUTLET_MONTHLY_SERIES_WINDOW_MONTHS);
-    // ...and they are the CHRONOLOGICALLY LAST 3 (slice(-3) of ASC order).
-    expect(rows[0].monthKey).toBe(monthKeys[11]);
+    // ...and they are the CHRONOLOGICALLY LAST 5 (slice(-5) of ASC order).
+    expect(rows[0].monthKey).toBe(monthKeys[9]);
     expect(rows[rows.length - 1].monthKey).toBe(monthKeys[13]);
   });
 

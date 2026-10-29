@@ -210,7 +210,7 @@ describe('clampRateLeagueLimit', () => {
     expect(clampRateLeagueLimit(Number.POSITIVE_INFINITY)).toBe(WASTE_RATE_LEAGUE_DEFAULT_LIMIT);
   });
 
-  it('knobs pinned: default 20, max 50, min outlets 5, window cap 3 (PERF-FILTER3 "3 BULAN")', () => {
+  it('knobs pinned: default 20, max 50, min outlets 5, window cap 5 (HIST-WINDOW-5)', () => {
     expect(WASTE_RATE_LEAGUE_DEFAULT_LIMIT).toBe(20);
     expect(WASTE_RATE_LEAGUE_MAX_LIMIT).toBe(50);
     expect(WASTE_RATE_LEAGUE_MIN_OUTLETS).toBe(5);
@@ -218,7 +218,10 @@ describe('clampRateLeagueLimit', () => {
     // user request "tarik data 3 bulan terakhir agar ringan" — this endpoint
     // 504-timeout'd at the 60s function cap under the parallel filter
     // fan-out (see window-config.ts).
-    expect(WASTE_RATE_LEAGUE_WINDOW_MONTHS).toBe(3);
+    // HIST-WINDOW-5 (29 Okt 2026, opsi B user): 3 → 5 — sinkron dengan
+    // DASHBOARD_LOOKBACK_MONTHS (z-score tab Historical butuh ≥4 pembanding
+    // same-week; DB us-east-1 + heatmap terhapus membuat 5 bulan aman).
+    expect(WASTE_RATE_LEAGUE_WINDOW_MONTHS).toBe(5);
   });
 });
 

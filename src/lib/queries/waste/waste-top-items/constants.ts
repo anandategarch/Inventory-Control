@@ -10,10 +10,12 @@
 
 /**
  * Max months in the waste window (incl. running month) — shared with waste-series.
- * PERF-FILTER3 ("3 BULAN"): 12 → 3 — see window-config.ts (user request
- * "tarik data 3 bulan terakhir dari filter terpilih agar ringan").
+ * PERF-FILTER3 ("3 BULAN"): 12 → 3 (user request "tarik data 3 bulan
+ * terakhir dari filter terpilih agar ringan").
+ * HIST-WINDOW-5 (29 Okt 2026): 3 → 5 — sinkron dengan DASHBOARD_LOOKBACK_MONTHS
+ * (see window-config.ts; pinned by test to stay in sync).
  */
-export const WASTE_TOP_ITEMS_WINDOW_MONTHS = 3;
+export const WASTE_TOP_ITEMS_WINDOW_MONTHS = 5;
 
 /** Default + max top-N items returned. */
 export const WASTE_TOP_ITEMS_DEFAULT_LIMIT = 20;

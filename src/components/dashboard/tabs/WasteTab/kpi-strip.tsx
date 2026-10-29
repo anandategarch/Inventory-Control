@@ -15,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Gauge } from 'lucide-react';
 import { fmtIDR, fmtPct } from '@/lib/format';
+import { DASHBOARD_LOOKBACK_MONTHS } from '@/lib/queries/window-config';
 import type { WasteKpis } from './types';
 
 function KpiCell({ label, value, tone }: { label: string; value: string; tone?: string }) {
@@ -45,7 +46,7 @@ export const WasteKpiStrip = memo(function WasteKpiStrip({
           Ringkasan Waste — Same-Week ({week})
         </CardTitle>
         <p className="text-xs text-muted-foreground ml-9">
-          Agregat {kpis.outlets} outlet selama {monthsCount} bulan (maks. 12 bulan terakhir, same-week —
+          Agregat {kpis.outlets} outlet selama {monthsCount} bulan (maks. {DASHBOARD_LOOKBACK_MONTHS} bulan terakhir, same-week —
           minggu bersifat kumulatif sehingga perbandingan antar bulan HANYA valid pada minggu yang sama).
           Waste/Susut/Trial/Residual = ΣABS nominal per bulan.
         </p>

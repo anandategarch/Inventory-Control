@@ -48,11 +48,12 @@ export async function queryWasteNetwork(
   currentMonthKey: string | null,
   filters: SqlFilterOpts,
   highLossNominal: number,
-  // PERF-FILTER3 ("3 BULAN"): interactive callers (/api/waste-series) keep
-  // the default 3-month dashboard window; the export-report deep path
+  // Window default: DASHBOARD_LOOKBACK_MONTHS (kini 5 — HIST-WINDOW-5,
+  // 29 Okt 2026; see window-config.ts). Interactive callers
+  // (/api/waste-series) keep this default; the export-report deep path
   // passes DEEP_REPORT_WINDOW_MONTHS (12) explicitly AND stamps it into
   // its q-waste-network cache key (extra.w) so the two windows can never
-  // share a row. See window-config.ts.
+  // share a row.
   windowMonths: number = DASHBOARD_LOOKBACK_MONTHS,
 ): Promise<WasteNetworkResult> {
   const f = buildSqlFilters(filters);

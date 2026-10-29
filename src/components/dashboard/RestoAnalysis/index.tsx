@@ -318,8 +318,9 @@ export function RestoAnalysis({ analysisData }: { analysisData?: AnalysisData })
       <ProfileCards profile={profile} allItems={data.allItems} />
 
       {/* DEEP-RESTO-1: Riwayat Multi-Bulan — deret bulanan same-week +
-          track-record rank di band sales setara, maks 12 bulan terakhir
-          (termasuk bulan berjalan). Kedua card self-fetch — independen
+          track-record rank di band sales setara, maks DASHBOARD_LOOKBACK_MONTHS
+          (kini 5 — HIST-WINDOW-5) bulan terakhir (termasuk bulan berjalan).
+          Kedua card self-fetch — independen
           dari payload outlet-items, jadi tetap render saat profil parsial. */}
       <SectionHeader
         icon={<History className="h-4 w-4 text-muted-foreground" />}

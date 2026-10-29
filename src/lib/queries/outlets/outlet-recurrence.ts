@@ -54,9 +54,10 @@ import { DASHBOARD_LOOKBACK_MONTHS } from '../window-config';
 
 /**
  * Max historical months per outlet in the recurrence window.
- * PERF-FILTER3 ("3 BULAN"): 12 → DASHBOARD_LOOKBACK_MONTHS (3) — see
- * window-config.ts (feeds /api/recommendations, part of the filter
- * fan-out that exhausted the free-tier DB).
+ * Window = DASHBOARD_LOOKBACK_MONTHS (kini 5 — HIST-WINDOW-5, 29 Okt 2026;
+ * see window-config.ts). [RIWAYAT: PERF-FILTER3 ("3 BULAN") memangkas dari
+ * 12 ke 3 — feeds /api/recommendations, part of the filter fan-out that
+ * exhausted the free-tier DB.]
  */
 export const OUTLET_RECURRENCE_WINDOW_MONTHS = DASHBOARD_LOOKBACK_MONTHS;
 

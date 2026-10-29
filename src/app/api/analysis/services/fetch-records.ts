@@ -258,12 +258,17 @@ export async function fetchRecords(params: ResolvedParams): Promise<FetchedRecor
       const current = allPeriods.find(ap => ap.monthLabel === resolvedMonth && ap.weekLabel === week);
       return !current || p.sortKey < current.sortKey;
     })
-    // PERF-FILTER3 ("3 BULAN", 22 Okt 2026): keep only the MOST RECENT
-    // (DASHBOARD_LOOKBACK_MONTHS − 1) prior same-week months → the whole
-    // analysis wave's historical baseline (q-hist-stats / q-hist-rules /
-    // q-waste-rules) now spans the selected month + 2 prior months, per the
-    // user request "hanya tarik data 3 bulan terakhir dari filter terpilih
-    // agar ringan". allPeriods is sortKey-ascending, so slice(-N) keeps the
+    // Window policy: keep only the MOST RECENT (DASHBOARD_LOOKBACK_MONTHS − 1)
+    // prior same-week months (= 4 sejak HIST-WINDOW-5, 29 Okt 2026, opsi B
+    // user — see window-config.ts) → the analysis wave's historical baseline
+    // (q-hist-stats / q-hist-rules / q-waste-rules) spans the selected month
+    // + 4 prior months — tepat memenuhi HISTORICAL_MIN_WEEKS=4 untuk z-score
+    // tab Historical. [RIWAYAT: PERF-FILTER3 (22 Okt 2026) memangkas jendela
+    // dari tanpa-batas ke 2 bulan pembanding per user request "hanya tarik
+    // data 3 bulan terakhir agar ringan" saat insiden 500; HIST-WINDOW-5
+    // melonggarkan ke 4 pembanding karena DB kini us-east-1 (MIGRASI-REGION)
+    // + heatmap terhapus (HEATMAP-REMOVE) + gate stagger PERF-FILTER4 aktif.]
+    // allPeriods is sortKey-ascending, so slice(-N) keeps the
     // NEWEST N. q-hist-stats' cache key derives from the period LIST
     // (histPeriodsKeyParts) → auto-forked; q-hist-rules/q-waste-rules carry
     // an explicit `lb` extra for the same reason. Unchanged semantics when

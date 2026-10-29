@@ -20,6 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { CalendarRange } from 'lucide-react';
+import { DASHBOARD_LOOKBACK_MONTHS } from '@/lib/queries/window-config';
 import { fmtIDR, fmtNum, fmtPct, fmtGrowth, growthColor, growthColorClass, numberColorNeg } from '@/lib/format';
 
 interface MonthlySeriesRow {
@@ -115,7 +116,7 @@ export const MonthlySeriesCard = memo(function MonthlySeriesCard({
           Deret Bulanan — Same-Week ({currentWeek})
         </CardTitle>
         <p className="text-xs text-muted-foreground ml-9">
-          Deret {currentWeek} lintas bulan untuk <span className="font-medium text-foreground">{outletCode}</span> — maks. 12 bulan terakhir
+          Deret {currentWeek} lintas bulan untuk <span className="font-medium text-foreground">{outletCode}</span> — maks. {DASHBOARD_LOOKBACK_MONTHS} bulan terakhir
           (termasuk bulan berjalan). Minggu bersifat kumulatif (snapshot tgl 1–25), jadi perbandingan antar bulan HANYA valid pada minggu yang sama.
           Net Cost Ratio = (Total Loss − Total Surplus) / Sales.
         </p>

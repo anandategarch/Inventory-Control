@@ -39,11 +39,14 @@
 //  records for the weekLabel).
 //
 //  PERF-FILTER3 ("3 BULAN", 22 Okt 2026): window 24 →
-//  DASHBOARD_LOOKBACK_MONTHS (3) — user request "tarik data 3 bulan
-//  terakhir dari filter terpilih agar ringan". The cache key embeds
-//  the window (`extra.w`) so pre-change rows (w=24) can never be
-//  served to post-change consumers. The 2×-headroom design is
-//  retired with it (a 24-month scan was 8× the interactive need).
+//  DASHBOARD_LOOKBACK_MONTHS — user request "tarik data 3 bulan
+//  terakhir dari filter terpilih agar ringan". HIST-WINDOW-5
+//  (29 Okt 2026): kini 5 (see window-config.ts — opsi B user agar
+//  z-score tab Historical punya ≥4 pembanding same-week). The cache
+//  key embeds the window (`extra.w`) so pre-change rows (w=24 / w=3)
+//  can never be served to post-change consumers. The 2×-headroom
+//  design is retired with it (a 24-month scan was 8× the interactive
+//  need).
 //
 //  Freshness: cachedSharedQuery TTL 30 min + mutation-triggered
 //  invalidation ('q-peer-band-scan' is listed in invalidate.ts's
@@ -61,8 +64,8 @@ import { extractKelompokFromCode } from '@/lib/kelompok-resolver';
 
 /**
  * Months fetched by the shared scan (union month set, ≤ currentMonthKey).
- * PERF-FILTER3 ("3 BULAN"): dashboard lookback window (default 3) — see
- * window-config.ts. The value is embedded in the cache key (`extra.w`),
+ * Window = dashboard lookback (kini 5 — HIST-WINDOW-5, 29 Okt 2026; see
+ * window-config.ts). The value is embedded in the cache key (`extra.w`),
  * so changing it forks a fresh namespace instead of poisoning old rows.
  */
 export const PEER_BAND_SCAN_WINDOW_MONTHS = DASHBOARD_LOOKBACK_MONTHS;

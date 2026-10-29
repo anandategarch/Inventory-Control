@@ -154,9 +154,11 @@ export function computeWastePeerZScoreFromScan(
   scan: PeerBandScan,
   outletCode: string,
   kelompok?: string | null,
-  // PERF-FILTER3 ("3 BULAN"): default window 12 → DASHBOARD_LOOKBACK_MONTHS
-  // (3) — see window-config.ts. WASTE_ZSCORE_MIN_BAND=3 is still exactly
-  // satisfiable (band months = window months).
+  // Window default: DASHBOARD_LOOKBACK_MONTHS (kini 5 — HIST-WINDOW-5,
+  // 29 Okt 2026; see window-config.ts). [RIWAYAT: PERF-FILTER3 ("3 BULAN")
+  // memangkas dari 12 ke 3 saat insiden 500 berulang.]
+  // WASTE_ZSCORE_MIN_BAND=3 is still exactly satisfiable
+  // (band months ≤ window months).
   windowMonths: number = DASHBOARD_LOOKBACK_MONTHS,
 ): { rows: WastePeerZScoreRow[]; summary: WastePeerZScoreSummary } {
   const bands = buildPeerBands(scan, outletCode, windowMonths, kelompok);

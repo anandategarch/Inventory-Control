@@ -9,9 +9,9 @@
 //  GRAIN (critical): a "week" is a CUMULATIVE MTD snapshot —
 //  the ONLY valid cross-month comparison is SAME weekLabel
 //  (identical to outlet-monthly-series.ts / outlet-recurrence.
-//  ts). Window = most recent 12 same-week months ending at the
-//  running month (monthKey <= currentMonthKey, inclusive; no
-//  upper bound when currentMonthKey is null).
+//  ts). Window = most recent same-week months ending at the
+//  running month (DASHBOARD_LOOKBACK_MONTHS, incl.; no upper
+//  bound when currentMonthKey is null).
 //
 //  Sales convention: MODE(nominalSales) from OutletPeriodSales
 //  (DB-06 precomputed table) — same as DEEP-RESTO-1.
@@ -26,13 +26,15 @@ import { DASHBOARD_LOOKBACK_MONTHS } from '../window-config';
 
 /**
  * Max months in the waste window (incl. running month).
- * PERF-FILTER3 ("3 BULAN"): 12 → DASHBOARD_LOOKBACK_MONTHS (3) for the
- * INTERACTIVE path (/api/waste-series + waste-peer-zscore defaults) —
- * see window-config.ts. The export-report deep path overrides to
+ * PERF-FILTER3 ("3 BULAN"): 12 → DASHBOARD_LOOKBACK_MONTHS for the
+ * INTERACTIVE path (/api/waste-series + waste-peer-zscore defaults).
+ * HIST-WINDOW-5 (29 Okt 2026): kini 5 — see window-config.ts (opsi B
+ * user; z-score tab Historical butuh ≥4 pembanding same-week).
+ * The export-report deep path overrides to
  * DEEP_REPORT_WINDOW_MONTHS (12) explicitly at its call site + cache
  * key (`extra.w`). Trade-off (disclosed): klasifikasi "kronis"
- * (WASTE_KRONIS_MIN_MONTHS=6) can no longer trigger in the 3-month
- * interactive window — it degrades gracefully to non-kronis classes.
+ * (WASTE_KRONIS_MIN_MONTHS=6) masih tidak terpicu di jendela 5-bulan
+ * interactive — degrades gracefully to non-kronis classes.
  */
 export const WASTE_WINDOW_MONTHS = DASHBOARD_LOOKBACK_MONTHS;
 

@@ -3,7 +3,7 @@
 //  --------------------------------------------------------
 //  "Liga Waste-Rate" — per-item outlet league ranked by the
 //  NORMALIZED waste rate Σ|qtyWaste| / Σ|qtyBom| over the
-//  multi-month SAME-week window (most recent 12 months, incl.
+//  multi-month SAME-week window (DASHBOARD_LOOKBACK_MONTHS, incl.
 //  running month) for the scoped filter set.
 //
 //  Business question (findings-DEEPWASTE2-B W1): "Bahan mana
@@ -100,13 +100,14 @@ import { buildSqlFilters, withStatementTimeout, type SqlFilterOpts } from '../sh
 
 /**
  * Max months in the league window (incl. running month).
- * PERF-FILTER3 ("3 BULAN"): 12 → DASHBOARD_LOOKBACK_MONTHS (3) — see
- * window-config.ts (user request "tarik data 3 bulan terakhir agar
- * ringan"; this endpoint 504-timeout'd at 60s under parallel filter
- * fan-out). Local (not imported from ./shared.ts) so this module owns
+ * PERF-FILTER3 ("3 BULAN"): 12 → 3 (user request "tarik data 3 bulan
+ * terakhir agar ringan"; this endpoint 504-timeout'd at 60s under
+ * parallel filter fan-out). HIST-WINDOW-5 (29 Okt 2026): 3 → 5 —
+ * sinkron dengan DASHBOARD_LOOKBACK_MONTHS (see window-config.ts).
+ * Local (not imported from ./shared.ts) so this module owns
  * its whole footprint; the value is pinned by test to stay in sync.
  */
-export const WASTE_RATE_LEAGUE_WINDOW_MONTHS = 3;
+export const WASTE_RATE_LEAGUE_WINDOW_MONTHS = 5;
 
 /** Default + max top-N items returned (house limit convention). */
 export const WASTE_RATE_LEAGUE_DEFAULT_LIMIT = 20;

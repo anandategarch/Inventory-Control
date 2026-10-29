@@ -48,8 +48,9 @@ import { DASHBOARD_LOOKBACK_MONTHS } from '../window-config';
 
 /**
  * Max months in the series / track-record window (incl. running month).
- * PERF-FILTER3 ("3 BULAN"): 12 → DASHBOARD_LOOKBACK_MONTHS (3) — see
- * window-config.ts. Also the default window for queryPeerTrackRecord.
+ * Window = DASHBOARD_LOOKBACK_MONTHS (kini 5 — HIST-WINDOW-5, 29 Okt 2026;
+ * see window-config.ts). Also the default window for queryPeerTrackRecord.
+ * [RIWAYAT: PERF-FILTER3 ("3 BULAN") memangkas dari 12 ke 3.]
  */
 export const OUTLET_MONTHLY_SERIES_WINDOW_MONTHS = DASHBOARD_LOOKBACK_MONTHS;
 
