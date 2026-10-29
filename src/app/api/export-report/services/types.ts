@@ -54,6 +54,12 @@ import type { queryItemConsistency } from '@/lib/queries';
 // (erased at compile — no runtime coupling), same convention as the
 // imports above.
 import type { WasteAttributionResult, WasteKpis, WasteMonthMeta } from '@/lib/queries/waste/network';
+// LEAGUE-AREA — sections 11 "Peringkat Resto" + 12 "Perbandingan Area":
+// the per-outlet health rows + per-area aggregates (anonymous inline
+// return type — named via the function type, the VAR12 queryItemConsistency
+// convention).
+import type { queryOutletHealthRanking } from '@/lib/queries/health-ranking';
+import type { queryAreaAnalysis } from '@/lib/queries/areas';
 
 // PERF-CACHE-06: helper used to short-circuit the cache wrapper for early-return
 // error paths (404 No records found). Throwing this error propagates through
@@ -390,6 +396,15 @@ export interface ReportData {
   // topItemsByWaste rows (q-topcat — fetch gate widened to
   // needTopItems || needWaste).
   wasteAttribution: WasteSectionData | null;
+  // LEAGUE-AREA — section 11 'outletLeague' ([] when off): every resto in
+  // the population scope, ONE row each — the "satu per satu" league table
+  // (outlet filter deliberately stripped at the fetch; the focus resto is
+  // highlighted by the renderer instead).
+  outletLeague: Array<Awaited<ReturnType<typeof queryOutletHealthRanking>>[number]>;
+  // LEAGUE-AREA — section 12 'areaCompare' ([] when off): every area, ONE
+  // row each — jumlah resto, |nominal deviasi|, % Dev/BOM, % Loss to Sales
+  // (the FE AreaComparison card carried into the PDF).
+  areaComparison: Array<Awaited<ReturnType<typeof queryAreaAnalysis>>[number]>;
   durationMs: number;
 }
 

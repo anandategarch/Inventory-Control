@@ -151,6 +151,27 @@ export const EXPORT_SECTIONS: readonly ExportSection[] = [
     ],
   },
   { key: 'flip', label: '10. Item yang Kemungkinan Plus Minus antar Periode' },
+  {
+    // LEAGUE-AREA (user: "Export 1 by one 1 resto dan area") — every resto
+    // in the filter scope gets ONE row (a league table), instead of
+    // section 9's target-centric ±10% sales band. Leaf: one table, no
+    // static sub-blocks to gate.
+    key: 'outletLeague',
+    label: '11. Peringkat Resto',
+  },
+  {
+    // LEAGUE-AREA — every area side by side (the FE AreaComparison card,
+    // tab Area, carried into the PDF) + a per-area |nominal| bar chart.
+    key: 'areaCompare',
+    label: '12. Perbandingan Area',
+    subs: [
+      {
+        key: 'tabel',
+        label: 'Tabel semua area (jumlah resto, nominal deviasi, % Dev/BOM, % Loss to Sales)',
+      },
+      { key: 'grafik', label: 'Grafik batang Nominal Deviasi per Area' },
+    ],
+  },
 ];
 
 /** All bare section keys, in order ('exec' … 'flip'). */

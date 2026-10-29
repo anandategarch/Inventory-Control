@@ -67,6 +67,10 @@ export function computeSectionGates(sections: ReportParams['sections']): Section
   const needAnomali = isSectionOn(sections, 'anomali');
   // W10 — section 5 "Analisis Waste".
   const needWaste = isSectionOn(sections, 'waste');
+  // LEAGUE-AREA — sections 11 "Peringkat Resto" + 12 "Perbandingan Area"
+  // (user: "Export 1 by one 1 resto dan area").
+  const needOutletLeague = isSectionOn(sections, 'outletLeague');
+  const needAreaCompare = isSectionOn(sections, 'areaCompare');
   // The kpis row feeds executiveSummary (exec + growth sections + the cover
   // KPI cards). Cheap: shared cached q-* row.
   const needKpis = needExec || needGrowth;
@@ -74,6 +78,7 @@ export function computeSectionGates(sections: ReportParams['sections']): Section
   return {
     needExec, needGrowth, needTopItems, needVariance, needTrend, needPeer, needFlip,
     needItemTrend, needAnomali, needWaste, needKpis, needPrevSummary,
+    needOutletLeague, needAreaCompare,
   };
 }
 
@@ -90,6 +95,10 @@ export interface SectionGates {
   needAnomali: boolean;
   /** W10 — section 'waste' (Analisis Waste). */
   needWaste: boolean;
+  /** LEAGUE-AREA — section 11 'outletLeague' (Peringkat Resto). */
+  needOutletLeague: boolean;
+  /** LEAGUE-AREA — section 12 'areaCompare' (Perbandingan Area). */
+  needAreaCompare: boolean;
   needKpis: boolean;
   needPrevSummary: boolean;
 }

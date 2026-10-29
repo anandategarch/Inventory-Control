@@ -30,6 +30,10 @@ import {
   // W10 — section 5 "Analisis Waste": queryWasteNetwork (re-exported via
   // the queries barrel).
   queryWasteNetwork,
+  // LEAGUE-AREA — sections 11 "Peringkat Resto" + 12 "Perbandingan Area"
+  // (re-exported via the queries barrel).
+  queryOutletHealthRanking,
+  queryAreaAnalysis,
 } from '@/lib/queries';
 // REFINE-1: section 8 flip items (renamed "Item yang Kemungkinan Plus Minus
 // antar Periode") — not in the queries barrel; direct module import.
@@ -49,9 +53,18 @@ import type { FetcherContext } from './context';
 export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
   const { thresholds, month, prevWeek, prevMonth, filterOpts, historicalPeriods, gates } = ctx;
   const { week } = ctx.params;
-  const { needKpis, needPrevSummary, needTopItems, needTrend, needItemTrend, needAnomali, needFlip, needWaste } = gates;
+  const { needKpis, needPrevSummary, needTopItems, needTrend, needItemTrend, needAnomali, needFlip, needWaste, needOutletLeague, needAreaCompare } = gates;
 
   const topNItems = thresholds.TOP_N_ITEMS || 10;
+
+  // LEAGUE-AREA — the population scope for sections 11/12: the report's
+  // filters MINUS the outlet filter. A league (or an area comparison)
+  // scoped to the focus resto would be one row / one area — useless; the
+  // focus row is instead HIGHLIGHTED in the renderers (the PDF twin of
+  // ITEM-HL-B). Same precedent as q-peer-autotarget's scanFilters
+  // (data-fetcher/peer.ts). itemName/kelompok/pic/area still apply — the
+  // league legitimately respects them.
+  const populationFilters = { ...filterOpts, outletCode: null };
 
   // Rev 2: Fetch previous period + historical category data for comparison
   const historicalPeriodsList = historicalPeriods.map(p => ({ monthLabel: p.monthLabel, weekLabel: p.weekLabel }));
@@ -98,6 +111,9 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
     // W10 — section 5 "Analisis Waste": the q-waste-network projection
     // (null when the waste section is off).
     wasteRes,
+    // LEAGUE-AREA — sections 11/12 (see the notes at the entries below).
+    outletLeagueRows,
+    areaAnalysisRows,
   ] = await Promise.all([
     // PERF (TAHAP-2 / P2-9): kpis + trendAgg + category tops use the shared
     // per-query cache (same queryIds as the analysis pipeline).
@@ -324,6 +340,34 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
         return { months: r.months, kpis: r.kpis, attribution: r.attribution };
       },
     ) : Promise.resolve(null),
+    // LEAGUE-AREA — section 11 "Peringkat Resto": every outlet in the
+    // population scope, one row each, ranked by |nominal deviasi| DESC.
+    // Called DIRECTLY (uncached here) — the pre-EXPORT-TRIM fetcher's
+    // exact precedent: queryOutletHealthRanking is a thin SHAPER over the
+    // shared q-outlet-agg scan, which is cachedSharedQuery'd INSIDE
+    // outlet-agg-scan.ts under {month, week, filters, extra:{hlt, v:3}} —
+    // the SAME key the analysis pipeline (run-queries.ts) and
+    // /api/recommendations build, so whichever pipeline runs first warms
+    // the row for the others. The threshold is passed explicitly for key
+    // convergence (run-queries.ts does the same). No new q-* namespace →
+    // no invalidation-array coupling.
+    needOutletLeague
+      ? queryOutletHealthRanking(week, month, populationFilters, thresholds.HIGH_LOSS_NOMINAL_THRESHOLD)
+      : Promise.resolve([]),
+    // LEAGUE-AREA — section 12 "Perbandingan Area": queryAreaAnalysis under
+    // the SAME 'q-area' id + key shape the analysis pipeline uses
+    // (run-queries.ts — "identical period + filters → one scan for both",
+    // the PERF H-11/#3 note). outletCode stripped via populationFilters
+    // (the area table must not collapse to the focus resto's records when
+    // a resto is selected); the query itself nulls the area filter — all
+    // areas always shown, exactly like the FE AreaComparison card.
+    needAreaCompare
+      ? cachedSharedQuery(
+          'q-area',
+          { month, week, filters: populationFilters },
+          () => queryAreaAnalysis(week, month, populationFilters),
+        )
+      : Promise.resolve([]),
   ]);
 
   ctx.kpis = kpis;
@@ -344,4 +388,6 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
   ctx.areaCatAvgMap = areaCatAvgMap;
   ctx.consistencyRows = consistencyRows;
   ctx.wasteRes = wasteRes;
+  ctx.outletLeagueRows = outletLeagueRows;
+  ctx.areaAnalysisRows = areaAnalysisRows;
 }

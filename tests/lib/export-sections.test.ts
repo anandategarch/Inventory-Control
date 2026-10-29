@@ -24,7 +24,7 @@ import {
 } from '@/lib/export-sections';
 
 describe('EXPORT_SECTIONS registry', () => {
-  it('carries the 10 sections in the FIXED pdf-builder order', () => {
+  it('carries the 12 sections in the FIXED pdf-builder order', () => {
     expect(EXPORT_SECTION_KEYS).toEqual([
       'exec',
       'growth',
@@ -36,15 +36,19 @@ describe('EXPORT_SECTIONS registry', () => {
       'trend',
       'peer',
       'flip',
+      'outletLeague',
+      'areaCompare',
     ]);
   });
 
-  it('gives every parent at least one sub; the three leaves have none', () => {
+  it('gives every parent at least one sub; the four leaves have none', () => {
     // Leaves: exec (single KPI table), itemTrend (single heat matrix),
-    // flip (dynamic per-pair groups 10.x — nothing static to gate).
+    // flip (dynamic per-pair groups 10.x — nothing static to gate),
+    // outletLeague (LEAGUE-AREA — one league table, nothing to gate).
     expect(EXPORT_SECTION_SUBS['exec']).toEqual([]);
     expect(EXPORT_SECTION_SUBS['itemTrend']).toEqual([]);
     expect(EXPORT_SECTION_SUBS['flip']).toEqual([]);
+    expect(EXPORT_SECTION_SUBS['outletLeague']).toEqual([]);
     for (const key of [
       'growth',
       'topItems',
@@ -53,9 +57,14 @@ describe('EXPORT_SECTIONS registry', () => {
       'anomali',
       'trend',
       'peer',
+      'areaCompare',
     ]) {
       expect(EXPORT_SECTION_SUBS[key].length).toBeGreaterThan(0);
     }
+  });
+
+  it('areaCompare has the tabel + grafik blocks (LEAGUE-AREA)', () => {
+    expect(EXPORT_SECTION_SUBS['areaCompare']).toEqual(['tabel', 'grafik']);
   });
 
   it('topItems has the 6 numbered rankings 3.1-3.6', () => {
@@ -92,6 +101,15 @@ describe('isExportSectionToken (validation basis)', () => {
   it('accepts the 10 bare keys and every sub token', () => {
     for (const t of EXPORT_SECTION_TOKENS)
       expect(isExportSectionToken(t)).toBe(true);
+  });
+
+  it('rejects the pre-EXPORT-TRIM keys the LEAGUE-AREA sections deliberately did NOT revive', () => {
+    // 'area'/'outlets' were removed by EXPORT-TRIM; their successors use
+    // fresh keys (outletLeague/areaCompare) with different semantics.
+    expect(isExportSectionToken('area')).toBe(false);
+    expect(isExportSectionToken('outlets')).toBe(false);
+    expect(isExportSectionToken('outletLeague')).toBe(true);
+    expect(isExportSectionToken('areaCompare')).toBe(true);
   });
 
   it('rejects unknown keys, unknown subs, and malformed tokens', () => {

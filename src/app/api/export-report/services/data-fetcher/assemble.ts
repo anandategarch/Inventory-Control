@@ -25,6 +25,7 @@ export function assembleReport(
   const {
     month, prevWeek, prevMonth, historicalPeriods, varianceAnalysis,
     topNominal, topDevBom, itemTrendMatrixRes, selfAnomalyRes, flipRankingRes, consistencyRows, wasteRes,
+    outletLeagueRows, areaAnalysisRows,
   } = ctx;
   const { week, area, kelompok, outletCode, itemName, pic, sections, startedAt } = ctx.params;
   const { topWaste, topSusut, topTrial, topLossSurplus, execSummary, trend, weeklyComposition } = derived;
@@ -67,6 +68,14 @@ export function assembleReport(
     // snapshot rides topItemsByWaste above (q-topcat gate widened to
     // needTopItems || needWaste).
     wasteAttribution: wasteRes,
+    // LEAGUE-AREA — section 11 'outletLeague' ([] when off): every resto
+    // in the population scope, one row each (outlet filter stripped — the
+    // focus resto is highlighted by the renderer instead).
+    outletLeague: outletLeagueRows,
+    // LEAGUE-AREA — section 12 'areaCompare' ([] when off): every area,
+    // one row each (outlet filter stripped; area filter nulled inside the
+    // query — dashboard AreaComparison parity).
+    areaComparison: areaAnalysisRows,
     durationMs: Date.now() - startedAt,
   };
 

@@ -80,6 +80,11 @@ export const C = {
   headerBg: '#E5E7EB', // light gray table header (classic, not dark)
   cardBg: '#FAFAF9',
   white: '#FFFFFF',
+  // LEAGUE-AREA (sections 11/12): light amber fill for the FOCUS
+  // resto/area row — the PDF twin of the FE's amber highlight
+  // (ITEM-HL-B bg-amber-50 / PeerTableRow border-l-amber-500).
+  // One shade, semantic only ("baris Anda"), DESAIN-SIMPEL-safe.
+  focusRow: '#FEF3C7',
 } as const;
 // FILTERDROP-1 dead-code audit: ACCENT_LEGACY REMOVED — zero consumers
 // repo-wide (the report stopped using amber accents in DESAIN-SIMPEL).

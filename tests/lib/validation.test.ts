@@ -248,6 +248,26 @@ describe('exportReportQuerySchema', () => {
     expect(r.success).toBe(true);
   });
 
+  // LEAGUE-AREA — sections 11 'outletLeague' (leaf) + 12 'areaCompare'
+  // (tabel/grafik sub tokens).
+  it('accepts the LEAGUE-AREA section keys and sub tokens', () => {
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      sections: 'outletLeague,areaCompare:tabel,areaCompare:grafik',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects sub tokens on outletLeague (leaf has no subs)', () => {
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      sections: 'outletLeague:tabel',
+    });
+    expect(r.success).toBe(false);
+  });
+
   it('rejects unknown sub keys with the same typo guard as section keys', () => {
     const r = exportReportQuerySchema.safeParse({
       month: 'Agustus 2026',

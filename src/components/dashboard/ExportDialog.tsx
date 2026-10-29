@@ -83,6 +83,10 @@ const SECTION_DESCRIPTIONS: Record<string, string> = {
     'Metrik per periode + grafik: nominal deviasi, loss vs surplus, komposisi per minggu, akumulasi mingguan',
   peer: 'Resto lain dengan total penjualan kurang lebih sama: nominal deviasi yang dihasilkan + breakdown per item (kuantitas, % to BOM)',
   flip: 'Item yang QTY deviasinya berbalik arah (plus menjadi minus / sebaliknya) antar periode sejenis',
+  outletLeague:
+    'Semua resto dalam scope filter SATU BARIS PER RESTO (satu per satu), peringkat dari nominal deviasi terbesar — resto terpilih di-highlight; nominal penjualan disembunyikan',
+  areaCompare:
+    'Semua area berdampingan satu per satu: jumlah resto, nominal deviasi, % Dev/BOM, % Loss to Sales + grafik per area',
 };
 
 /** Every selectable token: leaf bare keys + every parent's sub tokens. */

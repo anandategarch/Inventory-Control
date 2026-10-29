@@ -43,7 +43,12 @@ import {
 // decile-shift + top-waste snapshot), inserted after the variance
 // context; REFINE-3 precedent renumber: itemTrend 5→6, anomali 6→7,
 // trend 7→8, peer 8→9, flip 9→10 (keys unchanged).
-const EXPORT_SECTION_KEYS = ['exec', 'growth', 'topItems', 'variance', 'waste', 'itemTrend', 'anomali', 'trend', 'peer', 'flip'] as const;
+// LEAGUE-AREA (user: "Export 1 by one 1 resto dan area"): + 'outletLeague'
+// (section 11 — Peringkat Resto, every resto in scope one row each) +
+// 'areaCompare' (section 12 — Perbandingan Area, every area one row +
+// bar chart). Fresh keys (the pre-EXPORT-TRIM 'area'/'outlets' keys stay
+// dead — different semantics).
+const EXPORT_SECTION_KEYS = ['exec', 'growth', 'topItems', 'variance', 'waste', 'itemTrend', 'anomali', 'trend', 'peer', 'flip', 'outletLeague', 'areaCompare'] as const;
 export const exportReportQuerySchema = z.object({
   month: monthLabelSchema,
   week: weekLabelSchema,

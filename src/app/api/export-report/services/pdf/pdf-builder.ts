@@ -244,6 +244,8 @@
 //     8 trend       — Trend Antar Periode (table + 4 charts)     sections/trend.ts
 //     9 peer        — Resto dengan Penjualan Kurang Lebih Sama   sections/peer.ts
 //    10 flip        — Item yang Kemungkinan Plus Minus           sections/flip.ts
+//    11 outletLeague— Peringkat Resto (satu per satu)            sections/outlet-league.ts
+//    12 areaCompare — Perbandingan Area (tabel + grafik)         sections/area-compare.ts
 //
 //  Content rule (user request, EXPAND-1): EVERY rendered line is a SQL
 //  aggregate, a factual label, or a formula definition — no generated
@@ -270,6 +272,10 @@ import { drawAnomalySection } from './sections/anomaly';
 import { drawTrendSection } from './sections/trend';
 import { drawPeerSection } from './sections/peer';
 import { drawFlipSection } from './sections/flip';
+// LEAGUE-AREA — sections 11 "Peringkat Resto" + 12 "Perbandingan Area"
+// (user: "Export 1 by one 1 resto dan area").
+import { drawOutletLeagueSection } from './sections/outlet-league';
+import { drawAreaCompareSection } from './sections/area-compare';
 
 // ============================================================
 //  Main entry — buildPdfReport
@@ -353,4 +359,6 @@ function drawReport(doc: PDFKit.PDFDocument, data: ReportData, ctx: ReportContex
   drawTrendSection(env);        // 8 — Trend Antar Periode
   drawPeerSection(env);         // 9 — Resto dengan Penjualan Kurang Lebih Sama
   drawFlipSection(env);         // 10 — Item yang Kemungkinan Plus Minus
+  drawOutletLeagueSection(env); // 11 — Peringkat Resto (satu per satu)
+  drawAreaCompareSection(env);  // 12 — Perbandingan Area (tabel + grafik)
 }

@@ -27,7 +27,7 @@
  * (both were the literal '15' before GODSPLIT-W2-A) — both sites must
  * keep producing the identical string.
  */
-export const REPORT_DESIGN_VERSION = '17';
+export const REPORT_DESIGN_VERSION = '18';
 
 // ============================================================
 //  rv changelog — full history (GODSPLIT-W2-A moved it here so the
@@ -101,3 +101,12 @@ export const REPORT_DESIGN_VERSION = '17';
 // pre-17 semantics (whole section), and the new tokens fork fresh cache
 // keys by construction — this bump is belt-and-braces per the STALE-PDF
 // convention (new token combos + rv17 + deploy-SHA all agree).
+// LEAGUE-AREA: rv 18 — NEW PDF sections 11 "Peringkat Resto" (every
+// resto in the population scope, ONE row each, ranked by |nominal
+// deviasi| DESC, focus resto highlighted amber + bold — the PDF twin
+// of ITEM-HL-B) + 12 "Perbandingan Area" (every area one row + |nominal|
+// bar chart; selected area highlighted). Data via queryOutletHealthRanking
+// (shared q-outlet-agg scan — no new namespace) + queryAreaAnalysis (the
+// SAME q-area row the analysis pipeline builds); the outlet filter is
+// stripped at both fetches (populationFilters). Sales nominals stay
+// hidden (REFINE-1) — only the loss/sales RATIO prints.

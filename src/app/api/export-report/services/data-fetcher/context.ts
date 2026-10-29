@@ -41,6 +41,11 @@ import type { queryFlipRanking } from '@/lib/queries/items/flip-ranking';
 import type { queryItemConsistency } from '@/lib/queries';
 // W10 — section 5 "Analisis Waste": the projected queryWasteNetwork row.
 import type { WasteSectionData } from '../types';
+// LEAGUE-AREA — sections 11 "Peringkat Resto" + 12 "Perbandingan Area":
+// the per-outlet health rows (q-outlet-agg shaper) + per-area aggregates
+// (q-area). Type-only imports (erased at compile — no runtime coupling).
+import type { queryOutletHealthRanking } from '@/lib/queries/health-ranking';
+import type { queryAreaAnalysis } from '@/lib/queries/areas';
 import type { ReportParams } from '../types';
 import type { SectionGates } from './section-gates';
 
@@ -142,6 +147,13 @@ export interface FetcherContext extends SetupFields {
   // (null when the waste section is off).
   wasteRes: WasteSectionData | null;
   areaCatAvgMap: Map<string, AreaCategoryAvg>;
+  // LEAGUE-AREA — section 11 ([] when the outletLeague section is off):
+  // every outlet in the population scope, one row each.
+  outletLeagueRows: Awaited<ReturnType<typeof queryOutletHealthRanking>>;
+  // LEAGUE-AREA — section 12 ([] when the areaCompare section is off):
+  // every area, one row each (outlet filter stripped; area filter nulled
+  // inside the query itself).
+  areaAnalysisRows: Array<Awaited<ReturnType<typeof queryAreaAnalysis>>[number]>;
 }
 
 // ============================================================
@@ -181,5 +193,8 @@ export function createFetcherContext(
     // rendering with the SAME sections list that gated the fetch).
     wasteRes: null,
     areaCatAvgMap: new Map<string, AreaCategoryAvg>(),
+    // LEAGUE-AREA — off-section placeholders (never rendered).
+    outletLeagueRows: [],
+    areaAnalysisRows: [],
   };
 }

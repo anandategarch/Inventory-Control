@@ -360,6 +360,72 @@ function mockData(): ReportData {
       kpis: { outlets: 100 },
     },
     durationMs: 123,
+    // LEAGUE-AREA — sections 11/12: per-outlet health rows + per-area
+    // aggregates (queryOutletHealthRanking / queryAreaAnalysis shapes).
+    outletLeague: [
+      {
+        outletId: 1,
+        outletCode: '1042.KWGGAL',
+        outletName: 'KWGGAL',
+        area: 'JABODETABEK',
+        absNominal: 450_000,
+        nominalDeviasi: -450_000,
+        totalQtyDeviasi: -12,
+        totalQtyBom: 100,
+        totalQtyWaste: 5,
+        totalQtySusut: 3,
+        totalQtyTrial: 2,
+        totalResidualQty: -7,
+        lossNominal: 450_000,
+        sales: 12_000_000,
+        zeroDevCount: 2,
+        nonZeroDevCount: 8,
+      },
+      {
+        outletId: 2,
+        outletCode: '1203.CBICIL',
+        outletName: 'CBICIL',
+        area: 'JAWA TENGAH 2',
+        absNominal: 62_840_000,
+        nominalDeviasi: 62_840_000,
+        totalQtyDeviasi: 31,
+        totalQtyBom: 120,
+        totalQtyWaste: 1,
+        totalQtySusut: 1,
+        totalQtyTrial: 0,
+        totalResidualQty: 29,
+        lossNominal: 0,
+        sales: 8_000_000,
+        zeroDevCount: 0,
+        nonZeroDevCount: 10,
+      },
+    ],
+    areaComparison: [
+      {
+        area: 'JABODETABEK',
+        outletCount: 45,
+        totalSales: 900_000_000,
+        totalAbsNominal: 4_500_000,
+        avgDevBom: 0.12,
+        lossToSales: 0.004,
+      },
+      {
+        area: 'JAWA TENGAH 2',
+        outletCount: 28,
+        totalSales: 500_000_000,
+        totalAbsNominal: 3_100_000,
+        avgDevBom: 0.09,
+        lossToSales: 0.006,
+      },
+      {
+        area: 'BALI',
+        outletCount: 12,
+        totalSales: 200_000_000,
+        totalAbsNominal: 2_200_000,
+        avgDevBom: 0.15,
+        lossToSales: null,
+      },
+    ],
   } as unknown as ReportData;
 }
 
@@ -394,6 +460,8 @@ describe('buildPdfReport — SUBSECTION-1 token rendering', () => {
         'trend',
         'peer',
         'flip',
+        'outletLeague',
+        'areaCompare',
       ]),
     ).resolves.toBeGreaterThan(0);
   });
@@ -441,5 +509,25 @@ describe('buildPdfReport — SUBSECTION-1 token rendering', () => {
       'trend:tabel',
     ]);
     expect(partial).toBeLessThan(all);
+  });
+
+  // LEAGUE-AREA — sections 11 "Peringkat Resto" + 12 "Perbandingan Area".
+  it('renders the two LEAGUE-AREA sections without throwing', async () => {
+    await expect(renderSize(['outletLeague'])).resolves.toBeGreaterThan(0);
+    await expect(renderSize(['areaCompare'])).resolves.toBeGreaterThan(0);
+  });
+
+  it('areaCompare:tabel alone is smaller than the full areaCompare section (sub gating)', async () => {
+    const full = await renderSize(['areaCompare']);
+    const tabelOnly = await renderSize(['areaCompare:tabel']);
+    expect(tabelOnly).toBeLessThan(full);
+  });
+
+  it('the LEAGUE-AREA sections add bytes over a cover-only document', async () => {
+    const coverOnly = await renderSize([]);
+    const league = await renderSize(['outletLeague']);
+    const areas = await renderSize(['areaCompare']);
+    expect(league).toBeGreaterThan(coverOnly);
+    expect(areas).toBeGreaterThan(coverOnly);
   });
 });
