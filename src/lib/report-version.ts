@@ -27,7 +27,7 @@
  * (both were the literal '15' before GODSPLIT-W2-A) — both sites must
  * keep producing the identical string.
  */
-export const REPORT_DESIGN_VERSION = '21';
+export const REPORT_DESIGN_VERSION = '22';
 
 // ============================================================
 //  rv changelog — full history (GODSPLIT-W2-A moved it here so the
@@ -142,3 +142,11 @@ export const REPORT_DESIGN_VERSION = '21';
 // query unscoped/nasional kebagian warm q-* di panggilan kedua);
 // ?versus fork cache key route (extra.versus) sehingga mode standar dan
 // mode versus tidak pernah berbagi baris cache (kelas PERF-CACHE-04).
+// DUEL-LR (user: "misal mode compare harusnya layout nya kiri dan
+// kanan bukan atas bawah kan? nama nya juga compare"): rv 22 — dokumen
+// versus kini A4 LANDSCAPE dan sections 1-10 dirender DUA KOLOM
+// tersinkronisasi: resto fokus KIRI, resto pembanding KANAN (pdf/columns.ts
+// record-replay engine; badge NAMA per kolom; chip "(lanjutan)" di
+// halaman lanjutan; emblem VS di gutter tengah). Tabel VS full-width di
+// awal section 1/2 tetap; sections 11-13 full-width. Mode standar tetap
+// portrait byte-identical (geom default PORTRAIT_GEOM).

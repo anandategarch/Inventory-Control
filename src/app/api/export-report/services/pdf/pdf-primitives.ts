@@ -56,6 +56,38 @@ export const PAGE = {
 export const CONTENT_W = PAGE.W - PAGE.M * 2; // 511.28pt
 
 // ------------------------------------------------------------
+//  DUEL-LR — per-document geometry. PAGE/CONTENT_W stay as the
+//  portrait defaults (every pre-DUEL-LR caller keeps its exact
+//  numbers); Rpt itself now carries an instance `geom`:
+//    - mode standar  → PORTRAIT_GEOM (identical values → byte-identical)
+//    - mode versus   → LANDSCAPE_GEOM (the duel report runs A4 landscape
+//                      so the two restos sit LEFT/RIGHT — user: "layout
+//                      nya kiri dan kanan bukan atas bawah")
+//    - duo columns   → a column-local geom (width = the column, x from 0)
+//                      owned by pdf/columns.ts's shadow Rpt
+// ------------------------------------------------------------
+export interface RptGeom {
+  pageW: number;
+  pageH: number;
+  marginL: number;
+  marginR: number;
+  top: number;
+  bottom: number;
+}
+
+export const PORTRAIT_GEOM: RptGeom = {
+  pageW: PAGE.W, pageH: PAGE.H,
+  marginL: PAGE.M, marginR: PAGE.M,
+  top: PAGE.TOP, bottom: PAGE.BOTTOM,
+};
+
+export const LANDSCAPE_GEOM: RptGeom = {
+  pageW: PAGE.H, pageH: PAGE.W, // A4 rotated: 841.89 x 595.28
+  marginL: PAGE.M, marginR: PAGE.M,
+  top: PAGE.TOP, bottom: PAGE.BOTTOM,
+};
+
+// ------------------------------------------------------------
 //  Color palette — plain ink/gray base (DESAIN-SIMPEL: few colors,
 // natural hand-made look). The ONLY chromatic colors left in use are
 // danger red / success green on change values (user: "tetap pertahankan
@@ -279,6 +311,8 @@ export interface KpiCard {
 // ============================================================
 export class Rpt {
   readonly doc: PDFKit.PDFDocument;
+  /** DUEL-LR — this document's geometry (see RptGeom above). */
+  readonly geom: RptGeom;
   /** Vertical cursor (top of the next block). */
   y: number;
   // VERSUS-2R — badge mode: when set, sectionHeader() renders this resto's
@@ -293,9 +327,27 @@ export class Rpt {
   // versus-report.ts's sideBlock together with versusBadge.
   restoBadgeFill: string | null = null;
 
-  constructor(doc: PDFKit.PDFDocument) {
+  constructor(doc: PDFKit.PDFDocument, geom: RptGeom = PORTRAIT_GEOM) {
     this.doc = doc;
-    this.y = PAGE.TOP;
+    this.geom = geom;
+    this.y = geom.top;
+  }
+
+  /** DUEL-LR — geometry getters (left content edge / usable width /
+   *  bottom content edge). All former PAGE.M / CONTENT_W /
+   *  PAGE.H - PAGE.BOTTOM uses inside Rpt route through these so the
+   *  landscape duel document and the duo shadow columns lay out
+   *  correctly; the portrait default yields the exact old numbers. */
+  get leftX(): number {
+    return this.geom.marginL;
+  }
+
+  get contentW(): number {
+    return this.geom.pageW - this.geom.marginL - this.geom.marginR;
+  }
+
+  get bottomY(): number {
+    return this.geom.pageH - this.geom.bottom;
   }
 
   // ----------------------------------------------------------
@@ -303,12 +355,12 @@ export class Rpt {
   // ----------------------------------------------------------
   /** Add a page when the remaining space < h. */
   ensure(h: number): void {
-    if (this.y + h > PAGE.H - PAGE.BOTTOM) this.newPage();
+    if (this.y + h > this.bottomY) this.newPage();
   }
 
   newPage(): void {
     this.doc.addPage();
-    this.y = PAGE.TOP;
+    this.y = this.geom.top;
   }
 
   gap(px: number): void {
@@ -383,7 +435,7 @@ export class Rpt {
     t: string,
     opts: { size?: number; color?: string; bold?: boolean; x?: number; width?: number; gapAfter?: number } = {},
   ): void {
-    const { size = 8.5, color = C.inkSoft, bold = false, x = PAGE.M, width = CONTENT_W, gapAfter = 4 } = opts;
+    const { size = 8.5, color = C.inkSoft, bold = false, x = this.leftX, width = this.contentW, gapAfter = 4 } = opts;
     const font = bold ? 'Helvetica-Bold' : 'Helvetica';
     const s = sanitizePdfText(t);
     this.doc.font(font).fontSize(size).fillColor(color);
@@ -407,10 +459,10 @@ export class Rpt {
     }
     this.ensure(40);
     const top = this.y;
-    this.text(`${no}.`, PAGE.M, top, { font: 'Helvetica-Bold', size: 12, color: C.ink });
-    this.text(title, PAGE.M + 18, top, { font: 'Helvetica-Bold', size: 12, color: C.ink });
+    this.text(`${no}.`, this.leftX, top, { font: 'Helvetica-Bold', size: 12, color: C.ink });
+    this.text(title, this.leftX + 18, top, { font: 'Helvetica-Bold', size: 12, color: C.ink });
     // thin neutral rule
-    this.doc.moveTo(PAGE.M, top + 16).lineTo(PAGE.W - PAGE.M, top + 16)
+    this.doc.moveTo(this.leftX, top + 16).lineTo(this.leftX + this.contentW, top + 16)
       .lineWidth(0.9).strokeColor(C.ink).stroke();
     this.y = top + 16 + 10;
   }
@@ -425,9 +477,9 @@ export class Rpt {
     const chipFill = fill ?? this.restoBadgeFill ?? C.focusRow;
     this.ensure(24);
     const top = this.y;
-    const w = this.chip(name, PAGE.M, top, chipFill, C.ink, { size: 7.5 });
+    const w = this.chip(name, this.leftX, top, chipFill, C.ink, { size: 7.5 });
     const midY = top + 6;
-    this.doc.moveTo(PAGE.M + w + 6, midY).lineTo(PAGE.W - PAGE.M, midY)
+    this.doc.moveTo(this.leftX + w + 6, midY).lineTo(this.leftX + this.contentW, midY)
       .lineWidth(0.5).strokeColor(C.border).stroke();
     this.y = top + 17;
   }
@@ -443,7 +495,7 @@ export class Rpt {
     // `fit` shrinks the font in 0.1 steps instead of truncating — doc.text
     // still receives NO width (no phantom-wrap regression); subheads that
     // already fit are byte-identical (fit is a no-op when narrow enough).
-    this.text(t, PAGE.M, this.y, { font: 'Helvetica-Bold', size, color, width: PAGE.W - PAGE.M * 2, fit: true });
+    this.text(t, this.leftX, this.y, { font: 'Helvetica-Bold', size, color, width: this.contentW, fit: true });
     this.y += size + 4 + gapAfter;
   }
 
@@ -453,12 +505,12 @@ export class Rpt {
     const { fill = C.borderSoft, border = C.border, color = C.inkSoft } = opts;
     const s = sanitizePdfText(t);
     this.doc.font('Helvetica').fontSize(8);
-    const h = this.doc.heightOfString(s, { width: CONTENT_W - 20 });
+    const h = this.doc.heightOfString(s, { width: this.contentW - 20 });
     const boxH = h + 14;
     this.ensure(boxH + 6);
-    this.doc.fillColor(fill).roundedRect(PAGE.M, this.y, CONTENT_W, boxH, 5).fill();
-    this.doc.lineWidth(0.8).strokeColor(border).roundedRect(PAGE.M, this.y, CONTENT_W, boxH, 5).stroke();
-    this.doc.fillColor(color).text(s, PAGE.M + 10, this.y + 7, { width: CONTENT_W - 20 });
+    this.doc.fillColor(fill).roundedRect(this.leftX, this.y, this.contentW, boxH, 5).fill();
+    this.doc.lineWidth(0.8).strokeColor(border).roundedRect(this.leftX, this.y, this.contentW, boxH, 5).stroke();
+    this.doc.fillColor(color).text(s, this.leftX + 10, this.y + 7, { width: this.contentW - 20 });
     this.y += boxH + 6;
   }
 
@@ -479,9 +531,14 @@ export class Rpt {
   // ----------------------------------------------------------
   /** Grid of plain KPI cards. Returns the number of rows drawn. */
   kpiCards(cards: KpiCard[], opts: { perRow?: number } = {}): number {
-    const perRow = Math.min(opts.perRow ?? 3, Math.max(1, cards.length));
     const gap = 8;
-    const cardW = (CONTENT_W - gap * (perRow - 1)) / perRow;
+    let perRow = Math.min(opts.perRow ?? 3, Math.max(1, cards.length));
+    // DUEL-LR: inside a duo column (~260-370pt) a 4-card row would give
+    // ~85pt cards — cap the row so a card never drops below ~100pt (the
+    // auto-drop only reflows, never reorders). Portrait mode standar is a
+    // no-op: perRow 3 → 165pt, perRow 4 → 122pt — both above the floor.
+    while (perRow > 1 && (this.contentW - gap * (perRow - 1)) / perRow < 100) perRow--;
+    const cardW = (this.contentW - gap * (perRow - 1)) / perRow;
     const cardH = 54;
     let rows = 0;
     for (let i = 0; i < cards.length; i += perRow) {
@@ -489,7 +546,7 @@ export class Rpt {
       this.ensure(cardH + gap);
       const top = this.y;
       rowCards.forEach((c, j) => {
-        const x = PAGE.M + j * (cardW + gap);
+        const x = this.leftX + j * (cardW + gap);
         this.doc.fillColor(C.white).roundedRect(x, top, cardW, cardH, 5).fill();
         this.doc.lineWidth(0.8).strokeColor(C.border).roundedRect(x, top, cardW, cardH, 5).stroke();
         // FIX-TERPOTONG: fit (shrink) instead of ellipsize — nothing cut
@@ -549,16 +606,16 @@ export class Rpt {
         }
         return lw + PADX;
       });
-      if (need.reduce((a, b) => a + b, 0) > CONTENT_W + 0.01) continue;
+      if (need.reduce((a, b) => a + b, 0) > this.contentW + 0.01) continue;
 
       // caller `w` acts as a width floor (kept only while it all fits)
       let widths = need.map((nd, i) => Math.max(nd, cols[i].w ?? 0));
       let sumW = widths.reduce((a, b) => a + b, 0);
-      if (sumW > CONTENT_W + 0.01) { widths = need; sumW = need.reduce((a, b) => a + b, 0); }
+      if (sumW > this.contentW + 0.01) { widths = need; sumW = need.reduce((a, b) => a + b, 0); }
 
       // grow columns toward their natural width first (widest deficit
       // gains most), then spread any remaining surplus proportionally
-      let free = CONTENT_W - sumW;
+      let free = this.contentW - sumW;
       if (free > 0.01) {
         const deficit = nat.map((n, i) => Math.max(0, n - widths[i]));
         const sumDef = deficit.reduce((a, b) => a + b, 0);
@@ -585,7 +642,7 @@ export class Rpt {
         return mx + PADX;
       });
       const sum = nat.reduce((a, b) => a + b, 0) || 1;
-      plan = { size, widths: nat.map((w) => (w / sum) * CONTENT_W), isWrap: cols.map((c) => c.wrap ?? (c.align ?? 'left') === 'left') };
+      plan = { size, widths: nat.map((w) => (w / sum) * this.contentW), isWrap: cols.map((c) => c.wrap ?? (c.align ?? 'left') === 'left') };
     }
     const { size, widths, isWrap } = plan;
     const hSize = Math.max(size - 0.5, 4.5);
@@ -608,8 +665,8 @@ export class Rpt {
     });
 
     const drawHeader = (): void => {
-      this.doc.fillColor(headerFill).rect(PAGE.M, this.y, totalW, headerH).fill();
-      let hx = PAGE.M;
+      this.doc.fillColor(headerFill).rect(this.leftX, this.y, totalW, headerH).fill();
+      let hx = this.leftX;
       cols.forEach((c, ci) => {
         const lines = headerLines[ci];
         const blockH = lines.length * hLineH;
@@ -632,16 +689,16 @@ export class Rpt {
 
     rows.forEach((row, i) => {
       const rowH = rowHs[i];
-      if (this.y + rowH > PAGE.H - PAGE.BOTTOM) {
+      if (this.y + rowH > this.bottomY) {
         this.newPage();
         drawHeader();
       }
       const fill = rowText?.(row, i);
       const bold = rowBold?.(row, i) ?? false;
       if (zebra && i % 2 === 1) {
-        this.doc.fillColor(C.zebra).rect(PAGE.M, this.y, totalW, rowH).fill();
+        this.doc.fillColor(C.zebra).rect(this.leftX, this.y, totalW, rowH).fill();
       }
-      let x = PAGE.M;
+      let x = this.leftX;
       cols.forEach((c, ci) => {
         const cellBg = cellFill?.(row, i, ci);
         if (cellBg) this.doc.fillColor(cellBg).rect(x, this.y, widths[ci], rowH).fill();
@@ -662,7 +719,7 @@ export class Rpt {
         x += widths[ci];
       });
       // bottom border
-      this.doc.moveTo(PAGE.M, this.y + rowH).lineTo(PAGE.M + totalW, this.y + rowH)
+      this.doc.moveTo(this.leftX, this.y + rowH).lineTo(this.leftX + totalW, this.y + rowH)
         .lineWidth(0.5).strokeColor(C.borderSoft).stroke();
       this.y += rowH;
     });
@@ -680,16 +737,16 @@ export class Rpt {
     const top = 42;
     const h = 62;
     const rightW = rightLines.length > 0 ? 190 : 0;
-    this.text(title, PAGE.M, top, { font: 'Helvetica-Bold', size: 17, color: C.ink, fit: true, width: CONTENT_W - rightW });
-    this.text(subtitle, PAGE.M, top + 26, { font: 'Helvetica-Bold', size: 10, color: C.inkSoft, fit: true, width: CONTENT_W - rightW });
+    this.text(title, this.leftX, top, { font: 'Helvetica-Bold', size: 17, color: C.ink, fit: true, width: this.contentW - rightW });
+    this.text(subtitle, this.leftX, top + 26, { font: 'Helvetica-Bold', size: 10, color: C.inkSoft, fit: true, width: this.contentW - rightW });
     // right-aligned meta lines (fit: shrink, never cut)
     rightLines.forEach((ln, i) => {
-      this.text(ln, PAGE.M + CONTENT_W - 185, top + 3 + i * 11, {
+      this.text(ln, this.leftX + this.contentW - 185, top + 3 + i * 11, {
         size: 7, color: C.muted, align: 'right', width: 185, fit: true,
       });
     });
     // rule under the cover header
-    this.doc.moveTo(PAGE.M, top + h).lineTo(PAGE.W - PAGE.M, top + h)
+    this.doc.moveTo(this.leftX, top + h).lineTo(this.leftX + this.contentW, top + h)
       .lineWidth(1).strokeColor(C.ink).stroke();
     this.y = top + h + 14;
   }
@@ -697,9 +754,13 @@ export class Rpt {
   /** Small gray running header for pages ≥ 2 (drawn post-hoc via
    *  switchToPage). DESAIN-SIMPEL: plain text + thin rule, no band. */
   static runningHeader(doc: PDFKit.PDFDocument, label: string): void {
+    // DUEL-LR: derive the right edge from the PAGE ITSELF — the versus
+    // duel document is landscape (page.width 841.89) and PAGE.W would
+    // stop the rule ~247pt short. Portrait docs get identical values.
+    const rightX = doc.page.width - PAGE.M;
     doc.font('Helvetica-Bold').fontSize(7).fillColor(C.muted);
     doc.text(sanitizePdfText(label), PAGE.M, 17, { lineBreak: false });
-    doc.moveTo(PAGE.M, 29).lineTo(PAGE.W - PAGE.M, 29)
+    doc.moveTo(PAGE.M, 29).lineTo(rightX, 29)
       .lineWidth(0.6).strokeColor(C.border).stroke();
   }
 }

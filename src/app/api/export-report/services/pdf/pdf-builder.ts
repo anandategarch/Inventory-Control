@@ -257,7 +257,7 @@
 // ============================================================
 import PDFDocument from 'pdfkit';
 import type { ReportData, ReportContext } from '../types';
-import { Rpt } from './pdf-primitives';
+import { Rpt, LANDSCAPE_GEOM } from './pdf-primitives';
 import { shortMonth, prettyWeek, titleCase } from './pdf-style';
 import { createSectionEnv } from './section-context';
 import { drawCover } from './sections/cover';
@@ -300,6 +300,10 @@ export async function buildPdfReport(
 ): Promise<{ bufferBase64: string; fileName: string }> {
   const doc = new PDFDocument({
     size: 'A4',
+    // DUEL-LR: the versus duel document runs LANDSCAPE — the two restos
+    // sit LEFT/RIGHT per section (user: "layout nya kiri dan kanan bukan
+    // atas bawah"). Mode standar stays portrait, byte-identical.
+    layout: versus ? 'landscape' : 'portrait',
     margin: 0,
     // bufferPages: keep every page addressable until end() — without it
     // pdfkit flushes the page buffer on every addPage(), so the post-hoc
@@ -329,7 +333,7 @@ export async function buildPdfReport(
       // The Rpt cursor lives HERE in versus mode (drawReport creates its
       // own in mode standar — untouched).
       if (versus) {
-        const rpt = new Rpt(doc);
+        const rpt = new Rpt(doc, LANDSCAPE_GEOM);
         drawReportVersus(rpt, doc, data, ctx, versus);
       } else {
         drawReport(doc, data, ctx);

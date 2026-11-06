@@ -19,7 +19,7 @@
 // ============================================================
 import { fmtIDR, fmtNum, fmtPct } from '../../format-helpers';
 import { hBarChart } from '../pdf-charts';
-import { C, PAGE, CONTENT_W } from '../pdf-primitives';
+import { C } from '../pdf-primitives';
 import { tickIDR } from '../pdf-style';
 import type { SectionEnv } from '../section-context';
 
@@ -97,9 +97,9 @@ export function drawAreaCompareSection(env: SectionEnv): void {
       },
     );
     hBarChart(doc, {
-      x: PAGE.M,
+      x: rpt.leftX,
       y: rpt.y,
-      w: CONTENT_W,
+      w: rpt.contentW,
       h: chartH,
       labels: chartRows.map((r) => r.area),
       values: chartRows.map((r) => r.totalAbsNominal),

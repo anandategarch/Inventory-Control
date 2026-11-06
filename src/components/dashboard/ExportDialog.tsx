@@ -320,8 +320,9 @@ export function ExportDialog({
             bawah tiap section juga bisa dicentang sendiri. Laporan PDF dengan
             desain penuh dan grafik. Filter resto mengikuti Filter Resto di tab
             Resto Analysis. Mode <b>Versus</b> menjadikan section 1–12 laporan
-            kepala-kepala dua resto; section 13 tetap membandingkan resto fokus
-            dengan pembanding pilihan sendiri.
+            duel kiri-kanan (PDF landscape — resto fokus di kiri, pembanding di
+            kanan); section 13 tetap membandingkan resto fokus dengan pembanding
+            pilihan sendiri.
           </DialogDescription>
         </DialogHeader>
 
@@ -372,7 +373,7 @@ export function ExportDialog({
               <Swords className="h-3.5 w-3.5 shrink-0" /> Versus — 1 Resto vs 1 Resto
             </p>
             <p className="text-[10px] leading-tight text-muted-foreground mt-0.5">
-              Section 1–12 jadi laporan versus (mis. BKSGOL vs CKGPAH) — pilih 1 resto pembanding
+              Section 1–12 jadi laporan versus kiri-kanan (mis. BKSGOL vs CKGPAH, PDF landscape) — pilih 1 resto pembanding
             </p>
           </button>
         </div>

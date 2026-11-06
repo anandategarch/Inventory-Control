@@ -1,45 +1,52 @@
 // ============================================================
-//  versus-report — VERSUS-2R: the "1 Resto vs 1 Resto" report layout
+//  versus-report — the "1 Resto vs 1 Resto" report layout
 //  --------------------------------------------------------
-//  User request: "aku mau sekarang dari poin 1 sampai 12 itu adalah
-//  laporan versus jadi Resto BKS gol versus ckg Pak ... jadi ada dua
-//  mode yaitu poin 1 sampai 12 nya Resto itu sendiri versus area atau
-//  versus Resto lain yang banyak dan mode satunya lagi satu Resto itu
-//  versus satu Resto lainnya" — mode 2 turns the WHOLE report into the
-//  duel. The route already ran the full data pipeline for BOTH outlets
-//  (data-fetcher/versus.ts); THIS module interleaves the two datasets
-//  into one document:
+//  VERSUS-2R (user request: "aku mau sekarang dari poin 1 sampai 12
+//  itu adalah laporan versus jadi Resto BKS gol versus ckg Pak"):
+//  mode 2 turns the WHOLE report into the duel. The route already ran
+//  the full data pipeline for BOTH outlets (data-fetcher/versus.ts).
 //
-//    Cover   — "Laporan Versus" band + each side's 4 KPI hero cards
-//              under its own NAMA badge (CC-NAMES-1: names, never
-//              generic "resto pembanding" labels).
-//    1-2     — the numbered versus header, a NEW side-by-side VS table
-//              (current values / growth %, both restos + Selisih), then
-//              each side's EXISTING renderer under its NAMA badge
-//              (Rpt.versusBadge — the renderer's own sectionHeader call
-//              becomes the badge, so zero changes inside the renderers).
-//    3-10    — the numbered versus header + the two badge blocks (the
-//              sections are per-resto lists/tables/charts by nature).
-//    11      — ONE league table, BOTH restos highlighted (side A's env
-//              carries versusPeerCode — see outlet-league.ts).
+//  DUEL-LR (user request: "misal mode compare harusnya layout nya
+//  kiri dan kanan bukan atas bawah kan? nama nya juga compare"): the
+//  versus document is A4 LANDSCAPE and every per-resto section 1-10
+//  renders in TWO SYNCHRONIZED COLUMNS — resto fokus LEFT, resto
+//  pembanding RIGHT (pdf/columns.ts records each side into a
+//  column-local shadow and replays them page-synchronized). The old
+//  stacked "A's block above B's block" layout is gone.
+//
+//    Cover   — "Laporan Versus" band, then each side's 4 KPI hero
+//              cards side by side under its NAMA badge (CC-NAMES-1:
+//              names, never generic "resto pembanding" labels) with a
+//              dark VS emblem in the center gutter.
+//    1-2     — the numbered versus header, the full-width side-by-side
+//              VS table (current values / growth %, both restos +
+//              Selisih), THEN the two sides' own blocks in columns.
+//    3-10    — the numbered versus header + the duo columns (the
+//              sections are per-resto lists/tables/charts by nature;
+//              each column opens with its side's NAMA badge — the
+//              renderer's own sectionHeader call, reused verbatim via
+//              the versusBadge mechanism).
+//    11      — ONE league table, BOTH restos highlighted (the full
+//              env carries versusPeerCode — see outlet-league.ts).
 //    12      — ONE area table (population-wide; identical data both
 //              sides — rendering it twice would be pure duplication).
 //    13      — side A's renderer verbatim: the route FORCED side A's
-//              comparator set to the versus resto, so the CC-NAMES-1 duo
-//              layout prints "13. Komparasi BKSGOL vs CKGPAH" with the
+//              comparator set to the versus resto, so the CC-NAMES-1
+//              duo layout prints "13. Komparasi A vs B" with the
 //              per-item head-to-head — the most detailed versus table
 //              of the whole report.
 //
 //  Section numbering stays FIXED (1-13, the pdf-builder map) — the
 //  versus mode changes WHO each section compares, not the report's
 //  shape. ?sections=/sub-tokens gate every block exactly like mode
-//  standar (both envs share the SAME ctx.sections list).
+//  standar (both sides share the SAME ctx.sections list).
 // ============================================================
 import type { ReportContext, ReportData, VersusReportInput } from '../types';
 import { fmtIDR, fmtNum, fmtPct } from '../format-helpers';
 import { C, markOf, type Rpt } from './pdf-primitives';
 import { chgColor, mkGrowth, negColor, titleCase } from './pdf-style';
 import { createSectionEnv, type SectionEnv } from './section-context';
+import { composeDuo, type DuoSpec } from './columns';
 import { drawExecSection } from './sections/exec';
 import { drawGrowthSection } from './sections/growth';
 import { drawTopItemsSection } from './sections/top-items';
@@ -54,47 +61,51 @@ import { drawOutletLeagueSection } from './sections/outlet-league';
 import { drawAreaCompareSection } from './sections/area-compare';
 import { drawCustomCompareSection } from './sections/custom-compare';
 
-/** The two sides of the duel, pre-resolved. */
-interface Duel {
-  a: { code: string; name: string; data: ReportData; env: SectionEnv };
-  b: { code: string; name: string; data: ReportData; env: SectionEnv };
+/** The two sides of the duel (data + identity only — the full-width env
+ *  lives on side A; each duo column gets its own shadow env at record
+ *  time, see duoSpec below). */
+interface DuelSide {
+  code: string;
+  name: string;
+  data: ReportData;
 }
 
 /**
- * Run one side's block under its NAMA badge: badge mode swaps the
- * renderer's own sectionHeader for the badge (see Rpt.versusBadge), so
- * the twelve existing section modules are reused VERBATIM. try/finally
- * keeps the mode off even if a renderer throws (the whole PDF build
- * rejects anyway — this is hygiene, not recovery).
+ * DUEL-LR — build one side's DuoSpec: the renderer runs inside a
+ * column-local shadow (see pdf/columns.ts recordSide), with a fresh
+ * SectionEnv over the SAME ctx (identical ?sections= gating on both
+ * sides). recordSide sets versusBadge mode, so the renderer's own
+ * sectionHeader call renders this side's NAMA badge at the top of the
+ * column — the twelve section modules are reused VERBATIM.
  */
-function sideBlock(rpt: Rpt, name: string, fill: string, draw: () => void): void {
-  rpt.versusBadge = name;
-  rpt.restoBadgeFill = fill;
-  try {
-    draw();
-  } finally {
-    rpt.versusBadge = null;
-    rpt.restoBadgeFill = null;
-  }
+function duoSpec(
+  side: DuelSide,
+  fill: string,
+  ctx: ReportContext,
+  draw: (env: SectionEnv) => void,
+): DuoSpec {
+  return {
+    name: side.name,
+    fill,
+    render: (rpt, doc) => draw(createSectionEnv(rpt, doc, side.data, ctx)),
+  };
 }
 
 // ============================================================
-//  Cover — versus band + both sides' KPI hero cards
+//  Cover — versus band + both sides' KPI hero cards, LEFT/RIGHT
 // ============================================================
-function drawVersusCover(rpt: Rpt, duel: Duel): void {
-  const a = duel.a.data;
-  const b = duel.b.data;
-  const kpisAvailable = duel.a.env.hasSection('exec') || duel.a.env.hasSection('growth');
-  const monthWord = titleCase(a.period.monthLabel.split(/\s+/)[0] ?? '');
+function drawVersusCover(rpt: Rpt, a: DuelSide, b: DuelSide, envFull: SectionEnv): void {
+  const kpisAvailable = envFull.hasSection('exec') || envFull.hasSection('growth');
+  const monthWord = titleCase(a.data.period.monthLabel.split(/\s+/)[0] ?? '');
   rpt.coverBand(
     'Laporan Versus Deviasi',
-    `${duel.a.name} vs ${duel.b.name}  \u00B7  ${monthWord}`,
+    `${a.name} vs ${b.name}  \u00B7  ${monthWord}`,
     [],
   );
 
   if (!kpisAvailable) return;
-  // Each side's 4 hero cards (the drawCover set) under its NAMA badge —
-  // perRow 4 keeps the cover to ONE card row per side.
+  // Each side's 4 hero cards (the drawCover set) in its own COLUMN —
+  // perRow 2 gives a 2x2 grid per side, side by side under the badges.
   const cardRow = (s: ReportData['executiveSummary'], cmpFull: string | null) => {
     const devToSalesCur = s.sales.current > 0 ? s.nominalDeviasi.current / s.sales.current : null;
     return [
@@ -128,20 +139,34 @@ function drawVersusCover(rpt: Rpt, duel: Duel): void {
       },
     ];
   };
-  const cmpFull = duel.a.env.cmpFull;
-  rpt.restoBadge(duel.a.name, C.focusRow);
-  rpt.kpiCards(cardRow(a.executiveSummary, cmpFull), { perRow: 4 });
-  rpt.restoBadge(duel.b.name, C.borderSoft);
-  rpt.kpiCards(cardRow(b.executiveSummary, cmpFull), { perRow: 4 });
+  const cmpFull = envFull.cmpFull;
+  composeDuo(
+    rpt,
+    {
+      name: a.name,
+      fill: C.focusRow,
+      render: (srpt) => {
+        srpt.kpiCards(cardRow(a.data.executiveSummary, cmpFull), { perRow: 2 });
+      },
+    },
+    {
+      name: b.name,
+      fill: C.borderSoft,
+      render: (srpt) => {
+        srpt.kpiCards(cardRow(b.data.executiveSummary, cmpFull), { perRow: 2 });
+      },
+    },
+    { withBadges: true, gutterEmblem: 'VS' },
+  );
 }
 
 // ============================================================
-//  1 — VS KPI table (side-by-side current values + Selisih)
+//  1 — VS KPI table (full width: current values + Selisih)
 // ============================================================
 interface VsRow {
   label: string;
   /** Numeric accessor (null = no value this period). */
-  get: (s: ReportData['executiveSummary']) => number | null;
+  get: (s: ReportData["executiveSummary"]) => number | null;
   fmt: (v: number | null) => string;
   /** goodUp convention (chgColor): true = a HIGHER value is favorable
    *  (QTY BOM); false = higher = worse (every deviation metric). */
@@ -171,19 +196,18 @@ function vsValueRows(): VsRow[] {
   ];
 }
 
-/** The side-by-side VS table leading section 1 (current period values). */
-function drawVersusKpiTable(rpt: Rpt, duel: Duel): void {
+/** The full-width VS table leading section 1 (current period values). */
+function drawVersusKpiTable(rpt: Rpt, a: DuelSide, b: DuelSide, currCol: string): void {
   const rows = vsValueRows();
-  const currCol = duel.a.env.currCol;
-  const a = duel.a.data.executiveSummary;
-  const b = duel.b.data.executiveSummary;
+  const ea = a.data.executiveSummary;
+  const eb = b.data.executiveSummary;
   rpt.subhead(
-    `1.VS ${duel.a.name} vs ${duel.b.name} (${currCol}) \u2014 selisih = ${duel.a.name} \u2212 ${duel.b.name}`,
+    `1.VS ${a.name} vs ${b.name} (${currCol}) \u2014 selisih = ${a.name} \u2212 ${b.name}`,
     { size: 8.5 },
   );
   const table = rows.map((r) => {
-    const va = r.get(a);
-    const vb = r.get(b);
+    const va = r.get(ea);
+    const vb = r.get(eb);
     const d = va != null && vb != null ? va - vb : null;
     return [
       r.label,
@@ -195,8 +219,8 @@ function drawVersusKpiTable(rpt: Rpt, duel: Duel): void {
   rpt.table({
     cols: [
       { header: 'Metrik' },
-      { header: duel.a.name, align: 'right' },
-      { header: duel.b.name, align: 'right' },
+      { header: a.name, align: 'right' },
+      { header: b.name, align: 'right' },
       { header: 'Selisih', align: 'right' },
     ],
     boldFirst: true,
@@ -211,8 +235,8 @@ function drawVersusKpiTable(rpt: Rpt, duel: Duel): void {
       if (ci === 1 || ci === 2) return negColor(row[ci]);
       if (ci === 3) {
         const r = rows[ri];
-        const va = r.get(a);
-        const vb = r.get(b);
+        const va = r.get(ea);
+        const vb = r.get(eb);
         const d = va != null && vb != null ? va - vb : null;
         return chgColor(d, r.goodUp);
       }
@@ -222,31 +246,31 @@ function drawVersusKpiTable(rpt: Rpt, duel: Duel): void {
 }
 
 // ============================================================
-//  2 — VS growth table (side-by-side growth % vs the compare period)
+//  2 — VS growth table (full width: growth % vs the compare period)
 // ============================================================
-function drawVersusGrowthTable(rpt: Rpt, duel: Duel): void {
-  const a = duel.a.data.executiveSummary;
-  const b = duel.b.data.executiveSummary;
+function drawVersusGrowthTable(rpt: Rpt, a: DuelSide, b: DuelSide): void {
+  const ea = a.data.executiveSummary;
+  const eb = b.data.executiveSummary;
   const defs: Array<{ label: string; ga: number | null; gb: number | null; goodUp: boolean }> = [
-    { label: 'Penjualan', ga: a.sales.growth, gb: b.sales.growth, goodUp: true },
-    { label: 'Nominal Deviasi', ga: a.nominalDeviasi.growth, gb: b.nominalDeviasi.growth, goodUp: false },
-    { label: 'QTY BOM', ga: a.qtyBom.growth, gb: b.qtyBom.growth, goodUp: true },
-    { label: 'QTY Deviasi', ga: a.qtyDeviasi.growth, gb: b.qtyDeviasi.growth, goodUp: false },
-    { label: 'QTY Waste', ga: a.qtyWaste.growth, gb: b.qtyWaste.growth, goodUp: false },
-    { label: 'QTY Susut', ga: a.qtySusut.growth, gb: b.qtySusut.growth, goodUp: false },
-    { label: 'QTY Trial', ga: a.qtyTrial.growth, gb: b.qtyTrial.growth, goodUp: false },
+    { label: 'Penjualan', ga: ea.sales.growth, gb: eb.sales.growth, goodUp: true },
+    { label: 'Nominal Deviasi', ga: ea.nominalDeviasi.growth, gb: eb.nominalDeviasi.growth, goodUp: false },
+    { label: 'QTY BOM', ga: ea.qtyBom.growth, gb: eb.qtyBom.growth, goodUp: true },
+    { label: 'QTY Deviasi', ga: ea.qtyDeviasi.growth, gb: eb.qtyDeviasi.growth, goodUp: false },
+    { label: 'QTY Waste', ga: ea.qtyWaste.growth, gb: eb.qtyWaste.growth, goodUp: false },
+    { label: 'QTY Susut', ga: ea.qtySusut.growth, gb: eb.qtySusut.growth, goodUp: false },
+    { label: 'QTY Trial', ga: ea.qtyTrial.growth, gb: eb.qtyTrial.growth, goodUp: false },
   ];
   const withAny = defs.some((d) => d.ga != null || d.gb != null);
   if (!withAny) return;
   rpt.subhead(
-    `2.VS Growth % vs periode pembanding \u2014 ${duel.a.name} vs ${duel.b.name}`,
+    `2.VS Growth % vs periode pembanding \u2014 ${a.name} vs ${b.name}`,
     { size: 8.5 },
   );
   rpt.table({
     cols: [
       { header: 'Metrik' },
-      { header: duel.a.name, align: 'right' },
-      { header: duel.b.name, align: 'right' },
+      { header: a.name, align: 'right' },
+      { header: b.name, align: 'right' },
     ],
     boldFirst: true,
     rows: defs.map((d) => [d.label, mkGrowth(d.ga), mkGrowth(d.gb)]),
@@ -260,7 +284,7 @@ function drawVersusGrowthTable(rpt: Rpt, duel: Duel): void {
 }
 
 // ============================================================
-//  Main entry — drawReportVersus
+//  Main entry — drawReportVersus (DUEL-LR landscape layout)
 // ============================================================
 export function drawReportVersus(
   rpt: Rpt,
@@ -273,100 +297,81 @@ export function drawReportVersus(
     dataA.filters.outletCode && dataA.filters.outletCode !== 'all'
       ? dataA.filters.outletCode
       : versus.code;
-  const duel: Duel = {
-    a: {
-      code: focusCode,
-      name: versus.focusName,
-      data: dataA,
-      env: createSectionEnv(rpt, doc, dataA, ctx),
-    },
-    b: {
-      code: versus.code,
-      name: versus.name,
-      data: versus.data,
-      env: createSectionEnv(rpt, doc, versus.data, ctx),
-    },
-  };
-  // Section 11 highlights BOTH restos — side A's env carries the
-  // comparator code (side B's env renders nothing population-wide).
-  duel.a.env.versusPeerCode = versus.code;
+  const a: DuelSide = { code: focusCode, name: versus.focusName, data: dataA };
+  const b: DuelSide = { code: versus.code, name: versus.name, data: versus.data };
 
-  const a = () => sideBlock(rpt, duel.a.name, C.focusRow, () => drawExecSection(duel.a.env));
-  const b = () => sideBlock(rpt, duel.b.name, C.borderSoft, () => drawExecSection(duel.b.env));
+  // Full-width env (side A) — section gating + the population-wide
+  // sections 11-13. Section 11 highlights BOTH restos via versusPeerCode.
+  const envFull = createSectionEnv(rpt, doc, dataA, ctx);
+  envFull.versusPeerCode = versus.code;
 
-  drawVersusCover(rpt, duel);
+  // The two column specs (focus LEFT amber, comparator RIGHT neutral).
+  const focus = (draw: (env: SectionEnv) => void): DuoSpec => duoSpec(a, C.focusRow, ctx, draw);
+  const cmp = (draw: (env: SectionEnv) => void): DuoSpec => duoSpec(b, C.borderSoft, ctx, draw);
 
-  // 1 — Ringkasan: VS table + both sides' exec tables.
-  if (duel.a.env.hasSection('exec')) {
-    rpt.sectionHeader(1, `Ringkasan \u2014 ${duel.a.name} vs ${duel.b.name}`);
-    drawVersusKpiTable(rpt, duel);
-    a();
-    b();
+  drawVersusCover(rpt, a, b, envFull);
+
+  // 1 — Ringkasan: full-width VS table, then both sides in columns.
+  if (envFull.hasSection('exec')) {
+    rpt.sectionHeader(1, `Ringkasan \u2014 ${a.name} vs ${b.name}`);
+    drawVersusKpiTable(rpt, a, b, envFull.currCol);
+    composeDuo(rpt, focus(drawExecSection), cmp(drawExecSection));
   }
 
-  // 2 — Perubahan vs periode pembanding: VS growth table + both sides.
-  if (duel.a.env.hasSection('growth')) {
-    const cmpTitle = duel.a.env.cmpFull ? ` vs ${duel.a.env.cmpFull}` : '';
-    rpt.sectionHeader(2, `Perubahan${cmpTitle} \u2014 ${duel.a.name} vs ${duel.b.name}`);
-    drawVersusGrowthTable(rpt, duel);
-    sideBlock(rpt, duel.a.name, C.focusRow, () => drawGrowthSection(duel.a.env));
-    sideBlock(rpt, duel.b.name, C.borderSoft, () => drawGrowthSection(duel.b.env));
+  // 2 — Perubahan vs periode pembanding: VS growth table + columns.
+  if (envFull.hasSection('growth')) {
+    const cmpTitle = envFull.cmpFull ? ` vs ${envFull.cmpFull}` : '';
+    rpt.sectionHeader(2, `Perubahan${cmpTitle} \u2014 ${a.name} vs ${b.name}`);
+    drawVersusGrowthTable(rpt, a, b);
+    composeDuo(rpt, focus(drawGrowthSection), cmp(drawGrowthSection));
   }
 
-  // 3-10 — the per-resto sections: numbered versus header + the two
-  // badge blocks (each renderer early-returns on its ?sections= gate).
-  if (duel.a.env.hasSection('topItems')) {
-    rpt.sectionHeader(3, `Item Prioritas (Top Items) \u2014 ${duel.a.name} vs ${duel.b.name}`);
-    sideBlock(rpt, duel.a.name, C.focusRow, () => drawTopItemsSection(duel.a.env));
-    sideBlock(rpt, duel.b.name, C.borderSoft, () => drawTopItemsSection(duel.b.env));
+  // 3-10 — the per-resto sections: numbered versus header + the duo
+  // columns (each renderer early-returns on its ?sections= gate).
+  if (envFull.hasSection('topItems')) {
+    rpt.sectionHeader(3, `Item Prioritas (Top Items) \u2014 ${a.name} vs ${b.name}`);
+    composeDuo(rpt, focus(drawTopItemsSection), cmp(drawTopItemsSection));
   }
-  if (duel.a.env.hasSection('variance')) {
-    const cmp = duel.a.env.cmpFull ? ` (vs ${duel.a.env.cmpFull})` : '';
-    rpt.sectionHeader(4, `Perubahan Item${cmp} \u2014 ${duel.a.name} vs ${duel.b.name}`);
-    sideBlock(rpt, duel.a.name, C.focusRow, () => drawVarianceSection(duel.a.env));
-    sideBlock(rpt, duel.b.name, C.borderSoft, () => drawVarianceSection(duel.b.env));
+  if (envFull.hasSection('variance')) {
+    const cmpP = envFull.cmpFull ? ` (vs ${envFull.cmpFull})` : '';
+    rpt.sectionHeader(4, `Perubahan Item${cmpP} \u2014 ${a.name} vs ${b.name}`);
+    composeDuo(rpt, focus(drawVarianceSection), cmp(drawVarianceSection));
   }
-  if (duel.a.env.hasSection('waste')) {
-    rpt.sectionHeader(5, `Analisis Waste \u2014 ${duel.a.name} vs ${duel.b.name}`);
-    sideBlock(rpt, duel.a.name, C.focusRow, () => drawWasteSection(duel.a.env));
-    sideBlock(rpt, duel.b.name, C.borderSoft, () => drawWasteSection(duel.b.env));
+  if (envFull.hasSection('waste')) {
+    rpt.sectionHeader(5, `Analisis Waste \u2014 ${a.name} vs ${b.name}`);
+    composeDuo(rpt, focus(drawWasteSection), cmp(drawWasteSection));
   }
-  if (duel.a.env.hasSection('itemTrend')) {
-    rpt.sectionHeader(6, `Trend Item Multi-Periode \u2014 ${duel.a.name} vs ${duel.b.name}`);
-    sideBlock(rpt, duel.a.name, C.focusRow, () => drawTrendMatrixSection(duel.a.env));
-    sideBlock(rpt, duel.b.name, C.borderSoft, () => drawTrendMatrixSection(duel.b.env));
+  if (envFull.hasSection('itemTrend')) {
+    rpt.sectionHeader(6, `Trend Item Multi-Periode \u2014 ${a.name} vs ${b.name}`);
+    composeDuo(rpt, focus(drawTrendMatrixSection), cmp(drawTrendMatrixSection));
   }
-  if (duel.a.env.hasSection('anomali')) {
-    rpt.sectionHeader(7, `Item Anomali vs Riwayat Sendiri \u2014 ${duel.a.name} vs ${duel.b.name}`);
-    sideBlock(rpt, duel.a.name, C.focusRow, () => drawAnomalySection(duel.a.env));
-    sideBlock(rpt, duel.b.name, C.borderSoft, () => drawAnomalySection(duel.b.env));
+  if (envFull.hasSection('anomali')) {
+    rpt.sectionHeader(7, `Item Anomali vs Riwayat Sendiri \u2014 ${a.name} vs ${b.name}`);
+    composeDuo(rpt, focus(drawAnomalySection), cmp(drawAnomalySection));
   }
-  if (duel.a.env.hasSection('trend')) {
-    rpt.sectionHeader(8, `Trend Antar Periode \u2014 ${duel.a.name} vs ${duel.b.name}`);
-    sideBlock(rpt, duel.a.name, C.focusRow, () => drawTrendSection(duel.a.env));
-    sideBlock(rpt, duel.b.name, C.borderSoft, () => drawTrendSection(duel.b.env));
+  if (envFull.hasSection('trend')) {
+    rpt.sectionHeader(8, `Trend Antar Periode \u2014 ${a.name} vs ${b.name}`);
+    composeDuo(rpt, focus(drawTrendSection), cmp(drawTrendSection));
   }
-  if (duel.a.env.hasSection('peer')) {
-    rpt.sectionHeader(9, `Resto dengan Penjualan Kurang Lebih Sama \u2014 ${duel.a.name} vs ${duel.b.name}`);
-    sideBlock(rpt, duel.a.name, C.focusRow, () => drawPeerSection(duel.a.env));
-    sideBlock(rpt, duel.b.name, C.borderSoft, () => drawPeerSection(duel.b.env));
+  if (envFull.hasSection('peer')) {
+    rpt.sectionHeader(9, `Resto dengan Penjualan Kurang Lebih Sama \u2014 ${a.name} vs ${b.name}`);
+    composeDuo(rpt, focus(drawPeerSection), cmp(drawPeerSection));
   }
-  if (duel.a.env.hasSection('flip')) {
-    rpt.sectionHeader(10, `Item yang Kemungkinan Plus Minus antar Periode \u2014 ${duel.a.name} vs ${duel.b.name}`);
-    sideBlock(rpt, duel.a.name, C.focusRow, () => drawFlipSection(duel.a.env));
-    sideBlock(rpt, duel.b.name, C.borderSoft, () => drawFlipSection(duel.b.env));
+  if (envFull.hasSection('flip')) {
+    rpt.sectionHeader(10, `Item yang Kemungkinan Plus Minus antar Periode \u2014 ${a.name} vs ${b.name}`);
+    composeDuo(rpt, focus(drawFlipSection), cmp(drawFlipSection));
   }
 
   // 11 — ONE league table; outlet-league.ts highlights BOTH restos
-  // (side A's env carries versusPeerCode). Badge mode stays OFF — the
+  // (the full env carries versusPeerCode). Badge mode stays OFF — the
   // renderer draws its own numbered header + population subhead.
-  drawOutletLeagueSection(duel.a.env);
+  drawOutletLeagueSection(envFull);
 
   // 12 — ONE area table (population-wide; identical rows on both sides).
-  drawAreaCompareSection(duel.a.env);
+  drawAreaCompareSection(envFull);
 
   // 13 — side A verbatim: the forced comparator set makes the
   // CC-NAMES-1 duo layout print "13. Komparasi A vs B" + the per-item
   // head-to-head (13.3).
-  drawCustomCompareSection(duel.a.env);
+  drawCustomCompareSection(envFull);
 }

@@ -10,7 +10,7 @@
 // ============================================================
 import { fmtIDR, fmtPct } from '../../format-helpers';
 import { barChartV, lineChart, stackedBarChartV } from '../pdf-charts';
-import { C, PAGE, CONTENT_W } from '../pdf-primitives';
+import { C } from '../pdf-primitives';
 import { negColor, tickIDR, titleCase } from '../pdf-style';
 import type { SectionEnv } from '../section-context';
 
@@ -69,7 +69,7 @@ export function drawTrendSection(env: SectionEnv): void {
     rpt.ensure(160);
     rpt.subhead('Nominal Deviasi per Periode (Rp)', { size: 8.5, gapAfter: 2 });
     barChartV(doc, {
-      x: PAGE.M, y: rpt.y, w: CONTENT_W, h: 140,
+      x: rpt.leftX, y: rpt.y, w: rpt.contentW, h: 140,
       labels,
       values: data.trend.map((t) => t.nominal),
       fmt: tickIDR,
@@ -82,7 +82,7 @@ export function drawTrendSection(env: SectionEnv): void {
     rpt.ensure(160);
     rpt.subhead('Loss vs Surplus per Periode (Rp)', { size: 8.5, gapAfter: 2 });
     lineChart(doc, {
-      x: PAGE.M, y: rpt.y, w: CONTENT_W, h: 140,
+      x: rpt.leftX, y: rpt.y, w: rpt.contentW, h: 140,
       xLabels: labels,
       series: [
         // DESAIN-SIMPEL: per-period legend labels — no "Total" wording
@@ -109,7 +109,7 @@ export function drawTrendSection(env: SectionEnv): void {
     rpt.ensure(160);
     rpt.subhead(`Komposisi Deviasi per Minggu — ${titleCase(data.period.monthLabel)} (Rp)`, { size: 8.5, gapAfter: 2 });
     stackedBarChartV(doc, {
-      x: PAGE.M, y: rpt.y, w: CONTENT_W, h: 140,
+      x: rpt.leftX, y: rpt.y, w: rpt.contentW, h: 140,
       labels: wc.map((r) => `W${r.weekNo}`),
       series: [
         { name: 'Waste', values: wc.map((r) => r.nominalWaste), color: C.inkSoft },
@@ -146,7 +146,7 @@ export function drawTrendSection(env: SectionEnv): void {
     rpt.ensure(160);
     rpt.subhead('Akumulasi Mingguan — Total Deviasi (Rp)', { size: 8.5, gapAfter: 2 });
     barChartV(doc, {
-      x: PAGE.M, y: rpt.y, w: CONTENT_W, h: 140,
+      x: rpt.leftX, y: rpt.y, w: rpt.contentW, h: 140,
       labels: cumLabels,
       values: cum,
       fmt: tickIDR,

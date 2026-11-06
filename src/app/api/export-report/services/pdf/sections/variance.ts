@@ -7,7 +7,7 @@
 // ============================================================
 import { fmtIDR } from '../../format-helpers';
 import { hBarChart } from '../pdf-charts';
-import { C, PAGE, CONTENT_W, markOf } from '../pdf-primitives';
+import { C, markOf } from '../pdf-primitives';
 import { negColor, tickIDR } from '../pdf-style';
 import type { SectionEnv } from '../section-context';
 
@@ -65,7 +65,7 @@ export function drawVarianceSection(env: SectionEnv): void {
     rpt.ensure(18 * worsened.length + 24);
     rpt.subhead('Selisih Nominal \u2014 Memburuk (Rp)', { size: 8.5, gapAfter: 2 });
     hBarChart(doc, {
-      x: PAGE.M, y: rpt.y, w: CONTENT_W, h: 18 * worsened.length,
+      x: rpt.leftX, y: rpt.y, w: rpt.contentW, h: 18 * worsened.length,
       labels: worsened.map((it) => `${it.itemName} \u00B7 ${it.outletCode}`),
       values: worsened.map((it) => it.selisih),
       fmt: tickIDR,

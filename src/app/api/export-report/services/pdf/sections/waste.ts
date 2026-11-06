@@ -32,7 +32,7 @@
 // ============================================================
 import { fmtIDR, fmtNum, fmtPct } from '../../format-helpers';
 import { hBarChart } from '../pdf-charts';
-import { C, PAGE, CONTENT_W } from '../pdf-primitives';
+import { C } from '../pdf-primitives';
 import { tickIDR } from '../pdf-style';
 import type { SectionEnv } from '../section-context';
 
@@ -116,7 +116,7 @@ export function drawWasteSection(env: SectionEnv): void {
   rpt.ensure(18 * compLabels.length + 24);
   rpt.subhead('Komposisi Loss per Komponen (Rp, window)', { size: 8.5, gapAfter: 2 });
   hBarChart(doc, {
-    x: PAGE.M, y: rpt.y, w: CONTENT_W, h: 18 * compLabels.length,
+    x: rpt.leftX, y: rpt.y, w: rpt.contentW, h: 18 * compLabels.length,
     labels: compLabels,
     values: compValues,
     fmt: tickIDR,

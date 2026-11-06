@@ -7,7 +7,7 @@
 import { calcGrowth, calcGrowthAbs } from '@/lib/metrics';
 import { fmtIDR, fmtNum, fmtPct } from '../../format-helpers';
 import { hBarChart } from '../pdf-charts';
-import { C, PAGE, CONTENT_W, markOf } from '../pdf-primitives';
+import { C, markOf } from '../pdf-primitives';
 import { chgColor, fmtPp, mkGrowth, negColor } from '../pdf-style';
 import type { SectionEnv } from '../section-context';
 
@@ -107,7 +107,7 @@ export function drawGrowthSection(env: SectionEnv): void {
     rpt.ensure(18 * withGrowth.length + 24);
     rpt.subhead('Growth % per Metrik', { size: 8.5, gapAfter: 2 });
     hBarChart(doc, {
-      x: PAGE.M, y: rpt.y, w: CONTENT_W, h: 18 * withGrowth.length,
+      x: rpt.leftX, y: rpt.y, w: rpt.contentW, h: 18 * withGrowth.length,
       labels: withGrowth.map((r) => r.label),
       values: withGrowth.map((r) => r.g * 100),
       fmt: (v) => markOf(v) + `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`,
