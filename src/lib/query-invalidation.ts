@@ -37,6 +37,18 @@ const ALL_DATA_QUERY_KEYS: readonly (readonly unknown[])[] = [
   // Trend tab
   ['item-trend'],
   ['item-trend-rank'],
+  // FIX (BUGHUNT-COMPARE DEEPDIVE-KEY-1 — the 3rd instance of the
+  // DOCSYNC-1-B / AUDIT-E E1 class, found auditing b154bb6's fallout):
+  // the Trend tab's Item Deep-Dive card (ItemDeepDive.tsx) self-fetches
+  // /api/item-trend-deepdive under the ['item-trend-deepdive', itemName,
+  // monthLabel, trendOutlet, area, kelompok, pic] key. TanStack v5 prefix
+  // matching is ELEMENT-WISE — ['item-trend'] does NOT cover
+  // ['item-trend-deepdive'] (different first element) — so after ANY
+  // mutation (upload/delete/reset/drive/ingest/settings/PIC/refresh) the
+  // keep-alive Trend tab kept serving the pre-mutation deep-dive table
+  // for up to its staleTime, exactly like the DOCSYNC-1-B monthly-series
+  // cards and the AUDIT-E E1 rate-league card before it.
+  ['item-trend-deepdive'],
   ['item-search'],
   ['item-peer-comparison'],
   ['flip-ranking'],
