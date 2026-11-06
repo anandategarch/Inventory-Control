@@ -95,8 +95,16 @@ export function buildCustomComparison(
   const missingOutlets = pickedOutlets.filter((c) => !seen.has(c));
   // The FOCUS outlet itself absent from the scan (no records this period)
   // rides the same list — "tanpa data" is information, and the renderer
-  // must not claim a highlight that has no row.
-  if (focusCode != null && !seen.has(focusCode)) missingOutlets.push(focusCode);
+  // must not claim a highlight that has no row. BUGHUNT-COMPARE P3: the
+  // includes() guard — a hand-crafted URL can pick the focus as a
+  // comparator too (?outlet=X&compareOutlets=X), and the push used to
+  // duplicate the code the filter had already listed ("X, X").
+  if (
+    focusCode != null &&
+    !seen.has(focusCode) &&
+    !missingOutlets.includes(focusCode)
+  )
+    missingOutlets.push(focusCode);
   const missingAreas = pickedAreas.filter((a) => !areasSeen.has(a));
 
   entities.sort((a, b) => Math.abs(b.nominalDeviasi) - Math.abs(a.nominalDeviasi));

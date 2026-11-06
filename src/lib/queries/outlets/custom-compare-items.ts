@@ -11,7 +11,14 @@
 //  areas — the caller expands areas to codes first).
 //
 //  Aggregation convention — IDENTICAL to queryPeerComparisonItems (9.2)
-//  so the two tables read the same way:
+//  so the two tables read the same way (CC-PARITY-1, BUGHUNT-COMPARE
+//  P2 — the focus side now aggregates the SAME row population as 9.2's
+//  target CTE: deviation-carrying records only):
+//    - FOCUS side   = sums over rows with absNominalDeviasi > 0
+//      (9.2's `target_top_items` WHERE clause verbatim — zero-dev rows
+//      used to dilute the % Dev/BOM denominator and surface all-zero-dev
+//      items as {0,0,0} instead of the '—' blind-spot display)
+//    - COMPARATOR side = sums over ALL rows (9.2's peer side — unchanged)
 //    - qtyDeviasi  = SUM(ABS(qtyDeviasi))    (magnitude, per outlet-item)
 //    - devBom      = SUM(ABS(qtyDeviasi)) / SUM(ABS(qtyBom)) per outlet
 //    - nominal     = SUM(ABS(nominalDeviasi))
@@ -94,6 +101,13 @@ export async function queryCustomCompareItems(
     outlet_item AS (
       -- per-(outlet, item) values over the selected outlets only — the
       -- ABS aggregation convention of queryPeerComparisonItems (9.2).
+      -- CC-PARITY-1: the *Dev columns carry the FOCUS-side population
+      -- (absNominalDeviasi > 0 rows only — 9.2's target CTE verbatim);
+      -- the un-suffixed columns keep 9.2's peer/ALL-rows population for
+      -- the comparator side. SUM(...) FILTER over zero matching rows is
+      -- NULL (not 0), so a focus item with only zero-dev records maps
+      -- to target = null (the '—' blind-spot display) exactly like 9.2's
+      -- exclusion semantics.
       SELECT
         ir."outletId",
         ir."itemId",
@@ -101,9 +115,16 @@ export async function queryCustomCompareItems(
         SUM(ABS(ir."qtyDeviasi")) as "qtyDeviasi",
         SUM(ABS(ir."qtyBom")) as "qtyBom",
         CASE WHEN SUM(ABS(ir."qtyBom")) > 0
-          THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
-          ELSE 0 END as "devBom",
-        SUM(ABS(ir."nominalDeviasi")) as "nominal"
+            THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
+            ELSE 0 END as "devBom",
+        SUM(ABS(ir."nominalDeviasi")) as "nominal",
+        SUM(ABS(ir."qtyDeviasi")) FILTER (WHERE ir."absNominalDeviasi" > 0) as "qtyDeviasiDev",
+        SUM(ABS(ir."qtyBom")) FILTER (WHERE ir."absNominalDeviasi" > 0) as "qtyBomDev",
+        CASE WHEN COALESCE(SUM(ABS(ir."qtyBom")) FILTER (WHERE ir."absNominalDeviasi" > 0), 0) > 0
+            THEN SUM(ABS(ir."qtyDeviasi")) FILTER (WHERE ir."absNominalDeviasi" > 0)
+              / SUM(ABS(ir."qtyBom")) FILTER (WHERE ir."absNominalDeviasi" > 0)
+            ELSE 0 END as "devBomDev",
+        SUM(ABS(ir."nominalDeviasi")) FILTER (WHERE ir."absNominalDeviasi" > 0) as "nominalDev"
       FROM "InventoryRecord" ir
       JOIN sel s ON ir."outletId" = s."outletId"
       WHERE ir."monthLabel" = ${month}
@@ -130,10 +151,13 @@ export async function queryCustomCompareItems(
     SELECT
       i.name as "itemName",
       MAX(oi."satuan") as "satuan",
-      -- focus side (null when the focus outlet has no records of the item)
-      MAX(CASE WHEN s."isFocus" THEN oi."qtyDeviasi" END) as "targetQty",
-      MAX(CASE WHEN s."isFocus" THEN oi."devBom" END) as "targetDevBom",
-      MAX(CASE WHEN s."isFocus" THEN oi."nominal" END) as "targetNominal",
+      -- focus side (null when the focus outlet has no records of the item;
+      -- CC-PARITY-1: the *Dev population = 9.2's target CTE, so an item
+      -- with only zero-dev focus records also maps to null → the '—'
+      -- blind-spot display, 9.2's exclusion semantics)
+      MAX(CASE WHEN s."isFocus" THEN oi."qtyDeviasiDev" END) as "targetQty",
+      MAX(CASE WHEN s."isFocus" THEN oi."devBomDev" END) as "targetDevBom",
+      MAX(CASE WHEN s."isFocus" THEN oi."nominalDev" END) as "targetNominal",
       -- comparator side: mean of the per-outlet values (9.2's peerAvg)
       AVG(CASE WHEN NOT s."isFocus" THEN oi."qtyDeviasi" END) as "compareQty",
       AVG(CASE WHEN NOT s."isFocus" THEN oi."devBom" END) as "compareDevBom",
