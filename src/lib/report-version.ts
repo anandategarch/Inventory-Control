@@ -27,7 +27,7 @@
  * (both were the literal '15' before GODSPLIT-W2-A) — both sites must
  * keep producing the identical string.
  */
-export const REPORT_DESIGN_VERSION = '19';
+export const REPORT_DESIGN_VERSION = '20';
 
 // ============================================================
 //  rv changelog — full history (GODSPLIT-W2-A moved it here so the
@@ -120,3 +120,14 @@ export const REPORT_DESIGN_VERSION = '19';
 // ?compareOutlets/?compareAreas ride the route cache key (cmpOutlets /
 // cmpAreas extras) so two different comparator sets can never share a
 // cache row (the PERF-CACHE-04 bug class).
+// BUGHUNT-COMPARE + CC-NAMES-1 (user: "mode compare 2 resto di laporan
+// pdf header nya pakai nama resto nya aja jangan kaya misal resto
+// pembanding"): rv 20 — section 13 headers/subheads/kolom memakai NAMA
+// resto di mode 2-resto ("13. Komparasi BKSGOL vs CKGPAH"; kolom
+// pembanding "QTY Deviasi (CKGPAH)", tanpa kolom hitungan) + CC-PARITY-1
+// (13.3 sisi fokus kini agregasi baris ber-deviasi saja — populasi yang
+// sama dengan 9.2, angka % Dev/BOM fokus tidak lagi ter-dilute baris
+// zero-dev) + catatan missing-area/13.3 diperjelas + hitungan provenance
+// disjoint + LEAGUE-POLISH-1 (§11 negColor mati di kolom QTY unsigned,
+// tie-break rank liga, label Top-14 §12, label metrik §12 jujur
+// "Nominal Loss/Surplus").
