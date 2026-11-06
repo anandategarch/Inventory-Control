@@ -342,19 +342,22 @@ export async function buildPdfReport(
       // (DESAIN-SIMPEL: user asked to remove the page footer entirely).
       // REFINE-2: mirrors the new minimal cover header —
       // "Ringkasan Laporan Deviasi · <resto> · <bulan>".
-      // VERSUS-2R: the versus report's header carries the DUEL
-      // "Laporan Versus · BKSGOL vs CKGPAH · <bulan>".
-      const range = doc.bufferedPageRange();
-      const outletLabel = data.filters.outletCode && data.filters.outletCode !== 'all'
-        ? data.filters.outletCode
-        : 'Semua Resto';
-      const headerLabel = versus
-        ? `Laporan Versus Deviasi  \u00B7  ${versus.focusName} vs ${versus.name}  \u00B7  ${titleCase(data.period.monthLabel.split(/\s+/)[0] ?? '')}`
-        : `Ringkasan Laporan Deviasi  \u00B7  ${outletLabel}  \u00B7  ${titleCase(data.period.monthLabel.split(/\s+/)[0] ?? '')}`;
-      for (let i = range.start; i < range.start + range.count; i++) {
-        if (i === range.start) continue;
-        doc.switchToPage(i);
-        Rpt.runningHeader(doc, headerLabel);
+      // DUEL-CLEAN (rv 23): mode Versus TANPA running header (lanjutan
+      // permintaan user "gak perlu ada header/footer yang gak perlu di
+      // laporan PDF") — halaman lanjutan versus langsung dimulai dari
+      // chip "(lanjutan)" kedua kolom. Mode standar TETAP memakai
+      // running header minimal (REFINE-2, byte-identical).
+      if (!versus) {
+        const range = doc.bufferedPageRange();
+        const outletLabel = data.filters.outletCode && data.filters.outletCode !== 'all'
+          ? data.filters.outletCode
+          : 'Semua Resto';
+        const headerLabel = `Ringkasan Laporan Deviasi  \u00B7  ${outletLabel}  \u00B7  ${titleCase(data.period.monthLabel.split(/\s+/)[0] ?? '')}`;
+        for (let i = range.start; i < range.start + range.count; i++) {
+          if (i === range.start) continue;
+          doc.switchToPage(i);
+          Rpt.runningHeader(doc, headerLabel);
+        }
       }
       doc.end();
     } catch (e) {

@@ -27,7 +27,7 @@
  * (both were the literal '15' before GODSPLIT-W2-A) — both sites must
  * keep producing the identical string.
  */
-export const REPORT_DESIGN_VERSION = '22';
+export const REPORT_DESIGN_VERSION = '23';
 
 // ============================================================
 //  rv changelog — full history (GODSPLIT-W2-A moved it here so the
@@ -150,3 +150,15 @@ export const REPORT_DESIGN_VERSION = '22';
 // halaman lanjutan; emblem VS di gutter tengah). Tabel VS full-width di
 // awal section 1/2 tetap; sections 11-13 full-width. Mode standar tetap
 // portrait byte-identical (geom default PORTRAIT_GEOM).
+// DUEL-CLEAN (user: "gak perlu ada header atau footer yang gak perlu di
+// laporan pdf" — keluhan berulang; "kok sama saja masih ada Laporan
+// Versus Deviasi · MLGPAR vs BDGSEK · Oktober di header?"): rv 23 —
+// laporan versus TANPA header sama sekali: (a) judul cover halaman 1
+// "Laporan Versus Deviasi / X vs Y · <bulan>" DIHAPUS — halaman 1
+// langsung dimulai dari konten (badge NAMA kedua sisi + kartu KPI 2×2
+// + emblem VS); (b) running header kecil di halaman 2+ DIHAPUS untuk
+// mode versus — halaman lanjutan langsung dimulai dari chip
+// "(lanjutan)". Mode standar TIDAK berubah (cover REFINE-2 + running
+// header minimal tetap, byte-identical). Footer memang sudah tidak ada
+// sejak DESAIN-SIMPEL. Nama file unduhan & metadata Title PDF tetap
+// membawa identitas duel (CC-NAMES-1).

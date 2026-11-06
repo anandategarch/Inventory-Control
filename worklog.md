@@ -41210,3 +41210,22 @@ Stage Summary:
 - Dua mode laporan di Export dialog: Standar (resto vs area/populasi — perilaku lama, cache key & PDF tak berubah) dan Versus (seluruh sections 1-12 jadi laporan kepala-kepala dua resto, mis. BKSGOL vs CKGPAH: tabel VS side-by-side + blok per-resto ber-badge NAMA + liga dua resto ter-highlight + §13 auto-duo per-item).
 - rv 21. Tests 892/892 utuh (0 assertion lama dilemahkan).
 
+
+---
+Task ID: DUEL-CLEAN
+Agent: Main (Z.ai Code)
+Task: User (keluhan berulang): "GAK PERLU ADA HEADER ATAU FOOTER YANG GAK PERLU DI LAPORAN PDF" lalu "KOK SAMA AJA MASIH ADA Laporan Versus Deviasi · MLGPAR vs BDGSEK · Oktober di header?" — hapus judul header laporan Versus total (judul cover halaman 1 + running header halaman 2+).
+
+Work Log:
+- versus-report.ts drawVersusCover: panggilan rpt.coverBand('Laporan Versus Deviasi', 'X vs Y · <bulan>') DIHAPUS — halaman 1 kini langsung dimulai dari konten (badge NAMA kedua sisi + kartu KPI 2×2 per sisi + emblem VS); import titleCase ikut dibersihkan (tak terpakai lagi).
+- pdf-builder.ts post-hoc pass: running header halaman 2+ kini HANYA mode standar (wrap if (!versus)) — mode versus tanpa running header; halaman lanjutan langsung dibuka chip "(lanjutan)" kedua kolom. headerLabel versus ("Laporan Versus Deviasi · X vs Y · <bulan>") dihapus; mode standar byte-identical (REFINE-2 tetap).
+- Identitas duel tetap terjaga tanpa header: badge NAMA per kolom, tabel VS "Ringkasan — A vs B", nama file unduhan Laporan_Versus_X_vs_Y_….pdf (CC-NAMES-1), metadata Title PDF.
+- rv 22→23 (lib/report-version.ts + changelog DUEL-CLEAN) — fork cache client ?rv= + server extra.rv sekaligus; PDF lama ber-header tak akan terkunci cache pasca-deploy.
+- Docs: MASTER_CONTEXT.md Last updated DUEL-CLEAN + worklog entri ini.
+- Verifikasi: render mock fixture KWGGAL vs CBICIL via buildPdfReport → pdftotext 0 kemunculan "Laporan Versus" (halaman 1 dibuka "KWGGAL / PENJUALAN / VS / NOMINAL DEVIASI"; halaman 2 dibuka chip "(lanjutan)") + inspeksi VLM halaman 1-2 (dua kolom bersih sejajar, emblem VS, tanpa overlap/terpotong) + kontrol mode standar (halaman 2 masih "Ringkasan Laporan Deviasi · 1042.KWGGAL · September" — REFINE-2 utuh).
+- QA gates: tsc 0 error · vitest 918/918 (versus-report-render 8, versus-duel-layout 10, pdf-subsection-render 14 — semua hijau, 0 assertion dilemahkan).
+
+Stage Summary:
+- Laporan Versus TANPA header sama sekali: judul cover halaman 1 dan running header halaman 2+ dihapus; halaman 1 langsung mulai dari badge NAMA + kartu KPI, halaman lanjutan langsung dari chip "(lanjutan)".
+- Mode standar tidak berubah (cover REFINE-2 + running header minimal tetap, byte-identical). Footer memang sudah tidak ada sejak DESAIN-SIMPEL.
+- rv 23. Tests 918/918 utuh.

@@ -44,7 +44,7 @@
 import type { ReportContext, ReportData, VersusReportInput } from '../types';
 import { fmtIDR, fmtNum, fmtPct } from '../format-helpers';
 import { C, markOf, type Rpt } from './pdf-primitives';
-import { chgColor, mkGrowth, negColor, titleCase } from './pdf-style';
+import { chgColor, mkGrowth, negColor } from './pdf-style';
 import { createSectionEnv, type SectionEnv } from './section-context';
 import { composeDuo, type DuoSpec } from './columns';
 import { drawExecSection } from './sections/exec';
@@ -92,17 +92,16 @@ function duoSpec(
 }
 
 // ============================================================
-//  Cover — versus band + both sides' KPI hero cards, LEFT/RIGHT
+//  Cover — both sides' KPI hero cards, LEFT/RIGHT
 // ============================================================
 function drawVersusCover(rpt: Rpt, a: DuelSide, b: DuelSide, envFull: SectionEnv): void {
   const kpisAvailable = envFull.hasSection('exec') || envFull.hasSection('growth');
-  const monthWord = titleCase(a.data.period.monthLabel.split(/\s+/)[0] ?? '');
-  rpt.coverBand(
-    'Laporan Versus Deviasi',
-    `${a.name} vs ${b.name}  \u00B7  ${monthWord}`,
-    [],
-  );
-
+  // DUEL-CLEAN (rv 23): tanpa judul cover "Laporan Versus Deviasi · X vs
+  //  Y · <bulan>" — permintaan user berulang ("gak perlu ada header atau
+  //  footer yang gak perlu di laporan PDF"). Halaman 1 kini langsung
+  //  dimulai dari konten: badge NAMA kedua sisi + kartu KPI 2×2 per sisi
+  //  + emblem VS. Identitas duel cukup terbaca dari badge NAMA, tabel VS
+  //  ("Ringkasan — A vs B"), dan nama file unduhan (CC-NAMES-1).
   if (!kpisAvailable) return;
   // Each side's 4 hero cards (the drawCover set) in its own COLUMN —
   // perRow 2 gives a 2x2 grid per side, side by side under the badges.
