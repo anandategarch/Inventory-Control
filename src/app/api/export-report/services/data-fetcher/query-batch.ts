@@ -391,6 +391,12 @@ export async function runSectionQueryBatch(ctx: FetcherContext): Promise<void> {
           'q-area',
           { month, week, filters: populationFilters },
           () => queryAreaAnalysis(week, month, populationFilters),
+          // BUGHUNT-COMPARE P3 (LEAGUE-POLISH-1): awaitWrite=true — the
+          // fire-and-forget after() write does NOT reliably land on this
+          // deployment (the PERF-FILTER1-B2 lesson q-outlet-agg already
+          // applied); without it, the export and the analysis pipeline
+          // each re-pay the area scan instead of sharing one warm row.
+          true,
         )
       : Promise.resolve([]),
     // CUSTOM-COMPARE — section 13 "Komparasi Pilihan": the UNSCOPED

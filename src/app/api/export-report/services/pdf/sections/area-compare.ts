@@ -37,11 +37,16 @@ export function drawAreaCompareSection(env: SectionEnv): void {
   const showTabel = hasSub('areaCompare', 'tabel');
   const showGrafik = hasSub('areaCompare', 'grafik');
 
-  // 12.1 — every area, one row each, ranked by |nominal deviasi| DESC
-  // (the query's own sort order).
+  // 12.1 — every area, one row each, ranked by |nominal loss/surplus|
+  // DESC (the query's own sort order).
+  // BUGHUNT-COMPARE P3 (LEAGUE-POLISH-1): the ranked metric is
+  // SUM(absNominalLossSurplus) — NOT |nominal deviasi| like §11's league —
+  // so the column/subhead now SAY "Nominal Loss/Surplus": the same
+  // report used to crown a "worst area" whose ordering could contradict
+  // §11's "worst resto" under one identical label.
   if (showTabel) {
     rpt.subhead(
-      `12.1 Semua area satu per satu (${rows.length} area) \u2014 peringkat dari nominal deviasi terbesar (${currCol})` +
+      `12.1 Semua area satu per satu (${rows.length} area) \u2014 peringkat dari nominal loss/surplus terbesar (${currCol})` +
         (focusArea ? `, ${focusArea} ter-highlight` : ''),
       { size: 8.5 },
     );
@@ -50,7 +55,7 @@ export function drawAreaCompareSection(env: SectionEnv): void {
         { header: '#', align: 'center' },
         { header: 'Area' },
         { header: 'Resto', align: 'right' },
-        { header: 'Nominal Deviasi (Rp, nilai absolut)', align: 'right' },
+        { header: 'Nominal Loss/Surplus (Rp, nilai absolut)', align: 'right' },
         { header: '% Deviasi To BOM', align: 'right' },
         { header: '% Loss to Sales', align: 'right' },
       ],
@@ -79,10 +84,18 @@ export function drawAreaCompareSection(env: SectionEnv): void {
     // Reserve subhead (≈14.5) + chart — the BUG-HUNT PAGE RESERVE
     // convention (trend.ts's ensure(160) for h:140 charts).
     rpt.ensure(chartH + 18);
-    rpt.subhead('Nominal Deviasi per Area (Rp, nilai absolut)', {
-      size: 8.5,
-      gapAfter: 2,
-    });
+    rpt.subhead(
+      // LEAGUE-POLISH-1: honest metric label (SUM absNominalLossSurplus)
+      // + the top-14 cut is now STATED in the subhead when it applies
+      // (14 areas today — the label future-proofs >14).
+      `Nominal Loss/Surplus per Area (Rp, nilai absolut)${
+        rows.length > 14 ? ` (Top 14 dari ${rows.length} area)` : ''
+      }`,
+      {
+        size: 8.5,
+        gapAfter: 2,
+      },
+    );
     hBarChart(doc, {
       x: PAGE.M,
       y: rpt.y,

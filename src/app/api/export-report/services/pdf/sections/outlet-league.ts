@@ -67,9 +67,12 @@ export function drawOutletLeagueSection(env: SectionEnv): void {
     rowBold: (_row, i) => rows[i]?.outletCode === focusCode,
     cellFill: (_row, ri) =>
       focusCode && rows[ri]?.outletCode === focusCode ? C.focusRow : undefined,
-    // PDFCOLOR-1 (minus-red on VALUE columns — the league's two signed
-    // columns only; the rest of the row stays neutral ink).
+    // PDFCOLOR-1 (minus-red on the league's ONE signed VALUE column —
+    // Nominal Deviasi. BUGHUNT-COMPARE P3 (LEAGUE-POLISH-1): the old
+    // `|| ci === 5` was dead code — QTY Deviasi is an ABS magnitude
+    // (never negative), so the red-on-minus convention could never fire
+    // there; the comment no longer claims "two signed columns".)
     cellColor: (row, _ri, ci) =>
-      ci === 3 || ci === 5 ? negColor(row[ci]) : undefined,
+      ci === 3 ? negColor(row[ci]) : undefined,
   });
 }

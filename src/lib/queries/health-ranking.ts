@@ -95,7 +95,13 @@ export async function queryOutletHealthRanking(
       zeroDevCount: r.zeroDevCount,
       nonZeroDevCount: r.nonZeroDevCount,
     }))
-    .sort((a, b) => b.absNominal - a.absNominal);
+    .sort((a, b) => b.absNominal - a.absNominal
+      // BUGHUNT-COMPARE P3 (LEAGUE-POLISH-1): deterministic tie-break —
+      // two outlets with identical |nominal deviasi| used to swap rank
+      // numbers between recomputes (the AUDIT-PERF-4 lesson: rankings
+      // get itemName/outletCode tie-breaks so results are deterministic
+      // across requests).
+      || a.outletCode.localeCompare(b.outletCode));
 }
 
 // ============================================================
