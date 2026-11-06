@@ -544,7 +544,11 @@ export const WasteQuadrantCard = memo(function WasteQuadrantCard({
               </Table>
             </div>
             <p className="px-4 py-2.5 text-[10px] text-muted-foreground border-t">
-              Window {windowMonths > 0 ? `${windowMonths} bulan` : '—'} same-week (maks. 12). Ambang kuadran: prevalence ≥ 50% outlet
+              {/* WINDOW-SYNC-1 (BUGHUNT-COMPARE P3): dropped the stale
+                  "(maks. 12)" — the actual windowMonths from the response
+                  is already printed (the hardcoded 12-month cap died with
+                  HIST-WINDOW-5's 5-month interactive window). */}
+              Window {windowMonths > 0 ? `${windowMonths} bulan` : '—'} same-week. Ambang kuadran: prevalence ≥ 50% outlet
               ber-BOM{thresholdMonths != null && windowMonths > 0 ? ` dan persistensi ≥ ${thresholdMonths}/${windowMonths} bulan (ceil(window/2), adaptif)` : ''}.
               HHI = Σ(share²) per outlet — hanya untuk item dengan ≥ 10 outlet aktif; “—” = guard/belum tersedia. Prevalence = outlet ber-BOM yang
               ada waste-nya / outlet ber-BOM (kedua sisi berbasis pemakaian — FIX AUDIT-B M1; waste tanpa BOM tak masuk numerator), “—” = item tanpa

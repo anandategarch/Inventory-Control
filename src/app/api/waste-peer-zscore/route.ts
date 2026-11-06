@@ -23,6 +23,10 @@ import { db } from '@/lib/db';
 import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 import { errorResponse } from '@/lib/error-response';
+// WINDOW-SYNC-1 (BUGHUNT-COMPARE P3): window fork — the cache key must
+// follow the query's window constant (DASHBOARD_LOOKBACK_MONTHS), else a
+// window change serves pre-deploy rows as fresh for the TTL's remainder.
+import { DASHBOARD_LOOKBACK_MONTHS } from '@/lib/queries/window-config';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -94,6 +98,8 @@ export async function GET(req: NextRequest) {
       week,
       outletCode,
       kelompok: kelompokParam,
+      // WINDOW-SYNC-1: window fork (see the import note above).
+      extra: { w: DASHBOARD_LOOKBACK_MONTHS },
     });
 
     type WastePeerZScoreData = Awaited<ReturnType<typeof queryWastePeerZScore>>;

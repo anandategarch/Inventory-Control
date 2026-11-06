@@ -335,6 +335,15 @@ export function ExportDialog({
                     </span>
                   )}
                 </label>
+                {/* WINDOW-SYNC-1 batch (BUGHUNT-COMPARE P3): a one-line note
+                    so "Pilih Semua" silently skipping section 13 is no
+                    longer a surprise — the 12/13 badge was the only hint. */}
+                {section.key === 'customCompare' && !customCompareActive && (
+                  <p className="text-[10px] leading-tight text-muted-foreground/80 ml-7 mr-1 -mt-0.5">
+                    Opt-in — tidak ikut &quot;Pilih Semua&quot;: centang dulu, lalu pilih
+                    resto/area pembanding sebelum export.
+                  </p>
+                )}
                 {section.subs?.map((sub) => {
                   const token = exportSubToken(section.key, sub.key);
                   const subOn = selected.has(token);

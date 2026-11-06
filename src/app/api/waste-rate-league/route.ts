@@ -57,6 +57,8 @@ import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { errorResponse } from '@/lib/error-response';
+// WINDOW-SYNC-1 (BUGHUNT-COMPARE P3): window fork (see waste-series's note).
+import { WASTE_RATE_LEAGUE_WINDOW_MONTHS } from '@/lib/queries/waste/rate-league';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
@@ -201,7 +203,8 @@ export async function GET(req: NextRequest) {
       pic,
       outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
       itemName: itemParam,
-      extra: { limit },
+      // WINDOW-SYNC-1: + window fork.
+      extra: { limit, w: WASTE_RATE_LEAGUE_WINDOW_MONTHS },
     });
 
     type WasteRateLeagueData = Awaited<ReturnType<typeof queryWasteRateLeague>>;

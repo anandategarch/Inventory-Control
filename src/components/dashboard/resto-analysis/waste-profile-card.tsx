@@ -23,6 +23,9 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Recycle } from 'lucide-react';
 import { fmtIDR, fmtPct, fmtDecimal } from '@/lib/format';
+// WINDOW-SYNC-1 (BUGHUNT-COMPARE P3): stale "maks. 12 bulan" copy — the
+// interactive window is DASHBOARD_LOOKBACK_MONTHS (5 since HIST-WINDOW-5).
+import { DASHBOARD_LOOKBACK_MONTHS } from '@/lib/queries/window-config';
 import type { WasteSeriesResponse, WastePeerZScoreResponse, WastePeerZScoreRow, WasteMonthlyRow } from '@/components/dashboard/tabs/WasteTab/types';
 
 interface JoinedRow extends WasteMonthlyRow {
@@ -147,7 +150,7 @@ export const WasteProfileCard = memo(function WasteProfileCard({
           Profil Waste — Same-Week ({currentWeek})
         </CardTitle>
         <p className="text-xs text-muted-foreground ml-9">
-          Deret waste <span className="font-medium text-foreground">{outletCode}</span> per bulan (maks. 12 bulan) + posisi vs resto
+          Deret waste <span className="font-medium text-foreground">{outletCode}</span> per bulan (maks. {DASHBOARD_LOOKBACK_MONTHS} bulan) + posisi vs resto
           sales setara (band dinamis ±10%{kelompok ? `, peer dibatasi kelompok ${kelompok}` : ''}). Rank 1 = waste/sales tertinggi di band.
           z-score = posisi rasio waste/sales outlet vs rata-rata band (hanya saat band ≥ 3 member).
         </p>

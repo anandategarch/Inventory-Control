@@ -15,6 +15,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { queryOutletMonthlySeries } from '@/lib/queries';
+// WINDOW-SYNC-1 (BUGHUNT-COMPARE P3): window fork (see waste-series's note)
+// — the window comment below claimed determinism from (month, week), but
+// a WINDOW-CONSTANT change alters the series shape without touching the
+// key; the const now rides the key explicitly.
+import { OUTLET_MONTHLY_SERIES_WINDOW_MONTHS } from '@/lib/queries/outlets/monthly-series';
 import { validateQuery, outletMonthlySeriesQuerySchema } from '@/lib/validation';
 import { getRuntimeThresholds } from '@/lib/settings';
 import { db } from '@/lib/db';
@@ -88,13 +93,15 @@ export async function GET(req: NextRequest) {
     const thresholds = await getRuntimeThresholds();
 
     // Cache key covers every response-affecting param — outlet/month/week.
-    // The window derives deterministically from (month, week), so it needs
-    // no separate key part.
+    // The window derives deterministically from (month, week) UP TO the
+    // window constant — WINDOW-SYNC-1: the constant itself now rides the
+    // key (extra.w) so a window bump forks cleanly.
     const cacheKey = buildCacheKey({
       route: 'outlet-monthly-series',
       month,
       week,
       outletCode,
+      extra: { w: OUTLET_MONTHLY_SERIES_WINDOW_MONTHS },
     });
 
     type SeriesData = Awaited<ReturnType<typeof queryOutletMonthlySeries>>;

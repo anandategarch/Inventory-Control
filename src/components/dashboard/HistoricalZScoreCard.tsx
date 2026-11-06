@@ -15,6 +15,9 @@ import { useDashboard } from '@/hooks/useDashboard';
 import { useShallow } from 'zustand/shallow';
 import { ArrowUpDown, ArrowUp, ArrowDown, History, Info, ChevronDown, AlertTriangle, Database, CheckCircle2 } from 'lucide-react';
 import { useState, useMemo, memo, useCallback } from 'react';
+// WINDOW-SYNC-1 (BUGHUNT-COMPARE P3): the minWeeks clamp needs the window
+// constant (client-safe — the kpi-strip precedent).
+import { DASHBOARD_LOOKBACK_MONTHS } from '@/lib/queries/window-config';
 
 type SortKey = 'zScore' | 'absNominal' | 'currentDevBom' | 'historicalAvg' | 'itemName' | 'area';
 type SortDir = 'asc' | 'desc';
@@ -67,15 +70,25 @@ function HistoricalEmptyState({ meta, week }: { meta?: HistoricalAnalysisMeta; w
         <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 max-w-md text-left">
           <Info className="h-4 w-4 text-blue-500 dark:text-blue-400 shrink-0 mt-0.5" />
           <div className="text-[11px] text-blue-700 dark:text-blue-300 space-y-1">
-            <p className="font-medium">Tips: Z-Score butuh minimal 4 bulan data</p>
-            <p>Baseline historical menggunakan weekLabel yang sama di bulan berbeda (W4 vs W4, bukan W4 vs W1). Upload data minimal 4 bulan untuk hasil optimal.</p>
+            {/* WINDOW-SYNC-1: dynamic cap (was a hardcoded "4 bulan"). */}
+            <p className="font-medium">Tips: Z-Score butuh minimal {DASHBOARD_LOOKBACK_MONTHS - 1} bulan data</p>
+            <p>Baseline historical menggunakan weekLabel yang sama di bulan berbeda (W4 vs W4, bukan W4 vs W1). Upload data minimal {DASHBOARD_LOOKBACK_MONTHS - 1} bulan untuk hasil optimal.</p>
           </div>
         </div>
       </div>
     );
   }
 
-  const minWeeks = meta.minWeeks ?? 4;
+  // WINDOW-SYNC-1 (BUGHUNT-COMPARE P3): the backend baseline is hard-capped
+  // at DASHBOARD_LOOKBACK_MONTHS - 1 prior months (fetch-records.ts's slice)
+  // — a settings HISTORICAL_MIN_WEEKS above that cap can NEVER be satisfied
+  // by uploading more data, so the displayed minimum clamps to the cap and
+  // an honest note names the real lever (lower the threshold) instead of
+  // demanding impossible months.
+  const baselineCap = DASHBOARD_LOOKBACK_MONTHS - 1;
+  const minWeeksRaw = meta.minWeeks ?? 4;
+  const minWeeks = Math.min(minWeeksRaw, baselineCap);
+  const minWeeksCapped = minWeeksRaw > baselineCap;
   const histPeriods = meta.historicalPeriodsCount ?? 0;
   const validStats = meta.validStatsCount ?? 0;
   const statsCount = meta.statsCount ?? 0;
@@ -117,6 +130,13 @@ function HistoricalEmptyState({ meta, week }: { meta?: HistoricalAnalysisMeta; w
           bulan untuk hasil optimal. Tambahkan <span className="font-semibold tabular-nums">{need}</span> bulan lagi
           dengan {weekLabel} yang sama.
         </p>
+        {minWeeksCapped && (
+          <p className="text-xs text-amber-700 dark:text-amber-400 mt-2 max-w-md">
+            Catatan: ambang minimal di Pengaturan ({minWeeksRaw} bulan) melebihi jendela analisa
+            (maks. {baselineCap} bulan pembanding) — turunkan ambang HISTORICAL_MIN_WEEKS di
+            Pengaturan agar Z-Score bisa terpicu.
+          </p>
+        )}
         <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 max-w-md text-left">
           <Info className="h-4 w-4 text-blue-500 dark:text-blue-400 shrink-0 mt-0.5" />
           <div className="text-[11px] text-blue-700 dark:text-blue-300 space-y-1">

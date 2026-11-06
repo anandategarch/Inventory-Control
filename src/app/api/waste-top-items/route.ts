@@ -35,6 +35,8 @@ import { CACHE_ANALYSIS } from '@/lib/cache-headers';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 import { resolvePICOutletCodes } from '@/lib/pic-resolver';
 import { errorResponse } from '@/lib/error-response';
+// WINDOW-SYNC-1 (BUGHUNT-COMPARE P3): window fork (see waste-series's note).
+import { WASTE_TOP_ITEMS_WINDOW_MONTHS } from '@/lib/queries/waste/waste-top-items/constants';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -141,7 +143,8 @@ export async function GET(req: NextRequest) {
       outletCode: outletCode && outletCode !== 'all' ? outletCode : null,
       // W11: the ordering metric changes the RESULT (top-N selection),
       // so it must change the CACHE KEY too.
-      extra: { limit, metric },
+      // WINDOW-SYNC-1: + window fork.
+      extra: { limit, metric, w: WASTE_TOP_ITEMS_WINDOW_MONTHS },
     });
 
     type WasteTopItemsData = Awaited<ReturnType<typeof queryWasteTopItems>>;

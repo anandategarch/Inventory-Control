@@ -432,7 +432,10 @@ export const WasteRateLeagueCard = memo(function WasteRateLeagueCard({
             )}
 
             <p className="px-4 py-2.5 text-[10px] text-muted-foreground border-t">
-              Window {windowMonths > 0 ? `${windowMonths} bulan` : '—'} same-week (maks. 12) — minggu bersifat
+              {/* WINDOW-SYNC-1 (BUGHUNT-COMPARE P3): dropped the stale
+                  "(maks. 12)" — windowMonths is the ACTUAL server window
+                  echoed from the response. */}
+              Window {windowMonths > 0 ? `${windowMonths} bulan` : '—'} same-week — minggu bersifat
               kumulatif, perbandingan antar bulan hanya valid pada minggu yang sama. Basis BOM = pemakaian teoretis
               (proxy resep), bukan pemakaian aktual (POS); rate 0,10 = 10% pemakaian teoretis terbuang. Liga =
               outlet dengan waste &gt; 0 (≥ {minOutlets} outlet ber-BOM); satuan per bahan: {selected.satuan || '—'}.

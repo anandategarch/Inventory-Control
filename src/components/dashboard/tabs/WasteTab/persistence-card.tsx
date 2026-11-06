@@ -39,6 +39,11 @@ import { Repeat } from 'lucide-react';
 import { fmtPct } from '@/lib/format';
 import { clickableRowProps } from '@/lib/a11y';
 import { useDashboard } from '@/hooks/useDashboard';
+// WINDOW-SYNC-1 (BUGHUNT-COMPARE P3): the footer's "maks. 12 bulan" was
+// stale copy from the DEEP-WASTE-1 era — the interactive window is
+// DASHBOARD_LOOKBACK_MONTHS (5 since HIST-WINDOW-5); the kpi-strip /
+// monthly-series-card precedent prints the constant dynamically.
+import { DASHBOARD_LOOKBACK_MONTHS } from '@/lib/queries/window-config';
 import type { WasteOutletRow, WastePersistenceBlock, WastePersistenceClass } from './types';
 
 /** Sort order: KRONIS first, TERBATAS last (insufficient data = least interesting). */
@@ -139,7 +144,7 @@ export const WastePersistenceCard = memo(function WastePersistenceCard({
           Outlet yang waste/sales-nya KRONIS di atas median network bulan demi bulan (sistemik) vs yang hanya
           lonjakan sesaat (episodik). Median dihitung per bulan atas outlet aktif scope — kontrol musiman;
           bulan DQ-error dihitung terpisah sebagai bulan tak valid.
-          Window same-week{monthsCount > 0 ? `: ${monthsCount} bulan tersedia (maks. 12)` : ': maks. 12 bulan'} —
+          Window same-week{monthsCount > 0 ? `: ${monthsCount} bulan tersedia (maks. ${DASHBOARD_LOOKBACK_MONTHS})` : `: maks. ${DASHBOARD_LOOKBACK_MONTHS} bulan`} —
           minggu bersifat kumulatif sehingga perbandingan antar bulan HANYA valid pada minggu yang sama.
           <span className="font-medium text-foreground/70"> Klik baris outlet untuk drill-down data sumber (window same-week).</span>
         </p>

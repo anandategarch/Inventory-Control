@@ -33,6 +33,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit, getClientIP, RATE_LIMITS } from '@/lib/rate-limit';
 import { getMonthResolver, resolveMonthLabel } from '@/lib/month-resolver';
 import { buildWasteAttribution, buildWastePersistence, queryWasteNetwork, type WasteKpis } from '@/lib/queries';
+// WINDOW-SYNC-1 (BUGHUNT-COMPARE P3): the route cache key now forks on the
+// query's window constant — a window change (HIST-WINDOW-5 3→5 class) used
+// to serve pre-deploy narrow-window rows as fresh for the rest of the TTL
+// (the q-* rows forked via their lb: key, these route-level rows did not).
+import { WASTE_WINDOW_MONTHS } from '@/lib/queries/waste/shared';
 import { validateQuery, wasteSeriesQuerySchema } from '@/lib/validation';
 import { getRuntimeThresholds } from '@/lib/settings';
 import { db } from '@/lib/db';
@@ -144,6 +149,8 @@ export async function GET(req: NextRequest) {
       kelompok: kelompokParam,
       pic,
       outletCode,
+      // WINDOW-SYNC-1: window fork (see the import note above).
+      extra: { w: WASTE_WINDOW_MONTHS },
     });
 
     type WasteSeriesData = Awaited<ReturnType<typeof queryWasteNetwork>>;

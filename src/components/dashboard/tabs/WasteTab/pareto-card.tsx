@@ -411,7 +411,11 @@ export const WasteParetoCard = memo(function WasteParetoCard({
           Pareto Item {metricConf.label} — 80/20 + Fingerprint W/S/T
         </CardTitle>
         <p className="text-xs text-muted-foreground ml-9">
-          Item teratas by ΣABS nominal{metricConf.label} pada window same-week (maks. 12 bulan). Share & kumulatif = porsi dari
+          {/* WINDOW-SYNC-1 (BUGHUNT-COMPARE P3): stale "maks. 12 bulan" — the
+              ACTUAL server window is echoed from the response
+              (windowMonths, the BUGHUNT-R1 FIX 2 field already in scope). */}
+          Item teratas by ΣABS nominal{metricConf.label} pada window same-week
+          {windowMonths != null && windowMonths > 0 ? ` (${windowMonths} bulan)` : ''}. Share & kumulatif = porsi dari
           total {metricConf.label.toLowerCase()} scope.{' '}
           {isWaste ? (
             <>
