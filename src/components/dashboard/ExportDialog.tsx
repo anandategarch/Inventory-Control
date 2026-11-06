@@ -304,7 +304,7 @@ export function ExportDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-[600px] max-h-[80vh] flex flex-col overflow-hidden">
+      <DialogContent className="max-w-[600px] max-h-[85vh] flex flex-col overflow-hidden">
         <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2 text-base">
             <FileDown className="h-4 w-4" />
@@ -325,9 +325,20 @@ export function ExportDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {/* VERSUS-SCROLL-1 (user: "aku kurang suka ui atau tampilan export
+            pada mode 2 tidak bisa scroll") — ONE scroll region between the
+            pinned header and footer. The versus picker used to sit OUTSIDE
+            the scrollable section list (shrink-0): its ~300px + header +
+            mode radios + hints + select-all + footer exceeded max-h on
+            laptop screens, so the section list collapsed to 0px and the
+            footer (tombol Export) was clipped under overflow-hidden — mode
+            Versus literally could not scroll. Everything between header and
+            footer now scrolls here; max-h 80vh → 85vh gives the region more
+            room on short screens. */}
+        <div className="flex-1 overflow-y-auto pr-1 space-y-3">
         {/* VERSUS-2R — mode laporan: Standar (resto vs area/populasi) atau
             Versus (1 resto vs 1 resto — seluruh sections 1-12 jadi duel). */}
-        <div className="grid grid-cols-2 gap-2 pb-1 shrink-0" role="radiogroup" aria-label="Mode laporan">
+        <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Mode laporan">
           <button
             type="button"
             role="radio"
@@ -369,7 +380,7 @@ export function ExportDialog({
         {/* VERSUS-2R — the versus pick (radio list) + its validation
             hints. Only in mode versus. */}
         {versusMode && (
-          <div className="shrink-0 space-y-1.5">
+          <div className="space-y-1.5">
             <ExportComparatorPicker
               single
               outlets={outlets}
@@ -396,7 +407,7 @@ export function ExportDialog({
         )}
 
         {/* Select All / Deselect All */}
-        <div className="flex items-center gap-2 pb-2 shrink-0">
+        <div className="flex items-center gap-2 pb-1">
           <Button
             variant="outline"
             size="sm"
@@ -419,7 +430,7 @@ export function ExportDialog({
         </div>
 
         {/* Section list — SUBSECTION-1: parent rows + indented sub rows */}
-        <div className="flex-1 overflow-y-auto space-y-1 pr-1">
+        <div className="space-y-1">
           {EXPORT_SECTIONS.map((section) => {
             const checked = parentChecked(section);
             const hasSubs = Boolean(section.subs);
@@ -550,8 +561,9 @@ export function ExportDialog({
             );
           })}
         </div>
+        </div>
 
-        <DialogFooter className="shrink-0 pt-2">
+        <DialogFooter className="shrink-0 border-t border-border pt-3">
           <Button
             variant="outline"
             size="sm"
