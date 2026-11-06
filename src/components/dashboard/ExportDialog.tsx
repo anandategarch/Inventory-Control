@@ -18,6 +18,8 @@ import {
   CheckCheck,
   Square,
   ChevronRight,
+  Swords,
+  Globe2,
 } from 'lucide-react';
 import {
   EXPORT_SECTIONS,
@@ -127,10 +129,26 @@ export interface ComparatorSelection {
   areas: string[];
 }
 
+// VERSUS-2R — the report mode (user: "jadi ada dua mode yaitu poin 1
+// sampai 12 nya Resto itu sendiri versus area atau versus Resto lain
+// yang banyak dan mode satunya lagi satu Resto itu versus satu Resto
+// lainnya").
+//   'standar' — sections 1-12 = data resto fokus vs area/populasi
+//               (perilaku lama, default);
+//   'versus'  — sections 1-12 = resto fokus vs SATU resto pembanding
+//               (laporan versus, mis. BKSGOL vs CKGPAH).
+export type ExportMode = 'standar' | 'versus';
+
 interface ExportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onExport: (sections: string[], compare?: ComparatorSelection) => void;
+  onExport: (
+    sections: string[],
+    compare?: ComparatorSelection,
+    /** VERSUS-2R — the versus comparator's outlet code (mode 'versus'
+     *  only; the URL param ?versus=). */
+    versus?: string,
+  ) => void;
   isExporting: boolean;
   /** CUSTOM-COMPARE — every outlet for the comparator picker (/api/status
    *  cache; no extra fetch). */
@@ -158,6 +176,10 @@ export function ExportDialog({
   // section selection on every open→false transition, BUG-3-b A5).
   const [compareOutlets, setCompareOutlets] = useState<string[]>([]);
   const [compareAreas, setCompareAreas] = useState<string[]>([]);
+  // VERSUS-2R — the report mode + the single versus pick (same reset
+  // semantics as the comparator picks above).
+  const [mode, setMode] = useState<ExportMode>('standar');
+  const [versusOutlet, setVersusOutlet] = useState<string[]>([]);
 
   // SUBSECTION-1: leaf rows toggle their bare key; parent rows toggle ALL
   // of their sub tokens (tri-state — see parentChecked below).
@@ -214,7 +236,21 @@ export function ExportDialog({
   // Drives the comparator panel + the export-button validation.
   const customCompareActive = isSectionOn([...selected], 'customCompare');
   const compareCount = compareOutlets.length + compareAreas.length;
-  const compareMissing = customCompareActive && compareCount === 0;
+  // VERSUS-2R — in versus mode section 13 auto-compares against the
+  // versus resto server-side, so the user's OWN picks are not required
+  // (compareMissing only gates mode standar).
+  const compareMissing = mode === 'standar' && customCompareActive && compareCount === 0;
+  // VERSUS-2R — mode versus validation: exactly ONE comparator + a focus
+  // resto (the server's Zod guard enforces the same rules; this keeps the
+  // Export button honest before the request).
+  const versusMode = mode === 'versus';
+  const versusPick = versusOutlet[0] ?? null;
+  const versusMissingFocus = versusMode && !focusOutlet;
+  const versusMissingPick = versusMode && !versusPick;
+  const versusInvalid = versusMissingFocus || versusMissingPick;
+  const versusPickName = versusPick
+    ? outlets.find((o) => o.code === versusPick)?.name ?? versusPick
+    : null;
 
   // FIX (BUG-3-b A5): handleExport in the parent (useDashboardActions) closes
   // the dialog PROGRAMMATICALLY via setExportDialogOpen(false) — that path
@@ -229,9 +265,13 @@ export function ExportDialog({
     if (!open) {
       // CUSTOM-COMPARE: the comparator picks reset together with the
       // section selection (same BUG-3-b A5 reset semantics).
+      // VERSUS-2R: the mode + versus pick reset too — the next open
+      // always starts in mode standar with a clean slate.
       setSelected(defaultTokens());
       setCompareOutlets([]);
       setCompareAreas([]);
+      setMode('standar');
+      setVersusOutlet([]);
     }
   }
 
@@ -241,6 +281,13 @@ export function ExportDialog({
     // URLs — shares the server cache row); a partial selection expands to
     // the selected sub tokens.
     const tokens = compactSectionTokens(selected);
+    // VERSUS-2R — mode versus: hand the single comparator to the export
+    // action (?versus=). Section 13 (when checked) compares against this
+    // SAME resto server-side — its own picker stays a mode-standar tool.
+    if (versusMode) {
+      onExport(tokens, undefined, versusPick ?? undefined);
+      return;
+    }
     // CUSTOM-COMPARE — hand the comparator picks to the export action ONLY
     // when section 13 is actually in the token list (a stale pick with the
     // section unchecked must not fork the server cache key).
@@ -266,14 +313,87 @@ export function ExportDialog({
           <DialogDescription className="text-xs">
             {/* FIX (BUGHUNT-R2 / pasca-FILTERDROP-1): dropped "(atau filter resto
                 global)" — the global resto filter no longer exists; export scope
-                comes only from the Resto tab's "Filter Resto" picker (focusOutlet). */}
-            Pilih section yang ingin di-export — sub-section di bawah tiap
-            section juga bisa dicentang sendiri. Laporan PDF dengan desain penuh
-            dan grafik. Filter resto mengikuti Filter Resto di tab Resto
-            Analysis. Section 13 membandingkan resto fokus dengan pembanding
-            pilihan sendiri (resto / area tertentu).
+                comes only from the Resto tab's "Filter Resto" picker (focusOutlet).
+                VERSUS-2R: two report modes — Standar (sections 1-12 = resto
+                fokus vs area/populasi) or Versus (1 resto vs 1 resto). */}
+            Pilih mode laporan + section yang ingin di-export — sub-section di
+            bawah tiap section juga bisa dicentang sendiri. Laporan PDF dengan
+            desain penuh dan grafik. Filter resto mengikuti Filter Resto di tab
+            Resto Analysis. Mode <b>Versus</b> menjadikan section 1–12 laporan
+            kepala-kepala dua resto; section 13 tetap membandingkan resto fokus
+            dengan pembanding pilihan sendiri.
           </DialogDescription>
         </DialogHeader>
+
+        {/* VERSUS-2R — mode laporan: Standar (resto vs area/populasi) atau
+            Versus (1 resto vs 1 resto — seluruh sections 1-12 jadi duel). */}
+        <div className="grid grid-cols-2 gap-2 pb-1 shrink-0" role="radiogroup" aria-label="Mode laporan">
+          <button
+            type="button"
+            role="radio"
+            aria-checked={mode === 'standar'}
+            onClick={() => setMode('standar')}
+            className={`text-left rounded-lg border p-2.5 transition-colors ${
+              mode === 'standar'
+                ? 'border-primary/40 bg-primary/5'
+                : 'border-border hover:bg-muted/40'
+            }`}
+          >
+            <p className="text-xs font-medium flex items-center gap-1.5">
+              <Globe2 className="h-3.5 w-3.5 shrink-0" /> Standar
+            </p>
+            <p className="text-[10px] leading-tight text-muted-foreground mt-0.5">
+              Section 1–12: resto fokus vs area / resto lain yang banyak (perilaku biasa)
+            </p>
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={mode === 'versus'}
+            onClick={() => setMode('versus')}
+            className={`text-left rounded-lg border p-2.5 transition-colors ${
+              mode === 'versus'
+                ? 'border-teal-500/50 bg-teal-50/60 dark:bg-teal-500/[0.08]'
+                : 'border-border hover:bg-muted/40'
+            }`}
+          >
+            <p className="text-xs font-medium flex items-center gap-1.5">
+              <Swords className="h-3.5 w-3.5 shrink-0" /> Versus — 1 Resto vs 1 Resto
+            </p>
+            <p className="text-[10px] leading-tight text-muted-foreground mt-0.5">
+              Section 1–12 jadi laporan versus (mis. BKSGOL vs CKGPAH) — pilih 1 resto pembanding
+            </p>
+          </button>
+        </div>
+
+        {/* VERSUS-2R — the versus pick (radio list) + its validation
+            hints. Only in mode versus. */}
+        {versusMode && (
+          <div className="shrink-0 space-y-1.5">
+            <ExportComparatorPicker
+              single
+              outlets={outlets}
+              areas={[]}
+              focusOutlet={focusOutlet}
+              focusOutletName={focusOutletName}
+              selectedOutlets={versusOutlet}
+              selectedAreas={[]}
+              onChange={(nextOutlets) => setVersusOutlet(nextOutlets)}
+            />
+            {versusMissingFocus && (
+              <p className="text-[11px] text-destructive leading-tight px-1" role="alert">
+                Mode Versus butuh resto fokus — pilih Filter Resto di tab Resto
+                Analysis dulu, lalu buka dialog Export lagi.
+              </p>
+            )}
+            {!versusMissingFocus && versusMissingPick && (
+              <p className="text-[11px] text-destructive leading-tight px-1" role="alert">
+                Pilih satu resto pembanding untuk Mode Versus
+                {focusOutletName ? ` (${focusOutletName} vs …)` : ''}.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Select All / Deselect All */}
         <div className="flex items-center gap-2 pb-2 shrink-0">
@@ -338,10 +458,20 @@ export function ExportDialog({
                 {/* WINDOW-SYNC-1 batch (BUGHUNT-COMPARE P3): a one-line note
                     so "Pilih Semua" silently skipping section 13 is no
                     longer a surprise — the 12/13 badge was the only hint. */}
-                {section.key === 'customCompare' && !customCompareActive && (
+                {section.key === 'customCompare' && !customCompareActive && !versusMode && (
                   <p className="text-[10px] leading-tight text-muted-foreground/80 ml-7 mr-1 -mt-0.5">
                     Opt-in — tidak ikut &quot;Pilih Semua&quot;: centang dulu, lalu pilih
                     resto/area pembanding sebelum export.
+                  </p>
+                )}
+                {/* VERSUS-2R: in versus mode section 13 compares against the
+                    VERSUS resto automatically (no own picker needed). */}
+                {section.key === 'customCompare' && !customCompareActive && versusMode && (
+                  <p className="text-[10px] leading-tight text-muted-foreground/80 ml-7 mr-1 -mt-0.5">
+                    Opt-in — di Mode Versus section ini otomatis membandingkan
+                    {focusOutletName ? ` ${focusOutletName}` : ' resto fokus'} vs
+                    {versusPickName ? ` ${versusPickName}` : ' resto pembanding versus'}
+                    (pembanding mengikuti pilihan Mode Versus di atas).
                   </p>
                 )}
                 {section.subs?.map((sub) => {
@@ -373,8 +503,11 @@ export function ExportDialog({
                 {/* CUSTOM-COMPARE — the comparator picker rides directly
                     under section 13's rows: checking the section makes the
                     panel appear exactly where the user's eyes are (inside
-                    the scrollable list, not above it). */}
-                {section.key === 'customCompare' && customCompareActive && (
+                    the scrollable list, not above it).
+                    VERSUS-2R: NOT in versus mode — the section then uses
+                    the versus resto (the note above says so); the picker
+                    panel here would suggest a second, conflicting pick. */}
+                {section.key === 'customCompare' && customCompareActive && !versusMode && (
                   <div className="ml-6 mr-1">
                     <ExportComparatorPicker
                       outlets={outlets}
@@ -399,6 +532,20 @@ export function ExportDialog({
                     )}
                   </div>
                 )}
+                {/* VERSUS-2R — section 13 checked in versus mode: the
+                    comparison target is the versus resto (factual note,
+                    no picker). */}
+                {section.key === 'customCompare' && customCompareActive && versusMode && (
+                  <div className="ml-6 mr-1">
+                    <p className="text-[10px] leading-tight text-muted-foreground px-1">
+                      Section 13 di Mode Versus otomatis membandingkan
+                      {focusOutletName ? ` ${focusOutletName}` : ' resto fokus'} vs
+                      {versusPickName ? ` ${versusPickName}` : ' resto pembanding versus'}
+                      — tabel KPI, grafik, dan breakdown per item kepala-kepala
+                      (pembanding = pilihan Mode Versus di atas).
+                    </p>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -416,7 +563,7 @@ export function ExportDialog({
           <Button
             size="sm"
             onClick={handleExport}
-            disabled={isExporting || activeSectionCount === 0 || compareMissing}
+            disabled={isExporting || activeSectionCount === 0 || compareMissing || versusInvalid}
             className="gap-1.5"
           >
             {isExporting ? (

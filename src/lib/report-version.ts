@@ -27,7 +27,7 @@
  * (both were the literal '15' before GODSPLIT-W2-A) — both sites must
  * keep producing the identical string.
  */
-export const REPORT_DESIGN_VERSION = '20';
+export const REPORT_DESIGN_VERSION = '21';
 
 // ============================================================
 //  rv changelog — full history (GODSPLIT-W2-A moved it here so the
@@ -131,3 +131,14 @@ export const REPORT_DESIGN_VERSION = '20';
 // disjoint + LEAGUE-POLISH-1 (§11 negColor mati di kolom QTY unsigned,
 // tie-break rank liga, label Top-14 §12, label metrik §12 jujur
 // "Nominal Loss/Surplus").
+// VERSUS-2R (user: "aku mau sekarang dari poin 1 sampai 12 itu adalah
+// laporan versus jadi Resto BKS gol versus ckg Pak ... jadi ada dua
+// mode"): rv 21 — NEW mode laporan "Versus — 1 Resto vs 1 Resto"
+// (?versus=CODE): seluruh sections 1-12 dirender kepala-kepala — tabel VS
+// KPI side-by-side di awal section 1/2 + blok per-resto ber-badge NAMA
+// resto; section 11 liga dengan KEDUA resto ter-highlight; section 12
+// satu tabel; section 13 otomatis duo "Komparasi A vs B" (pembanding =
+// resto versus). Pipeline data jalan 2x (fokus + pembanding, sequential —
+// query unscoped/nasional kebagian warm q-* di panggilan kedua);
+// ?versus fork cache key route (extra.versus) sehingga mode standar dan
+// mode versus tidak pernah berbagi baris cache (kelas PERF-CACHE-04).

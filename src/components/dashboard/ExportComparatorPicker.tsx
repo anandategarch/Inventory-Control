@@ -46,6 +46,11 @@ interface ExportComparatorPickerProps {
   selectedOutlets: string[];
   selectedAreas: string[];
   onChange: (outlets: string[], areas: string[]) => void;
+  /** VERSUS-2R — single-pick mode (mode "Versus — 1 Resto vs 1 Resto"):
+   *  the list becomes a RADIO picker (clicking another row SWITCHES the
+   *  pick), the area grid + cap hints are hidden, and the header copy
+   *  says the whole report becomes the duel. */
+  single?: boolean;
 }
 
 export function ExportComparatorPicker({
@@ -56,6 +61,7 @@ export function ExportComparatorPicker({
   selectedOutlets,
   selectedAreas,
   onChange,
+  single = false,
 }: ExportComparatorPickerProps) {
   const [outletQuery, setOutletQuery] = useState('');
 
@@ -82,13 +88,22 @@ export function ExportComparatorPicker({
   // silently refused at the cap (removal always works); the checkbox list
   // disables unchecked rows and a hint explains why, so the limit is
   // discoverable instead of a surprise 400 at export time.
+  // VERSUS-2R (`single`): the cap is ONE and clicking another row
+  // SWITCHES the pick (radio semantics — the cap-block pattern would lock
+  // the user into their first pick forever).
   const pickedOutletCount = selectedOutlets.filter(
     (c) => c !== focusOutlet,
   ).length;
-  const atOutletCap = pickedOutletCount >= MAX_COMPARE_OUTLETS;
+  const atOutletCap = single ? pickedOutletCount >= 1 : pickedOutletCount >= MAX_COMPARE_OUTLETS;
   const atAreaCap = selectedAreas.length >= MAX_COMPARE_AREAS;
 
   const toggleOutlet = (code: string) => {
+    if (single) {
+      // Radio: pick the clicked row, or clear it when re-clicked.
+      const next = selectedOutlets.includes(code) ? [] : [code];
+      onChange(next, []);
+      return;
+    }
     if (
       !selectedOutlets.includes(code) &&
       selectedOutlets.length >= MAX_COMPARE_OUTLETS
@@ -114,28 +129,49 @@ export function ExportComparatorPicker({
     : null;
 
   return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50/50 dark:border-amber-500/30 dark:bg-amber-500/[0.06] p-3 space-y-3">
+    <div className={`rounded-lg border p-3 space-y-3 ${single ? 'border-teal-200 bg-teal-50/40 dark:border-teal-500/30 dark:bg-teal-500/[0.05]' : 'border-amber-200 bg-amber-50/50 dark:border-amber-500/30 dark:bg-amber-500/[0.06]'}`}>
       {/* Header — what this panel feeds + the focus provenance */}
       <div className="space-y-1">
-        <p className="text-xs font-medium flex items-center gap-1.5 text-amber-800 dark:text-amber-300">
+        <p className={`text-xs font-medium flex items-center gap-1.5 ${single ? 'text-teal-800 dark:text-teal-300' : 'text-amber-800 dark:text-amber-300'}`}>
           <Building2 className="h-3.5 w-3.5" />
-          Pembanding — Section 13. Komparasi Pilihan
+          {single
+            ? 'Resto pembanding — Mode Versus (seluruh laporan)'
+            : 'Pembanding — Section 13. Komparasi Pilihan'}
         </p>
         <p className="text-[11px] leading-tight text-muted-foreground">
-          Pilih resto dan/atau area pembanding. Resto fokus:{' '}
-          {focusLabel ? (
-            <Badge variant="outline" className="font-mono text-[10px] mx-0.5 py-0">
-              {focusLabel}
-            </Badge>
+          {single
+ ? (
+            <>
+              Pilih SATU resto pembanding — seluruh section 1–12 menjadi laporan
+              versus (resto fokus vs resto ini). Resto fokus:{' '}
+              {focusLabel ? (
+                <Badge variant="outline" className="font-mono text-[10px] mx-0.5 py-0">
+                  {focusLabel}
+                </Badge>
+              ) : (
+                <span className="text-teal-700 dark:text-teal-400">
+                  belum dipilih (pilih Filter Resto di tab Resto Analysis dulu)
+                </span>
+              )}
+            </>
           ) : (
-            <span className="text-amber-700 dark:text-amber-400">
-              belum dipilih (mengikuti Filter Resto di tab Resto Analysis)
-            </span>
+            <>
+              Pilih resto dan/atau area pembanding. Resto fokus:{' '}
+              {focusLabel ? (
+                <Badge variant="outline" className="font-mono text-[10px] mx-0.5 py-0">
+                  {focusLabel}
+                </Badge>
+              ) : (
+                <span className="text-amber-700 dark:text-amber-400">
+                  belum dipilih (mengikuti Filter Resto di tab Resto Analysis)
+                </span>
+              )}
+            </>
           )}
         </p>
       </div>
 
-      {/* Resto pembanding — searchable checkbox list */}
+      {/* Resto pembanding — searchable list (radio in single mode) */}
       <div className="space-y-1.5">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
@@ -143,16 +179,16 @@ export function ExportComparatorPicker({
             <Input
               value={outletQuery}
               onChange={(e) => setOutletQuery(e.target.value)}
-              placeholder="Cari resto pembanding (kode / nama / area)..."
+              placeholder={single ? 'Cari resto pembanding versus (kode / nama / area)...' : 'Cari resto pembanding (kode / nama / area)...'}
               className="h-8 text-xs pl-7"
               aria-label="Cari resto pembanding"
             />
           </div>
           <Badge variant="secondary" className="text-[10px] shrink-0">
-            {pickedOutletCount}/{MAX_COMPARE_OUTLETS} resto
+            {single ? '1 resto' : `${pickedOutletCount}/${MAX_COMPARE_OUTLETS} resto`}
           </Badge>
         </div>
-        {atOutletCap && (
+        {!single && atOutletCap && (
           <p className="text-[10px] leading-tight text-amber-700 dark:text-amber-400">
             Maksimal {MAX_COMPARE_OUTLETS} resto pembanding — untuk cakupan lebih
             luas, gunakan pilihan area di bawah (satu area membawa seluruh resto di dalamnya).
@@ -167,8 +203,9 @@ export function ExportComparatorPicker({
             filteredOutlets.map((o) => {
               const on = selectedOutlets.includes(o.code);
               // COMPCAP-1: unchecked rows go inert at the cap (removal stays
-              // possible; the hint above explains why).
-              const blocked = !on && atOutletCap;
+              // possible; the hint above explains why). Never in single mode
+              // — radio rows are always clickable (click = SWITCH).
+              const blocked = !single && !on && atOutletCap;
               return (
                 <label
                   key={o.code}
@@ -203,7 +240,9 @@ export function ExportComparatorPicker({
         </div>
       </div>
 
-      {/* Area pembanding — checkbox grid */}
+      {/* Area pembanding — checkbox grid (NOT in single mode: mode versus
+          compares ONE resto — an area pick has no meaning there). */}
+      {!single && (
       <div className="space-y-1.5">
         <p className="text-[11px] font-medium flex items-center gap-1.5">
           <MapPin className="h-3.5 w-3.5 text-muted-foreground" />
@@ -240,6 +279,7 @@ export function ExportComparatorPicker({
           })}
         </div>
       </div>
+      )}
 
       {/* Active picks — chips with remove buttons */}
       {(selectedOutlets.length > 0 || selectedAreas.length > 0) && (

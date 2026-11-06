@@ -281,6 +281,17 @@ export class Rpt {
   readonly doc: PDFKit.PDFDocument;
   /** Vertical cursor (top of the next block). */
   y: number;
+  // VERSUS-2R — badge mode: when set, sectionHeader() renders this resto's
+  // NAMA badge instead of the numbered header (the versus orchestrator in
+  // pdf/versus-report.ts draws each section's numbered header ONCE itself,
+  // then enters badge mode for each side's block so the existing section
+  // renderers can be reused verbatim — their internal sectionHeader call
+  // becomes the side's label). null = mode standar (numbered headers).
+  versusBadge: string | null = null;
+  // VERSUS-2R — the badge chip's fill for the CURRENT sideBlock (amber for
+  // the focus side, neutral gray for the comparator side); set/cleared by
+  // versus-report.ts's sideBlock together with versusBadge.
+  restoBadgeFill: string | null = null;
 
   constructor(doc: PDFKit.PDFDocument) {
     this.doc = doc;
@@ -384,8 +395,16 @@ export class Rpt {
 
   /** Plain numbered section header ("1. Ringkasan" + thin rule) —
    *  DESAIN-SIMPEL: no colored chip, no caption line (user: "hapus
-   *  caption-caption seperti itu"). */
+   *  caption-caption seperti itu").
+   *  VERSUS-2R: in badge mode (versusBadge set) this renders the side's
+   *  NAMA-resto badge instead — the versus orchestrator owns the numbered
+   *  header, so the reused renderers' own call must NOT print a second
+   *  "1. Ringkasan". */
   sectionHeader(no: number, title: string): void {
+    if (this.versusBadge != null) {
+      this.restoBadge(this.versusBadge);
+      return;
+    }
     this.ensure(40);
     const top = this.y;
     this.text(`${no}.`, PAGE.M, top, { font: 'Helvetica-Bold', size: 12, color: C.ink });
@@ -394,6 +413,23 @@ export class Rpt {
     this.doc.moveTo(PAGE.M, top + 16).lineTo(PAGE.W - PAGE.M, top + 16)
       .lineWidth(0.9).strokeColor(C.ink).stroke();
     this.y = top + 16 + 10;
+  }
+
+  /** VERSUS-2R — a side's NAMA-resto badge: small chip + hairline rule to
+   *  the right (visually a sub-head of the section header above, never a
+   *  second numbered header). Amber = the focus side's highlight
+   *  convention (C.focusRow); the COMPARATOR side gets the same chip shape
+   *  in neutral gray so both sides read as equals, distinguished by NAME
+   *  alone (the user's CC-NAMES-1 rule: names, not generic labels). */
+  restoBadge(name: string, fill?: string): void {
+    const chipFill = fill ?? this.restoBadgeFill ?? C.focusRow;
+    this.ensure(24);
+    const top = this.y;
+    const w = this.chip(name, PAGE.M, top, chipFill, C.ink, { size: 7.5 });
+    const midY = top + 6;
+    this.doc.moveTo(PAGE.M + w + 6, midY).lineTo(PAGE.W - PAGE.M, midY)
+      .lineWidth(0.5).strokeColor(C.border).stroke();
+    this.y = top + 17;
   }
 
   /** Small bold sub-heading (e.g. "6.1 Top Nominal"). */

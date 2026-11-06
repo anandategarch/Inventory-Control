@@ -1,6 +1,6 @@
 // ============================================================
 //  /api/export-report — Export analysis data to PDF
-//  GET: ?month=&week=&compareWeek=&compareMonth=&area=&outlet=&item=&pic=&kelompok=&sections=&compareOutlets=&compareAreas=
+//  GET: ?month=&week=&compareWeek=&compareMonth=&area=&outlet=&item=&pic=&kelompok=&sections=&compareOutlets=&compareAreas=&versus=
 //  Fetches analysis data server-side, generates a .pdf, returns as download.
 //
 //  EXPORT-PDF: output switched .docx → .pdf (full design + vector charts
@@ -8,6 +8,14 @@
 //  shape (cache → fetch → build → base64) is unchanged.
 //  EXPORT-TRIM (user request): report trimmed 13 → 6 sections — the removed
 //  sections' fetches + builder blocks went with them.
+//
+//  VERSUS-2R — ?versus=CODE switches the WHOLE report to mode "Versus —
+//  1 Resto vs 1 Resto" (user: "aku mau sekarang dari poin 1 sampai 12
+//  itu adalah laporan versus jadi Resto BKS gol versus ckg Pak"): the
+//  pipeline runs twice (focus + comparator — sequential, see
+//  services/data-fetcher/versus.ts) and pdf-builder renders sections 1-12
+//  head-to-head. Absent = mode standar (pre-VERSUS-2R behavior,
+//  byte-identical cache keys).
 //
 //  PERF-FASE3-BE04: Migrated from legacy JS rule evaluator (35K-record loop
 //  calling evaluateRules per record) to SQL-pushed evaluators. Matches the
@@ -34,8 +42,12 @@ import { errorResponse } from '@/lib/error-response';
 import { buildCacheKey, withCacheAndDedup } from '@/lib/aggregation-cache';
 import { EarlyHttpResponse } from '@/lib/early-http-response';
 import { REPORT_DESIGN_VERSION } from '@/lib/report-version';
-import type { ReportParams } from './services/types';
+import type { ReportParams, VersusReportInput } from './services/types';
 import { fetchReportData } from './services/data-fetcher';
+// VERSUS-2R — mode "Versus — 1 Resto vs 1 Resto": the double pipeline
+// (focus + comparator outlet) + the NAMA-resto resolution for the
+// headers/badges.
+import { fetchVersusReportData } from './services/data-fetcher/versus';
 import { buildPdfReport } from './services/pdf/pdf-builder';
 
 export const dynamic = 'force-dynamic';
@@ -116,6 +128,11 @@ export async function GET(req: NextRequest) {
       (url.searchParams.get('compareAreas') || '')
         .split(',').map((s) => s.trim()).filter(Boolean),
     )];
+    // VERSUS-2R — mode "Versus": SATU resto pembanding untuk seluruh
+    // laporan (sections 1-12 kepala-kepala). Empty/absent = mode standar.
+    // Zod (exportReportQuerySchema) enforces: valid outlet code, differs
+    // from `outlet`, and `outlet` is set.
+    const versusCode = (url.searchParams.get('versus') || '').trim() || null;
 
     if (!monthParam || !week) {
       return NextResponse.json({ success: false, error: 'month and week required' }, { status: 400 });
@@ -173,6 +190,12 @@ export async function GET(req: NextRequest) {
         // pre-CUSTOM-COMPARE keys stay byte-identical (cache-row compat).
         cmpOutlets: compareOutlets.length > 0 ? [...compareOutlets].sort().join(',') : null,
         cmpAreas: compareAreas.length > 0 ? [...compareAreas].sort().join(',') : null,
+        // VERSUS-2R — the versus comparator MUST fork the cache key (the
+        // PERF-CACHE-04 class): a versus export and a standard export of
+        // the same period+sections are DIFFERENT documents sharing every
+        // other key component. null when absent so pre-VERSUS-2R keys stay
+        // byte-identical (cache-row compat).
+        versus: versusCode,
         // Report design version (GODSPLIT-W2-A): imported from
         // src/lib/report-version.ts — single source of truth shared with
         // the client's `?rv=` URL param; the full rv changelog (REFINE-3
@@ -213,8 +236,24 @@ export async function GET(req: NextRequest) {
           const params: ReportParams = {
             monthParam, week, area, outletCode, itemName, pic, kelompok,
             userCompareWeek, userCompareMonth, sections,
-            compareOutlets, compareAreas, startedAt,
+            compareOutlets, compareAreas, versusCode, startedAt,
           };
+          // VERSUS-2R — mode "Versus": the WHOLE pipeline runs twice
+          // (focus + versus outlet, sequential — see data-fetcher/versus.ts
+          // for why not Promise.all) and the PDF renders sections 1-12
+          // head-to-head (side-by-side VS KPI tables + per-resto badge
+          // blocks; section 13 auto-duo via the forced comparator set).
+          // Mode standar: the single pipeline, unchanged.
+          if (versusCode) {
+            const { report, versusData, names } = await fetchVersusReportData(params);
+            const versusInput: VersusReportInput = {
+              code: versusCode,
+              name: names.versusName,
+              focusName: names.focusName,
+              data: versusData,
+            };
+            return buildPdfReport(report.data, report.ctx, versusInput);
+          }
           const { data, ctx } = await fetchReportData(params);
 
           // Stage 2 — assemble the PDF document (cover band + numbered

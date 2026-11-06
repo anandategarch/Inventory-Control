@@ -280,6 +280,12 @@ import { drawAreaCompareSection } from './sections/area-compare';
 // CUSTOM-COMPARE — section 13 "Komparasi Pilihan" (user: "pilih resto
 // mlgpar, pembanding bdgsek … atau beberapa resto / pakai area").
 import { drawCustomCompareSection } from './sections/custom-compare';
+// VERSUS-2R — mode "Versus — 1 Resto vs 1 Resto" (user: "aku mau sekarang
+// dari poin 1 sampai 12 itu adalah laporan versus jadi Resto BKS gol
+// versus ckg Pak"): the versus layout (cover + VS tables + per-resto
+// badge blocks + dual-highlight league + auto-duo section 13).
+import { drawReportVersus } from './versus-report';
+import type { VersusReportInput } from '../types';
 
 // ============================================================
 //  Main entry — buildPdfReport
@@ -287,6 +293,10 @@ import { drawCustomCompareSection } from './sections/custom-compare';
 export async function buildPdfReport(
   data: ReportData,
   ctx: ReportContext,
+  // VERSUS-2R — present = mode "Versus": the report renders sections 1-12
+  // head-to-head (see versus-report.ts). Absent = mode standar (the
+  // pre-VERSUS-2R behavior, byte-identical).
+  versus?: VersusReportInput,
 ): Promise<{ bufferBase64: string; fileName: string }> {
   const doc = new PDFDocument({
     size: 'A4',
@@ -299,7 +309,9 @@ export async function buildPdfReport(
     // screenshot "Halaman 8 dari 1").
     bufferPages: true,
     info: {
-      Title: `Ringkasan Laporan Deviasi ${shortMonth(data.period.monthLabel)} ${prettyWeek(data.period.weekLabel)}`,
+      Title: versus
+        ? `Laporan Versus Deviasi ${versus.focusName} vs ${versus.name} ${shortMonth(data.period.monthLabel)} ${prettyWeek(data.period.weekLabel)}`
+        : `Ringkasan Laporan Deviasi ${shortMonth(data.period.monthLabel)} ${prettyWeek(data.period.weekLabel)}`,
       Author: 'Inventory Control',
       Creator: 'Inventory Control',
     },
@@ -312,16 +324,29 @@ export async function buildPdfReport(
     doc.on('end', () => resolve({ bufferBase64: Buffer.concat(chunks).toString('base64') }));
     doc.on('error', reject);
     try {
-      drawReport(doc, data, ctx);
+      // VERSUS-2R — the versus layout interleaves BOTH datasets; mode
+      // standar keeps the original single-dataset drawReport (unchanged).
+      // The Rpt cursor lives HERE in versus mode (drawReport creates its
+      // own in mode standar — untouched).
+      if (versus) {
+        const rpt = new Rpt(doc);
+        drawReportVersus(rpt, doc, data, ctx, versus);
+      } else {
+        drawReport(doc, data, ctx);
+      }
       // Post-hoc pass: small running header on pages 2+ only — no footer
       // (DESAIN-SIMPEL: user asked to remove the page footer entirely).
       // REFINE-2: mirrors the new minimal cover header —
       // "Ringkasan Laporan Deviasi · <resto> · <bulan>".
+      // VERSUS-2R: the versus report's header carries the DUEL
+      // "Laporan Versus · BKSGOL vs CKGPAH · <bulan>".
       const range = doc.bufferedPageRange();
       const outletLabel = data.filters.outletCode && data.filters.outletCode !== 'all'
         ? data.filters.outletCode
         : 'Semua Resto';
-      const headerLabel = `Ringkasan Laporan Deviasi  \u00B7  ${outletLabel}  \u00B7  ${titleCase(data.period.monthLabel.split(/\s+/)[0] ?? '')}`;
+      const headerLabel = versus
+        ? `Laporan Versus Deviasi  \u00B7  ${versus.focusName} vs ${versus.name}  \u00B7  ${titleCase(data.period.monthLabel.split(/\s+/)[0] ?? '')}`
+        : `Ringkasan Laporan Deviasi  \u00B7  ${outletLabel}  \u00B7  ${titleCase(data.period.monthLabel.split(/\s+/)[0] ?? '')}`;
       for (let i = range.start; i < range.start + range.count; i++) {
         if (i === range.start) continue;
         doc.switchToPage(i);
@@ -334,11 +359,15 @@ export async function buildPdfReport(
   }).then((r) => {
     // fileName — sanitized to the RFC 2183/5987-safe charset (BUG-3-a C5
     // convention): outlet + month + week + compare suffix.
+    // VERSUS-2R: the versus file names the DUEL
+    // ("Laporan_Versus_BKSGOL_vs_CKGPAH_…").
     const outletLabel = data.filters.outletCode && data.filters.outletCode !== 'all'
       ? data.filters.outletCode
       : 'Semua_Resto';
     const vs = data.period.comparisonWeek ? `_vs_${data.period.comparisonWeek}` : '';
-    const raw = `Ringkasan_Laporan_Deviasi_${outletLabel}_${shortMonth(data.period.monthLabel).replace(/\s+/g, '_')}_${data.period.weekLabel}${vs}.pdf`;
+    const raw = versus
+      ? `Laporan_Versus_${versus.focusName}_vs_${versus.name}_${shortMonth(data.period.monthLabel).replace(/\s+/g, '_')}_${data.period.weekLabel}.pdf`
+      : `Ringkasan_Laporan_Deviasi_${outletLabel}_${shortMonth(data.period.monthLabel).replace(/\s+/g, '_')}_${data.period.weekLabel}${vs}.pdf`;
     return { bufferBase64: r.bufferBase64, fileName: raw.replace(/[^A-Za-z0-9._-]/g, '_') };
   });
 }

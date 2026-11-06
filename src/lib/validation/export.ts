@@ -92,6 +92,22 @@ const compareAreasSchema = z.string().refine(noControlChars).refine(
   { message: `compareAreas must be 1-${MAX_COMPARE_AREAS} comma-separated area names` },
 ).optional();
 
+// VERSUS-2R — mode "Versus — 1 Resto vs 1 Resto": satu kode outlet
+// pembanding untuk seluruh laporan (sections 1-12 jadi A vs B). Format
+// validasinya SAMA dengan `outlet` (outletCodeSchema — kode titik-delimited
+// seperti "1137.CKGPAH"; an unknown code is the record guard's 404 to
+// answer, exactly like ?outlet=). EMPTY string ("?versus=" with nothing
+// picked) = mode standar — valid, the same convention as ?sections= /
+// ?compareOutlets= (BUG-3-a C4). Cross-field rules (butuh resto fokus,
+// tidak boleh sama dengan resto fokus) diperiksa di superRefine di bawah —
+// pesan Indonesia karena satu-satunya pengirim param ini adalah dialog
+// Export (FE sudah mem-validasi lebih dulu; ini penjaga URL rakitan
+// tangan).
+const versusSchema = z.string().refine(noControlChars).refine(
+  (v) => v.trim() === '' || (v.length >= 1 && v.length <= 50),
+  { message: 'versus must be an outlet code (1-50 chars) or empty' },
+).optional();
+
 export const exportReportQuerySchema = z.object({
   month: monthLabelSchema,
   week: weekLabelSchema,
@@ -112,4 +128,27 @@ export const exportReportQuerySchema = z.object({
   // customCompare section is not selected).
   compareOutlets: compareOutletsSchema,
   compareAreas: compareAreasSchema,
+  // VERSUS-2R — mode "Versus": satu resto pembanding untuk seluruh
+  // laporan (sections 1-12 kepala-kepala).
+  versus: versusSchema,
+}).superRefine((data, ctx) => {
+  // VERSUS-2R cross-field guards — 400 dengan pesan Indonesia (konvensi
+  // pesan error route ini; lihat record-guard.ts).
+  if (data.versus == null || data.versus.trim() === '') return;
+  const focus = data.outlet && data.outlet !== 'all' ? data.outlet : null;
+  if (!focus) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['versus'],
+      message: 'Mode versus butuh resto fokus — pilih Filter Resto di tab Resto Analysis terlebih dulu.',
+    });
+    return;
+  }
+  if (data.versus === focus) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['versus'],
+      message: 'Resto pembanding versus tidak boleh sama dengan resto fokus.',
+    });
+  }
 });

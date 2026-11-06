@@ -120,6 +120,12 @@ export interface ReportParams {
   // (comma-split + trimmed by the route; null/empty = no comparators).
   compareOutlets: string[];
   compareAreas: string[];
+  // VERSUS-2R — mode "Versus — 1 Resto vs 1 Resto": the SINGLE comparator
+  // outlet code for the WHOLE report (sections 1-12 render head-to-head).
+  // null/empty = mode standar (sections 1-12 = data resto fokus vs
+  // area/populasi). Zod-validated upstream (must differ from `outletCode`,
+  // which must then be set).
+  versusCode: string | null;
   startedAt: number;
 }
 
@@ -392,6 +398,31 @@ export interface CustomCompareData {
   missingAreas: string[];
   /** 13.3 rows ([] when there is no focus resto or no comparator). */
   items: CustomCompareItemRow[];
+}
+
+// ============================================================
+// VERSUS-2R — mode "Versus — 1 Resto vs 1 Resto" payload (user: "aku
+// mau sekarang dari poin 1 sampai 12 itu adalah laporan versus jadi
+// Resto BKS gol versus ckg Pak"). The route runs the WHOLE data pipeline
+// twice (focus + comparator outlet) and pdf-builder renders sections
+// 1-12 head-to-head: a side-by-side VS KPI table leading sections 1/2,
+// then each section's existing renderer called once per side under a
+// NAMA-resto badge (the numbered section header prints once); section 11
+// highlights BOTH restos; section 12 renders once; section 13 auto-duo
+// (the comparator set is forced to the versus resto — the CC-NAMES-1 duo
+// layout prints "13. Komparasi A vs B").
+// ============================================================
+
+/** The versus-mode input handed to buildPdfReport (null = mode standar). */
+export interface VersusReportInput {
+  /** The comparator outlet's code (?versus=). */
+  code: string;
+  /** Comparator outlet's display NAME (Outlet table; code-suffix fallback). */
+  name: string;
+  /** Focus outlet's display NAME (the `outlet` param side). */
+  focusName: string;
+  /** The comparator side's FULL ReportData (the focus side = `data`). */
+  data: ReportData;
 }
 
 // ============================================================

@@ -41,6 +41,12 @@ export interface SectionEnv {
   cmpFull: string | null;
   /** "1042.KWGGAL" or "Semua Resto". */
   restoName: string;
+  /** VERSUS-2R — the versus comparator's code: set on side A's env so the
+   *  population-wide renderers (section 11's league) highlight BOTH restos
+   *  of the duel (the focus via data.filters.outletCode as always, the
+   *  versus side via this). Undefined on side B's env + in mode standar —
+   *  the renderers fall back to the single-focus highlight unchanged. */
+  versusPeerCode?: string;
 }
 
 export function createSectionEnv(
@@ -58,5 +64,13 @@ export function createSectionEnv(
   const prevCol = data.period.comparisonMonth ? periodCol(data.period.comparisonMonth, data.period.comparisonWeek) : '\u2014';
   const cmpFull = data.period.comparisonMonth ? periodFull(data.period.comparisonMonth, data.period.comparisonWeek) : null;
   const restoName = data.filters.outletCode && data.filters.outletCode !== 'all' ? data.filters.outletCode : 'Semua Resto';
-  return { rpt, doc, data, ctx, hasSection, hasSub, currLabel, currCol, prevCol, cmpFull, restoName };
+  /**
+   *   VERSUS-2R — optional per-env extras (undefined in mode standar):
+   *   versusPeerCode rides side A's env so section 11 can highlight both
+   *   restos of the duel. Create the env, then attach the extra —
+   *   createSectionEnv itself stays a pure function of (rpt, doc, data,
+   *   ctx) so the standard path is untouched.
+   */
+  const env: SectionEnv = { rpt, doc, data, ctx, hasSection, hasSub, currLabel, currCol, prevCol, cmpFull, restoName };
+  return env;
 }

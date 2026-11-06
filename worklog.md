@@ -41190,3 +41190,23 @@ Stage Summary:
 - 20 temuan bug hunt diperbaiki (3 P2 + 17 P3 → 0 P1) + fitur CC-NAMES-1: mode compare 2 resto di PDF kini ber-header NAMA resto ("13. Komparasi BKSGOL vs CKGPAH") sampai level kolom — tanpa istilah generik "pembanding" di mode 2-resto.
 - Angka 13.3 fokus kini paritas penuh dengan 9.2 (populasi baris ber-deviasi); picker pembanding enforce cap server (31+ resto tak lagi 400 di tengah export); kartu Item Deep-Dive refresh pasca-mutasi; 5 route window-sensitive fork cache key-nya.
 - rv 19→20 (satu bump untuk semua perubahan desain PDF gelombang ini). Tests 892/892 utuh.
+
+---
+Task ID: VERSUS-2R
+Agent: Main (Z.ai Code)
+Task: User: "aku mau sekarang dari poin 1 sampai 12 itu adalah laporan versus jadi Resto BKS gol versus ckg Pak … jadi ada dua mode yaitu poin 1 sampai 12 nya Resto itu sendiri versus area atau versus Resto lain yang banyak dan mode satunya lagi satu Resto itu versus satu Resto lainnya" — mode laporan kedua di export PDF: seluruh sections 1-12 menjadi laporan versus 2 resto.
+
+Work Log:
+- Desain: mode VERSUS = pipeline data jalan 2× (fokus + pembanding, SEQUENTIAL — query unscoped kebagian warm q-* di panggilan kedua; bentuk wave tetap identik export standar, pelajaran pool-contention AUDIT-C F4) + layout PDF baru yang memakai 12 modul section renderer LAMA verbatim via mekanisme badge mode (Rpt.versusBadge/restoBadgeFill: sectionHeader renderer → badge NAMA resto; 0 edit di 12 file section).
+- Param & validasi: ?versus=CODE (Zod superRefine: butuh outlet fokus + ≠ fokus, pesan 400 Indonesia; empty string = mode standar — konvensi BUG-3-a C4) + cache key fork extra.versus (kelas PERF-CACHE-04) + rv 20→21 (report-version.ts + changelog).
+- services/data-fetcher/versus.ts (BARU): fetchVersusReportData — side A (fokus, compareOutlets DIPAKSA [versus] → §13 auto-duo CC-NAMES-1 "13. Komparasi BKSGOL vs CKGPAH" + per-item head-to-head gratis) + side B (outlet ditukar, comparator kosong); resolveVersusNames dari Outlet master (fallback suffix kode).
+- services/pdf/versus-report.ts (BARU): cover "Laporan Versus Deviasi / BKSGOL vs CKGPAH · <bulan>" + 4 kartu KPI per-resto ber-badge NAMA; §1 dipimpin tabel VS baru "1.VS BKSGOL vs CKGPAH (OKT 26 W4) — selisih = BKSGOL − CKGPAH" (Metrik | BKSGOL | CKGPAH | Selisih; negColor kolom nilai, chgColor selisih per goodUp metrik; SALES SECRECY: hanya rasio dev-to-sales); §2 dipimpin "2.VS Growth % vs periode pembanding" side-by-side; §1-10 header bernomor SEKALI + blok per-resto ber-badge; §11 SATU liga KEDUA resto ter-highlight (env.versusPeerCode baru di SectionEnv; subhead "BKSGOL #N vs CKGPAH #M ter-highlight"); §12 satu tabel; §13 side-A verbatim (duo).
+- pdf-builder: buildPdfReport(data, ctx, versus?) — versus branch (Title metadata "Laporan Versus Deviasi BKSGOL vs CKGPAH …", running header "Laporan Versus Deviasi · BKSGOL vs CKGPAH · <bulan>", filename Laporan_Versus_BKSGOL_vs_CKGPAH_<bln>_<week>.pdf); mode standar byte-identical (drawReport tak tersentuh).
+- FE: ExportDialog radio Mode Laporan (Standar = perilaku lama / Versus) + ExportComparatorPicker prop `single` (radio picker: klik baris lain = SWITCH, grid area disembunyikan, copy header "Resto pembanding — Mode Versus (seluruh laporan)") + validasi tombol Export (butuh Filter Resto + 1 pembanding; pesan error Indonesia) + reset mode/pick saat dialog tutup (BUG-3-b A5) + §13 di mode versus = note otomatis pembanding versus (picker §13 disembunyikan, compareMissing hanya gate mode standar); useDashboardActions handleExport arg ke-3 versus → ?versus=.
+- Verifikasi lokal (tanpa DB): render mock via buildPdfReport — PDF 5 halaman valid; pdftotext mengonfirmasi cover/badge/VS-table/semua header section "N. <judul> — BKSGOL vs CKGPAH"/badge per-resto/liga "BKSGOL #1 vs CKGPAH #2 ter-highlight"/"13. Komparasi BKSGOL vs CKGPAH"; mode standar regression OK (fileName + bytes tak berubah); 8 kasus Zod versus PASS (OK / tanpa fokus 400 / ==fokus 400 / outlet=all 400 / tanpa versus OK / empty OK / whitespace OK / versus+compareOutlets OK-diabaikan).
+- QA gates: tsc 0 error · vitest 892/892 · eslint 0 error (460 warning = 457 baseline + 3 baru kelas sama: param type-level unused, pola section-context.ts baseline).
+
+Stage Summary:
+- Dua mode laporan di Export dialog: Standar (resto vs area/populasi — perilaku lama, cache key & PDF tak berubah) dan Versus (seluruh sections 1-12 jadi laporan kepala-kepala dua resto, mis. BKSGOL vs CKGPAH: tabel VS side-by-side + blok per-resto ber-badge NAMA + liga dua resto ter-highlight + §13 auto-duo per-item).
+- rv 21. Tests 892/892 utuh (0 assertion lama dilemahkan).
+

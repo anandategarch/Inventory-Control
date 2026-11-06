@@ -120,9 +120,15 @@ export function useDashboardActions({
   // forks its cache key on them (cmpOutlets/cmpAreas extras — the
   // PERF-CACHE-04 bug class), so every distinct comparator set is its own
   // report.
+  // VERSUS-2R: `versus` carries the mode-Versus comparator's outlet code
+  // onto the URL as ?versus= (skipped in mode standar so pre-VERSUS-2R
+  // URLs stay byte-identical). The server forks its cache key on it too
+  // (extra.versus) — a versus export and a standard export of the same
+  // period+sections can never share a cache row.
   const handleExport = useCallback(async (
     selectedSections: string[],
     compare?: { outlets: string[]; areas: string[] },
+    versus?: string,
   ) => {
     if (!analysisData) return;
     // Resto Analysis convention (RestoAnalysis.tsx): activeOutlet =
@@ -152,6 +158,10 @@ export function useDashboardActions({
       // actually produced them; empty lists are skipped).
       if (compare?.outlets?.length) params.set('compareOutlets', compare.outlets.join(','));
       if (compare?.areas?.length) params.set('compareAreas', compare.areas.join(','));
+      // VERSUS-2R — mode "Versus — 1 Resto vs 1 Resto": the single
+      // comparator code (only sent in mode versus; the versus export
+      // ignores ?compareOutlets/?compareAreas server-side).
+      if (versus) params.set('versus', versus);
       // Report design version — busts the CDN/edge cache after a design
       // change. GODSPLIT-W2-A: single source of truth is
       // REPORT_DESIGN_VERSION in src/lib/report-version.ts — the server's
@@ -228,6 +238,8 @@ export function useDashboardActions({
       setIsExporting(false);
     }
   }, [analysisData, monthLabel, currentWeek, comparisonWeek, comparisonMonth, area, kelompok, focusOutlet, itemName, pic, toast, status, setExportDialogOpen]);
+  // NOTE (VERSUS-2R): `versus` is intentionally NOT in the deps array — it
+  // is a per-call argument, not a hook-scope input (same as `compare`).
 
   // UX-ENHANCE + FIX (TASK H-3): Refresh handler — clears the SERVER-side
   // AggregationCache FIRST, then invalidates ALL client query caches.

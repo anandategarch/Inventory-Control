@@ -37,9 +37,31 @@ export function drawOutletLeagueSection(env: SectionEnv): void {
     data.filters.outletCode && data.filters.outletCode !== 'all'
       ? data.filters.outletCode
       : null;
+  // VERSUS-2R — in versus mode BOTH restos of the duel are highlighted
+  // (the focus as always + the versus comparator via env.versusPeerCode);
+  // the subhead names them so the two amber rows are self-explanatory.
+  const versusPeer = env.versusPeerCode ?? null;
+  const isHighlighted = (code: string | null | undefined) =>
+    code != null && (code === focusCode || code === versusPeer);
+  const focusRow = focusCode ? rows.find((r) => r.outletCode === focusCode) : undefined;
+  const versusPeerRow = versusPeer ? rows.find((r) => r.outletCode === versusPeer) : undefined;
+  const focusRank = focusRow ? rows.findIndex((r) => r.outletCode === focusCode) + 1 : 0;
+  const versusRank = versusPeerRow ? rows.findIndex((r) => r.outletCode === versusPeer) + 1 : 0;
+  // CC-NAMES-1 convention: the versus subhead carries both NAMES
+  // ("BKSGOL #3 vs CKGPAH #7 ter-highlight" — no code/name mix).
+  const versusNote =
+    versusPeerRow && focusRow && focusRank > 0 && versusRank > 0
+      ? `, ${focusRow.outletName} #${focusRank} vs ${versusPeerRow.outletName} #${versusRank} ter-highlight`
+      : versusPeer
+        ? `, ${focusCode} & ${versusPeer} ter-highlight`
+        : '';
   rpt.subhead(
     `11.1 Semua resto satu per satu (${rows.length} resto) \u2014 peringkat dari nominal deviasi terbesar (${currCol})` +
-      (focusCode ? `, ${focusCode} ter-highlight` : ''),
+      (versusNote
+        ? versusNote
+        : focusCode
+          ? `, ${focusCode} ter-highlight`
+          : ''),
     { size: 8.5 },
   );
   rpt.table({
@@ -64,9 +86,11 @@ export function drawOutletLeagueSection(env: SectionEnv): void {
     // Focus-resto row: bold (peer.ts 9.1's target convention) + light
     // amber fill (C.focusRow — the PDF twin of the FE's ITEM-HL-B
     // bg-amber-50 highlight).
-    rowBold: (_row, i) => rows[i]?.outletCode === focusCode,
+    // VERSUS-2R: the versus comparator's row gets the SAME treatment —
+    // both restos of the duel stand out in the league.
+    rowBold: (_row, i) => isHighlighted(rows[i]?.outletCode),
     cellFill: (_row, ri) =>
-      focusCode && rows[ri]?.outletCode === focusCode ? C.focusRow : undefined,
+      isHighlighted(rows[ri]?.outletCode) ? C.focusRow : undefined,
     // PDFCOLOR-1 (minus-red on the league's ONE signed VALUE column —
     // Nominal Deviasi. BUGHUNT-COMPARE P3 (LEAGUE-POLISH-1): the old
     // `|| ci === 5` was dead code — QTY Deviasi is an ABS magnitude
