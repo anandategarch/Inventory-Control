@@ -19,6 +19,14 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Building2, MapPin, Search, X } from 'lucide-react';
+// COMPCAP-1 (BUGHUNT-COMPARE P2): the picker must enforce the SAME caps
+// the server's Zod gate applies — without this, a user can legally check
+// 31+ restos (the picker lists the whole population) and the export then
+// dies with a raw English 400. Single source: export-sections.ts.
+import {
+  MAX_COMPARE_OUTLETS,
+  MAX_COMPARE_AREAS,
+} from '@/lib/export-sections';
 
 export interface ComparatorOutlet {
   code: string;
@@ -70,7 +78,22 @@ export function ExportComparatorPicker({
     );
   }, [outletOptions, outletQuery]);
 
+  // COMPCAP-1 — selections are capped to the server's limits: adding is
+  // silently refused at the cap (removal always works); the checkbox list
+  // disables unchecked rows and a hint explains why, so the limit is
+  // discoverable instead of a surprise 400 at export time.
+  const pickedOutletCount = selectedOutlets.filter(
+    (c) => c !== focusOutlet,
+  ).length;
+  const atOutletCap = pickedOutletCount >= MAX_COMPARE_OUTLETS;
+  const atAreaCap = selectedAreas.length >= MAX_COMPARE_AREAS;
+
   const toggleOutlet = (code: string) => {
+    if (
+      !selectedOutlets.includes(code) &&
+      selectedOutlets.length >= MAX_COMPARE_OUTLETS
+    )
+      return;
     const next = selectedOutlets.includes(code)
       ? selectedOutlets.filter((c) => c !== code)
       : [...selectedOutlets, code];
@@ -78,6 +101,8 @@ export function ExportComparatorPicker({
   };
 
   const toggleArea = (area: string) => {
+    if (!selectedAreas.includes(area) && selectedAreas.length >= MAX_COMPARE_AREAS)
+      return;
     const next = selectedAreas.includes(area)
       ? selectedAreas.filter((a) => a !== area)
       : [...selectedAreas, area];
@@ -87,9 +112,6 @@ export function ExportComparatorPicker({
   const focusLabel = focusOutlet
     ? `${focusOutletName ? `${focusOutletName} · ` : ''}${focusOutlet}`
     : null;
-  const pickedOutletCount = selectedOutlets.filter(
-    (c) => c !== focusOutlet,
-  ).length;
 
   return (
     <div className="rounded-lg border border-amber-200 bg-amber-50/50 dark:border-amber-500/30 dark:bg-amber-500/[0.06] p-3 space-y-3">
@@ -127,9 +149,15 @@ export function ExportComparatorPicker({
             />
           </div>
           <Badge variant="secondary" className="text-[10px] shrink-0">
-            {pickedOutletCount} resto
+            {pickedOutletCount}/{MAX_COMPARE_OUTLETS} resto
           </Badge>
         </div>
+        {atOutletCap && (
+          <p className="text-[10px] leading-tight text-amber-700 dark:text-amber-400">
+            Maksimal {MAX_COMPARE_OUTLETS} resto pembanding — untuk cakupan lebih
+            luas, gunakan pilihan area di bawah (satu area membawa seluruh resto di dalamnya).
+          </p>
+        )}
         <div className="max-h-40 overflow-y-auto rounded-md border bg-background divide-y divide-border/50 pr-1">
           {filteredOutlets.length === 0 ? (
             <p className="text-[11px] text-muted-foreground px-2.5 py-2">
@@ -138,15 +166,23 @@ export function ExportComparatorPicker({
           ) : (
             filteredOutlets.map((o) => {
               const on = selectedOutlets.includes(o.code);
+              // COMPCAP-1: unchecked rows go inert at the cap (removal stays
+              // possible; the hint above explains why).
+              const blocked = !on && atOutletCap;
               return (
                 <label
                   key={o.code}
-                  className={`flex items-center gap-2 px-2.5 py-1.5 cursor-pointer transition-colors ${
-                    on ? 'bg-primary/[0.05]' : 'hover:bg-muted/50'
+                  className={`flex items-center gap-2 px-2.5 py-1.5 transition-colors ${
+                    blocked
+                      ? 'cursor-not-allowed opacity-45'
+                      : on
+                        ? 'bg-primary/[0.05] cursor-pointer'
+                        : 'hover:bg-muted/50 cursor-pointer'
                   }`}
                 >
                   <Checkbox
                     checked={on}
+                    disabled={blocked}
                     onCheckedChange={() => toggleOutlet(o.code)}
                     className="h-3.5 w-3.5"
                     aria-label={`${o.code} ${o.name}`}
@@ -176,17 +212,22 @@ export function ExportComparatorPicker({
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-1">
           {areas.map((a) => {
             const on = selectedAreas.includes(a);
+            // COMPCAP-1: unchecked areas go inert at the cap.
+            const blocked = !on && atAreaCap;
             return (
               <label
                 key={a}
-                className={`flex items-center gap-1.5 rounded-md border px-2 py-1.5 cursor-pointer transition-colors text-[11px] ${
-                  on
-                    ? 'border-primary/25 bg-primary/[0.05]'
-                    : 'border-border hover:bg-muted/40'
+                className={`flex items-center gap-1.5 rounded-md border px-2 py-1.5 transition-colors text-[11px] ${
+                  blocked
+                    ? 'border-border opacity-45 cursor-not-allowed'
+                    : on
+                      ? 'border-primary/25 bg-primary/[0.05] cursor-pointer'
+                      : 'border-border hover:bg-muted/40 cursor-pointer'
                 }`}
               >
                 <Checkbox
                   checked={on}
+                  disabled={blocked}
                   onCheckedChange={() => toggleArea(a)}
                   className="h-3.5 w-3.5"
                   aria-label={`Area ${a}`}

@@ -5,7 +5,11 @@
 //  /api/export-report.
 // ============================================================
 import { z } from 'zod';
-import { isExportSectionToken } from '@/lib/export-sections';
+import {
+  isExportSectionToken,
+  MAX_COMPARE_OUTLETS,
+  MAX_COMPARE_AREAS,
+} from '@/lib/export-sections';
 import {
   monthLabelSchema,
   weekLabelSchema,
@@ -62,15 +66,17 @@ const EXPORT_SECTION_KEYS = ['exec', 'growth', 'topItems', 'variance', 'waste', 
 // pipeline to fan the per-item query over hundreds of outlets; area picks
 // legitimately expand to their whole outlet population server-side, so the
 // AREA cap is the real guard (14 areas exist today — allow a little slack).
-const MAX_COMPARE_OUTLETS = 30;
-const MAX_COMPARE_AREAS = 20;
+// Caps live in export-sections.ts (COMPCAP-1 single source — shared with
+// the FE picker). Duplicates are DEDUPED before the cap count (COMPCAP-1:
+// "?compareOutlets=A,A" is 1 effective comparator, not 2 — the raw count
+// used to 400 a ≤30-unique set padded with dupes).
 // Empty string ("?compareOutlets=" with nothing picked) = NO comparators —
 // valid, same convention as ?sections= (BUG-3-a C4): the section renders
 // its factual guidance note instead of 400-ing a hand-crafted URL.
 const compareOutletsSchema = z.string().refine(noControlChars).refine(
   (v) => {
     if (v.trim() === '') return true;
-    const parts = v.split(',').map((s) => s.trim()).filter(Boolean);
+    const parts = [...new Set(v.split(',').map((s) => s.trim()).filter(Boolean))];
     return parts.length <= MAX_COMPARE_OUTLETS
       && parts.every((s) => s.length >= 1 && s.length <= 50);
   },
@@ -79,7 +85,7 @@ const compareOutletsSchema = z.string().refine(noControlChars).refine(
 const compareAreasSchema = z.string().refine(noControlChars).refine(
   (v) => {
     if (v.trim() === '') return true;
-    const parts = v.split(',').map((s) => s.trim()).filter(Boolean);
+    const parts = [...new Set(v.split(',').map((s) => s.trim()).filter(Boolean))];
     return parts.length <= MAX_COMPARE_AREAS
       && parts.every((s) => s.length >= 1 && s.length <= 50);
   },

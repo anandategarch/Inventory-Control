@@ -105,10 +105,17 @@ export async function GET(req: NextRequest) {
     // CUSTOM-COMPARE — section 13's user-picked comparator set (comma-
     // separated outlet codes / area names). Zod-validated upstream (count +
     // length caps, no control chars); split + trim here, empty param → [].
-    const compareOutlets = (url.searchParams.get('compareOutlets') || '')
-      .split(',').map((s) => s.trim()).filter(Boolean);
-    const compareAreas = (url.searchParams.get('compareAreas') || '')
-      .split(',').map((s) => s.trim()).filter(Boolean);
+    // COMPCAP-1: DEDUPED on arrival — "?compareOutlets=A,A" and
+    // "?compareOutlets=A" must share ONE cache row (the raw list used to
+    // fork two byte-identical PDFs) and the fetcher receives the same set.
+    const compareOutlets = [...new Set(
+      (url.searchParams.get('compareOutlets') || '')
+        .split(',').map((s) => s.trim()).filter(Boolean),
+    )];
+    const compareAreas = [...new Set(
+      (url.searchParams.get('compareAreas') || '')
+        .split(',').map((s) => s.trim()).filter(Boolean),
+    )];
 
     if (!monthParam || !week) {
       return NextResponse.json({ success: false, error: 'month and week required' }, { status: 400 });

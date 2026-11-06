@@ -40,6 +40,20 @@
 //  missing one is a crash).
 // ============================================================
 
+// ============================================================
+//  CUSTOM-COMPARE comparator caps — single source of truth
+//  (BUGHUNT-COMPARE COMPCAP-1). The server's Zod gate
+//  (lib/validation/export.ts) and the FE picker
+//  (ExportComparatorPicker.tsx) must agree on the SAME limits: the
+//  picker lists every outlet of the population (333 today), so
+//  without a client-side cap a user can legally check 31+ restos the
+//  server then 400-rejects. Area picks legitimately expand to their
+//  whole outlet population server-side, so the AREA cap is the real
+//  fan-out guard (14 areas exist today — slack allowed).
+// ============================================================
+export const MAX_COMPARE_OUTLETS = 30;
+export const MAX_COMPARE_AREAS = 20;
+
 /** One selectable sub-block of a section (e.g. "3.1 Nominal Deviasi Terbesar"). */
 export interface ExportSubSection {
   /** Sub key — appears in tokens as `${sectionKey}:${key}`. */
