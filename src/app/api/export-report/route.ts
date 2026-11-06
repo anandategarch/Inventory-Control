@@ -188,8 +188,17 @@ export async function GET(req: NextRequest) {
         // ?compareOutlets/?compareAreas used to share one row → the wrong
         // comparators' PDF). Sorted for determinism; null when absent so
         // pre-CUSTOM-COMPARE keys stay byte-identical (cache-row compat).
-        cmpOutlets: compareOutlets.length > 0 ? [...compareOutlets].sort().join(',') : null,
-        cmpAreas: compareAreas.length > 0 ? [...compareAreas].sort().join(',') : null,
+        // VERSUS-AUDIT-2 (cache hygiene): in versus mode the comparator
+        // set is FORCED to [versus] by the pipeline (fetcher/versus.ts) —
+        // a hand-crafted "?versus=X&compareOutlets=Y" renders the SAME PDF
+        // as "?versus=X", so keying the ignored Y would only fork duplicate
+        // byte-identical rows. Null the cmp extras whenever versus is set.
+        cmpOutlets: versusCode
+          ? null
+          : (compareOutlets.length > 0 ? [...compareOutlets].sort().join(',') : null),
+        cmpAreas: versusCode
+          ? null
+          : (compareAreas.length > 0 ? [...compareAreas].sort().join(',') : null),
         // VERSUS-2R — the versus comparator MUST fork the cache key (the
         // PERF-CACHE-04 class): a versus export and a standard export of
         // the same period+sections are DIFFERENT documents sharing every

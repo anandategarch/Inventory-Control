@@ -340,6 +340,92 @@ describe('exportReportQuerySchema', () => {
     });
     expect(r.success).toBe(false);
   });
+
+  // VERSUS-2R — ?versus= (mode "Versus — 1 Resto vs 1 Resto"): the whole
+  // report becomes the duel. Cross-field guards: needs a focus outlet,
+  // must differ from it. (VERSUS-AUDIT-4: this shipped with zero pinned
+  // coverage — the commit's "8 kasus Zod PASS" was a manual curl pass.)
+  it('accepts versus with a focus outlet (mode Versus valid)', () => {
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      outlet: '1084.BKSGOL',
+      versus: '1137.CKGPAH',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('accepts an empty versus (?versus= = mode standar, BUG-3-a C4 convention)', () => {
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      outlet: '1084.BKSGOL',
+      versus: '',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects versus without a focus outlet', () => {
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      versus: '1137.CKGPAH',
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects versus = "all" focus (no focus resto)', () => {
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      outlet: 'all',
+      versus: '1137.CKGPAH',
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects versus === outlet (a BKSGOL vs BKSGOL duel)', () => {
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      outlet: '1084.BKSGOL',
+      versus: '1084.BKSGOL',
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects versus === outlet padded with whitespace (VERSUS-AUDIT-1 trim fix)', () => {
+    // The route trims ?versus before use — the equality check must compare
+    // TRIMMED or "1084.BKSGOL " slips past and renders the outlet against
+    // itself.
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      outlet: '1084.BKSGOL',
+      versus: ' 1084.BKSGOL ',
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects control characters in versus', () => {
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      outlet: '1084.BKSGOL',
+      versus: '1137.CKGPAH\x00',
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects an over-long versus (>50 chars)', () => {
+    const r = exportReportQuerySchema.safeParse({
+      month: 'Agustus 2026',
+      week: 'WEEK 1',
+      outlet: '1084.BKSGOL',
+      versus: 'X'.repeat(51),
+    });
+    expect(r.success).toBe(false);
+  });
 });
 
 describe('dataDeleteQuerySchema', () => {

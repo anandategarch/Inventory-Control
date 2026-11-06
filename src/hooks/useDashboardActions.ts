@@ -205,7 +205,36 @@ export function useDashboardActions({
         ? status?.outlets?.find(o => o.code === activeOutlet)?.name?.replace(/\s+/g, '_') || activeOutlet
         : 'Semua_Resto';
       const compareSuffix = comparisonWeek ? `_vs_${comparisonWeek.replace(/\s+/g, '')}` : '';
-      a.download = `Laporan_${outletName}_${(monthLabel || 'unknown').replace(/\s+/g, '_')}_${currentWeek || ''}${compareSuffix}.pdf`;
+      // VERSUS-AUDIT-3 (P3): in mode Versus the server already names the
+      // DUEL via Content-Disposition
+      // ("Laporan_Versus_BKSGOL_vs_CKGPAH_Okt_26_WEEK_1.pdf") — the FE used
+      // to override EVERY download with the generic Laporan_<outlet> name,
+      // so the versus download lost its duel identity. Prefer the server's
+      // name (RFC 5987 filename* first, then plain filename=; sanitized
+      // server-side — BUG-3-a C5). Mode standar keeps the FE-built name
+      // byte-identical. FE fallback (header missing/unparseable) also
+      // carries the duel: Laporan_Versus_A_vs_B_<periode>.
+      let downloadName: string | null = null;
+      if (versus) {
+        const cd = res.headers.get('content-disposition') ?? '';
+        const star = cd.match(/filename\*=UTF-8''([^;]+)/i)?.[1]?.trim();
+        const plain =
+          cd.match(/filename="([^"]+)"/i)?.[1] ??
+          cd.match(/filename=([^;]+)/i)?.[1]?.replace(/"/g, '')?.trim();
+        try {
+          const parsed = star ? decodeURIComponent(star) : (plain ?? null);
+          if (parsed && parsed.endsWith('.pdf')) downloadName = parsed;
+        } catch {
+          // malformed escape sequence in the header → FE fallback below
+        }
+      }
+      const versusName = versus
+        ? status?.outlets?.find(o => o.code === versus)?.name?.replace(/\s+/g, '_') || versus
+        : '';
+      a.download = downloadName ??
+        (versus
+          ? `Laporan_Versus_${outletName}_vs_${versusName}_${(monthLabel || 'unknown').replace(/\s+/g, '_')}_${currentWeek || ''}.pdf`
+          : `Laporan_${outletName}_${(monthLabel || 'unknown').replace(/\s+/g, '_')}_${currentWeek || ''}${compareSuffix}.pdf`);
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

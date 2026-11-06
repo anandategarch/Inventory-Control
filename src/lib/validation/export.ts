@@ -144,7 +144,11 @@ export const exportReportQuerySchema = z.object({
     });
     return;
   }
-  if (data.versus === focus) {
+  // VERSUS-AUDIT-1 (P3): compare TRIMMED — the route trims ?versus before
+  // use (route.ts `.trim()`), so "?versus=<focus>%20" (trailing space) used
+  // to slip past this string-equality check and produce a BKSGOL-vs-BKSGOL
+  // duel (side A's comparator forced to itself, side B the same outlet).
+  if (data.versus.trim() === focus) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['versus'],
