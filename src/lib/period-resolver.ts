@@ -94,6 +94,19 @@ export async function resolvePreviousPeriod(
 
   const currentIdx = allPeriods.findIndex(p => p.monthLabel === month && p.weekLabel === week);
 
+  // FIX (BUG-HUNT-3-a-3): when the requested (month, week) is NOT in the DB
+  // (currentIdx === -1), the old code set startIdx = allPeriods.length - 1
+  // (the chronologically NEWEST period, since allPeriods is sorted ASC) and
+  // searched backwards for the same weekLabel in a different month. That
+  // could pick a FUTURE pre-ingested month as the "previous" comparison
+  // period → fabricated growth metrics, false direction-flip flags, wrong
+  // priority scores. Case 3 of resolveComparePeriod already guards this;
+  // Case 1 (this auto path) was missing the guard. Callers are null-safe
+  // (the `if (!prevMonth) return nulls` convention below).
+  if (currentIdx === -1) {
+    return { prevWeek: null, prevMonth: null };
+  }
+
   // Search backwards for same weekLabel in a DIFFERENT month
   let prevWeek = week;
   let foundMonth: string | null = null;

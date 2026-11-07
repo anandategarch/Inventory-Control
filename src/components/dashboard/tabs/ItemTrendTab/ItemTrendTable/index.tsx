@@ -120,7 +120,7 @@ export function ItemTrendTable({
             );
             return (
               <TableRow
-                key={`${p.monthKey}-${p.weekLabel}-${i}`}
+                key={`${p.monthKey}-${p.weekLabel}`}
                 className={`transition-colors border-b ${
                   onRowClick ? 'cursor-pointer' : ''
                 } ${

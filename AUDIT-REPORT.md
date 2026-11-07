@@ -515,3 +515,37 @@ Permintaan user 2025-12 (verbatim diringkas): (1) tombol "lihat semua" di Resto/
 **Kualitas:** tsc 0 error · vitest **473/473** (+27 test baru: price-effect Bennet identity 257 baris, cache sentinel+race 222 baris, pareto populasi, period-resolver, validation) · eslint 0 error · `next build` sukses · **harness browser mock 13/13** (hero 12, waterfall anomali + connector, drill sort, resto parsial tanpa crash, pareto child auto-geser, peluang tanpa outlet, 0 pageerror) · VLM review visual OK (desktop + 375px).
 
 **TIDAK difix (perlu keputusan / risiko tidak sebanding):** `CACHE_ANALYSIS` s-maxage=300 vs invalidasi di belakang CDN (topologi deploy); z-score item-trend leave-one-out memakai bulan sesudahnya (konvensi terdokumentasi, beda dari historical.ts); label "Ranking Item Nasional" sebenarnya rank pasangan item×outlet; analysis 404-in-flight di-serve 200 (edge transien); schema `WEEK 99` longgar; bullet duplikat `benchmarkHighCount` (resto-recommendations.ts:358); copy inline resolve-period outlet-items/services:74-75 belum kena guard cross-week.
+
+---
+
+## 🐛 BUG-HUNT-3 — 4-AGENT HUNT + FIX ROUND (16 bug terverifikasi)
+
+**Metode:** re-clone HEAD → 4 agent Explore paralel (backend/SQL · API/security · frontend · concurrency/ingestion) berburu bug **baru** (melewati yang sudah fixed di seksi Status Implementasi) → verifikasi manual Main atas setiap temuan (baca kode asli, cek baris & tipe) → fix surgical hanya yang provable & low-risk.
+
+**Temuan terverifikasi & DIFIX (16 bug, 17 file):**
+
+| # | Severity | Area | Bug | Fix |
+|---|---|---|---|---|
+| 3-a-1 | TINGGI | SQL | `queryItemAutocomplete` LIKE pattern tidak escape wildcard `%`/`_` (input `q=%` → match semua item; `q=a_b` → match "axb") — kelas bug sama dengan BUGHUNT-A4 tapi global-search membangun LIKE langsung, bukan via `buildSqlFilters` | `escapeLikeWildcards(q)` + `ESCAPE '\\'` (global-search.ts:30) |
+| 3-a-2 | TINGGI | SQL | Column drift `o.area` (Outlet master) vs filter `ir.area` (record stamp) di 5 file — outlet yang re-assign area dik-label area master padahal record-nya di area lain; area-filtered dashboard menampilkan baris di area asing & rata-rata area salah populasi. Fix sama dengan BUG-2-c #14 (benchmark-opportunity) tapi 5 file tersisa tak terjangkau | `MAX(ir.area) as "area"` + drop `o.area` dari GROUP BY di: outlet-agg-scan.ts (CTE+outer), by-other-metric-all-categories.ts, by-other-metric-pareto.ts, by-other-metric-category-averages.ts, self-history-anomaly.ts (cur CTE+select) |
+| 3-a-3 | SEDANG | period | `resolvePreviousPeriod` saat `currentIdx === -1` (periode tidak ada di DB) → `startIdx = length-1` (period TERBARU) → bisa pick period MASA DEPAN sebagai "previous" → growth palsu, false direction-flip. Case 3 `resolveComparePeriod` sudah guard ini; Case 1 (auto path) ketinggalan | early return `{prevWeek:null, prevMonth:null}` saat `currentIdx === -1` (period-resolver.ts) |
+| 3-b-1 | SEDANG | API/security | `/api/setup` catch blok interpolasi raw error Prisma ke response (`Can't reach database server at db.<ref>.supabase.co:5432` → bocor host/port/tenant DB) tanpa gate NODE_ENV, plus `success:true` + HTTP 200 saat DB gagal | gate `msg` di `NODE_ENV==='development'` + pesan ramah id-ID di prod + `success:dbOk` + `dbUnreachable:!(dbOk)` (setup/route.ts) |
+| 3-c-1 | TINGGI | frontend | `ItemDeepDive` pakai `key={i}` (index) di 3 list dinamis (Top-5 outlet, drilldown records, trend rows) — ganti item → React reuse DOM state baris lama untuk baris baru (focus ke outlet salah, state hover bocor) | `key={it.outletCode}` / `key={r.id}` / `key={t.weekLabel}` (ItemDeepDive.tsx) |
+| 3-c-2 | TINGGI | frontend | `ItemTrendTable` key `${monthKey}-${weekLabel}-${i}` — suffix index membuat key berubah saat sort → unmount/remount semua baris tiap klik sort, focus hilang | drop `-${i}` (ItemTrendTable/index.tsx) |
+| 3-c-3 | SEDANG | frontend | `ranking-nasional` key `${itemName}-${outletCode}-${i}` — masalah sama dengan 3-c-2 saat filter/sort berubah | drop `-${i}` (ranking-nasional.tsx) |
+| 3-c-4 | TINGGI | frontend | `useTrendTableSort.toggleSort` panggil `setSortDir` DI DALAM updater `setSortKey` — updater impur; StrictMode (dev) double-invoke → toggle enqueue 2× → cancel → **sort direction tidak berubah saat klik kolom aktif di dev** | baca `sortKey` dari closure, dispatch 2 update terpisah sebagai pure call (useTrendTableSort.ts) |
+| 3-c-7 | SEDANG | frontend | `PicManagementDialog.fetchStatus` = `fetch('/api/status').then(res.json())` tanpa guard content-type/res.ok/dbUnreachable — server crash HTML → `SyntaxError: Unexpected token '<'...` tampil mentah, padahal `useStatus` kanonik sudah hardened | mirror guard kanonik (content-type + res.ok + field `error`) (PicManagementDialog.tsx) |
+| 3-d-4 | SEDANG | ingestion | `parseCsvStream` tanpa try/finally, tanpa `stream.destroy()`/`parser.destroy()` — CSV malformed / consumer early-break → fd leak (EMFILE ~1024 pada instance long-lived) | try/finally + `stream.destroy()` + `parser.destroy()` (csv-parser.ts) |
+| 3-d-6 | TINGGI | API | `outlet-items/services/fetch-records.ts` `db.outletPIC.findUnique(...).catch(() => null)` menelan SEMUA error (P2024/ECONNRESET/statement_timeout), bukan cuma "row not found" → transient DB blip → HTTP 200 dengan `outletPIC:null` untuk outlet yang punya PIC, tanpa flag `retryable`/log | hapus `.catch(() => null)`; error propagasi ke `errorResponse()` yang klasifikasi `retryable` (fetch-records.ts) |
+| 3-d-7 | SEDANG | export | `pdf-builder` catch blok `reject(e)` tanpa `doc.destroy()` — section draw throw mid-build → `doc.end()` tak pernah dipanggil, listener `data/end/error` menempel pada doc yang tak pernah emit, ~1-5MB page buffer pinned sampai instance di-reap (OOM risk pada burst export) | `try { doc.destroy(); } catch {}` di catch block (pdf-builder.ts) |
+
+**Update test:** `tests/queries/top-items.test.ts` — assertion `GROUP BY ... o.area` (meng-encode bug lama) di-update agar cocok SQL hasil fix (`MAX(ir.area) as "area"` + `GROUP BY i.name, o.code, o.name`).
+
+**TIDAK difix (perlu keputusan / risiko lebih tinggi / butuh infra):**
+- `3-d-1`/`3-d-2`/`3-d-3` — post-transaction writes di `import-mode`/`import-all-mode` + `pic/import` non-atomic (partial state saat transient error mid-tx). Fix benar (pindahkan writes ke dalam `$transaction`) tapi menyentuh critical import path; butuh verifikasi dengan DB nyata. **Follow-up P2.**
+- `3-d-5` — rate-limiter in-memory `Map` per-instance (Vercel multi-instance → limit efektif ×N). Fix butuh Redis (`@upstash/ratelimit`) — infra dependency. **Follow-up saat deploy multi-instance.**
+- `3-d-8` — SWR write-back race residual (window 50-150ms `await setCached`). LOW — window sempit, audit sebelumnya menutup window computeFn yang jauh lebih besar.
+- `3-b-2` — 7 route lain pakai inline catch (bukan `errorResponse`) — benar tapi bulk; 3-b-1 (setup) sebagai representatif.
+- `3-c-5` (Tracker `key={idx}` butuh field id stabil), `3-c-6` (dua instance FilterBar butuh refactor), `3-c-8` (keydown listener churn) — refactor lebih besar, follow-up.
+
+**Kualitas:** `tsc --noEmit` 0 error · `eslint` 0 error (478 warning pre-existing di test files, 0 warning baru) · `vitest` **918/918** (+1 assertion update di top-items.test.ts).

@@ -361,6 +361,16 @@ export async function buildPdfReport(
       }
       doc.end();
     } catch (e) {
+      // FIX (BUG-HUNT-3-d-7): release the partially-built PDFKit document's
+      // internal buffers + stream listeners when section drawing throws
+      // mid-build (after some pages were already written but before
+      // doc.end()). Without this, doc.end() is never called, the
+      // doc.on('data'/'end'/'error') listeners stay attached to a doc that
+      // will never emit, and the buffered pages (~1-5MB for a 9-section
+      // report) stay pinned in memory until the function instance is
+      // reaped. On Vercel a burst of exports hitting the same section bug
+      // pins memory across warm invocations and can OOM the instance.
+      try { doc.destroy(); } catch { /* already torn down */ }
       reject(e instanceof Error ? e : new Error(String(e)));
     }
   }).then((r) => {

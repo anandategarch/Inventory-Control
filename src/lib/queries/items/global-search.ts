@@ -8,7 +8,7 @@
 //  with the GlobalItemSearchModal (Cmd+K cross-outlet analysis).
 //  The autocomplete function is retained for ItemTrendTab's search.
 // ============================================================
-import { withStatementTimeout } from '../shared';
+import { withStatementTimeout, escapeLikeWildcards } from '../shared';
 
 export async function queryItemAutocomplete(
   week: string,
@@ -27,7 +27,7 @@ export async function queryItemAutocomplete(
     WHERE ir."monthLabel" = ${month}
       AND ir."weekLabel" = ${week}
       AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
-      AND LOWER(i.name) LIKE LOWER(${'%' + q + '%'})
+      AND LOWER(i.name) LIKE LOWER(${'%' + escapeLikeWildcards(q) + '%'}) ESCAPE '\\'
     GROUP BY i.name
     ORDER BY "totalAbsNominal" DESC
     LIMIT ${limit}

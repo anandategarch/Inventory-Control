@@ -37,6 +37,9 @@ export async function GET(req: NextRequest) {
   }
 
   const results: string[] = [];
+  // FIX (BUG-HUNT-3-b-1): track DB-check failure so the response no longer
+  // claims `success: true` (HTTP 200) when the connectivity check threw.
+  let dbOk = true;
 
   try {
     // Test connection by counting a safe table
@@ -45,8 +48,20 @@ export async function GET(req: NextRequest) {
     results.push('All tables are managed by Prisma schema (prisma/schema.prisma).');
     results.push('To reset/recreate schema, run: `bun run db:push` (local) or ensure CI/CD runs `prisma db push` on deploy.');
   } catch (e: unknown) {
-    const msg = (e instanceof Error ? e.message : String(e));
-    results.push(`❌ Database error: ${msg}`);
+    dbOk = false;
+    // FIX (BUG-HUNT-3-b-1): the raw Prisma/driver error string (e.g.
+    // "Can't reach database server at db.<ref>.supabase.co:5432") exposes
+    // the internal DB host, port, and tenant reference. In single-user
+    // mode (ADMIN_TOKEN unset — the default) any anonymous caller can hit
+    // /api/setup, so this leaks internals to anyone. Gate the verbatim
+    // message behind NODE_ENV === 'development' and show a friendly,
+    // non-revealing message in production.
+    const isDev = process.env.NODE_ENV === 'development';
+    const rawMsg = (e instanceof Error ? e.message : String(e));
+    const shownMsg = isDev
+      ? rawMsg
+      : 'Database tidak dapat dijangkau. Periksa DATABASE_URL dan koneksi ke server database.';
+    results.push(`❌ Database error: ${shownMsg}`);
     results.push('');
     results.push('To fix:');
     results.push('  1. Ensure DATABASE_URL is set in your environment');
@@ -60,8 +75,9 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json({
-    success: true,
-    message: 'Setup check completed',
+    success: dbOk,
+    dbUnreachable: !dbOk,
+    message: dbOk ? 'Setup check completed' : 'Setup check failed — database unreachable',
     results,
     note: 'Tables are managed by Prisma schema — no raw DDL needed. Use `bun run db:push` to sync schema.',
   });

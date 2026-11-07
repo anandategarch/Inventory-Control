@@ -136,8 +136,22 @@ export async function* parseCsvStream(csvPath: string): AsyncGenerator<CsvRow> {
   const stream = createReadStream(csvPath, 'utf-8');
   stream.pipe(parser);
 
-  for await (const row of parser) {
-    yield row as CsvRow;
+  // FIX (BUG-HUNT-3-d-4): wrap the iteration in try/finally so the read
+  // stream + parser file descriptors are ALWAYS released — on parser error
+  // (malformed CSV: unbalanced quotes, bad encoding, column overflow that
+  // relax_column_count doesn't catch) AND on consumer early-break. The old
+  // code leaked the fd on any throw because `stream.pipe(parser)` does not
+  // propagate destination errors back to the source and csv-parse's async
+  // iterator does not call stream.destroy() on its own error. On a long-
+  // lived `next start` instance, repeated bad uploads exhaust the fd limit
+  // (EMFILE ~1024 on Linux).
+  try {
+    for await (const row of parser) {
+      yield row as CsvRow;
+    }
+  } finally {
+    stream.destroy();
+    parser.destroy();
   }
 }
 

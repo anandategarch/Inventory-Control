@@ -156,7 +156,12 @@ export async function queryAreaCategoryAvg(
       ${cats.trial.outer('perOutlet."trialQty"')} as "avgTrial",
       ${cats.lossSurplus.outer('perOutlet."lsQty"')} as "avgLossSurplus"
     FROM (
-      SELECT i.name as "itemName", o.area,
+      SELECT i.name as "itemName",
+        -- FIX (BUG-HUNT-3-a-2): area from ir.area (filtered record stamp),
+        -- NOT o.area (Outlet master) — an area-filtered outlet's records
+        -- must aggregate into the area the FILTER selected, not the
+        -- outlet's master area. Mirrors benchmark-opportunity.ts.
+        MAX(ir.area) as "area",
         ${cats.waste.inner} as "wasteQty",
         ${cats.susut.inner} as "susutQty",
         ${cats.trial.inner} as "trialQty",
@@ -166,7 +171,7 @@ export async function queryAreaCategoryAvg(
       JOIN "Outlet" o ON ir."outletId" = o.id
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         ${areaFilter}
-      GROUP BY i.name, o.area, o.code
+      GROUP BY i.name, o.code
     ) perOutlet
     GROUP BY "itemName", "area"
   `);

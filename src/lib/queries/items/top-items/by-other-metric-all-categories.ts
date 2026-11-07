@@ -119,7 +119,13 @@ export async function queryTopItemsByAllCategories(
     FROM (
       SELECT i.name as "itemName", o.code as "outletCode",
         MAX(ir."satuan") as "satuan",
-        MAX(o.area) as "area",
+        -- FIX (BUG-HUNT-3-a-2): area from InventoryRecord (ir.area), NOT
+        -- Outlet.area (o.area) — same source buildSqlFilters filters on.
+        -- Production data has drift (outlet reassignments), so o.area
+        -- labels an area-filtered row with the outlet's MASTER area even
+        -- when its filtered records belong to a different area. Mirrors
+        -- the benchmark-opportunity.ts / item-peer-comparison.ts fix.
+        MAX(ir.area) as "area",
         ${waste.select},
         ${susut.select},
         ${trial.select},

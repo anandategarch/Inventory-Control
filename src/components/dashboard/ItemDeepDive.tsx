@@ -289,7 +289,7 @@ export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: Analysi
                       <TableRow><TableCell colSpan={4} className="text-center text-xs text-muted-foreground py-3">Tidak ada data</TableCell></TableRow>
                     ) : topOutlets.map((it: TopItemByNominal, i: number) => (
                       <TableRow
-                        key={i}
+                        key={it.outletCode}
                         className="cursor-pointer hover:bg-muted/50"
                         {...clickableRowProps(() => {
                           // Close deep dive first, then open drilldown drawer (avoid double overlay)
@@ -322,7 +322,7 @@ export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: Analysi
                       </TableHeader>
                       <TableBody>
                         {drilldownQuery.data.records.slice(0, 8).map((r: DrilldownRecord, i: number) => (
-                          <TableRow key={i}>
+                          <TableRow key={r.id}>
                             <TableCell className="text-[11px] px-3 py-1.5 text-muted-foreground">{r.period?.weekLabel || '—'}</TableCell>
                             <TableCell className="text-[11px] px-3 py-1.5 text-right">{fmtNum(r.qty?.deviasi)}</TableCell>
                             <TableCell className="text-[11px] px-3 py-1.5 text-right font-semibold">{fmtIDR(r.nominal?.deviasi ?? r.derived?.absNominalDeviasi)}</TableCell>
@@ -367,7 +367,7 @@ export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: Analysi
                   </div>
                   <div className="space-y-1">
                     {trendData.map((t, i) => (
-                      <div key={i} className="flex items-center justify-between text-[11px] rounded-md border px-3 py-1.5">
+                      <div key={t.weekLabel} className="flex items-center justify-between text-[11px] rounded-md border px-3 py-1.5">
                         <span className="text-muted-foreground">{t.weekLabel}</span>
                         <div className="flex items-center gap-3">
                           <span className="text-muted-foreground tabular-nums">{fmtDecimal(t.devBom, 1)}%</span>

@@ -67,7 +67,9 @@ export async function queryParetoByDevBom(
     totalQtyDeviasi: number; totalQtyBom: number;
   }>>`
     WITH per_outlet AS (
-      SELECT i.name as "itemName", o.code as "outletCode", o.name as "outletName", o.area,
+      -- FIX (BUG-HUNT-3-a-2): area from ir.area (filtered record stamp),
+      -- NOT o.area (Outlet master) — mirrors benchmark-opportunity.ts.
+      SELECT i.name as "itemName", o.code as "outletCode", o.name as "outletName", MAX(ir.area) as "area",
         CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN SUM(ir."qtyDeviasi") / SUM(ABS(ir."qtyBom"))
           ELSE 0 END as "devBom",
@@ -85,7 +87,7 @@ export async function queryParetoByDevBom(
         AND ir."absNominalDeviasi" IS NOT NULL AND ir."absNominalDeviasi" > 0
         AND ir."qtyBom" IS NOT NULL AND ir."qtyBom" != 0
         ${f}
-      GROUP BY i.name, o.code, o.name, o.area
+      GROUP BY i.name, o.code, o.name
       HAVING CASE WHEN SUM(ABS(ir."qtyBom")) > 0
           THEN SUM(ABS(ir."qtyDeviasi")) / SUM(ABS(ir."qtyBom"))
           ELSE 0 END > ${threshold}

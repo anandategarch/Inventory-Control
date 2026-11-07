@@ -150,7 +150,15 @@ export async function fetchRecords(params: {
           AND ir."weekLabel" = ${week}
       `),
     // PIC
-    db.outletPIC.findUnique({ where: { outletCode: outlet.code } }).catch(() => null),
+    // FIX (BUG-HUNT-3-d-6): removed `.catch(() => null)` — it swallowed
+    // EVERY error (P2024 pool timeout, ECONNRESET, statement_timeout), not
+    // just "row not found" (which resolves to null anyway without the
+    // catch). On a transient DB blip the route returned HTTP 200 with
+    // `outletPIC: null` for an outlet that actually HAS a PIC — no
+    // `retryable` flag, no `errorClass`, no log. Now the error propagates
+    // to Promise.all → fetchRecords → the route's try/catch →
+    // errorResponse(), which classifies transient errors as retryable.
+    db.outletPIC.findUnique({ where: { outletCode: outlet.code } }),
   ]);
 
   return {

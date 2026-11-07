@@ -112,6 +112,13 @@ async function computeOutletAggregateScan(
     WITH outlet_stats AS (
       SELECT
         ir."outletId",
+        -- FIX (BUG-HUNT-3-a-2): area from ir.area (filtered record stamp),
+        -- NOT Outlet.area (o.area) — same source buildSqlFilters filters on.
+        -- An area-filtered outlet's row must carry the area its FILTERED
+        -- records belong to, not the outlet's master area. Mirrors
+        -- benchmark-opportunity.ts. Propagated as os."area" in the outer
+        -- SELECT below (was o.area).
+        MAX(ir.area) as "area",
         -- ==== health-ranking variants (FILTER: NOT zeroDev) ====
         COUNT(*) FILTER (WHERE ${zeroDevExpr}) as "zeroDevCount",
         COUNT(*) FILTER (WHERE NOT ${zeroDevExpr}) as "nonZeroDevCount",
@@ -190,7 +197,7 @@ async function computeOutletAggregateScan(
       os."outletId",
       o.code as "outletCode",
       o.name as "outletName",
-      o.area,
+      os."area",
       COALESCE(ops."salesMode", 0) as "sales",
       COALESCE(os."nominalDeviasi", 0) as "nominalDeviasi",
       COALESCE(os."devBom", 0) as "devBom",

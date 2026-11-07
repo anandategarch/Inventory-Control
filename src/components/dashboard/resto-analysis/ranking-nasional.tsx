@@ -123,7 +123,7 @@ export const RankingNasionalCard = memo(function RankingNasionalCard({
                 <TableRow><TableCell colSpan={13} className="text-center text-muted-foreground text-xs py-8">Tidak ada data deviasi untuk outlet ini pada periode terpilih</TableCell></TableRow>
               ) : items.map((it, i) => (
                 <TableRow
-                  key={`${it.itemName}-${it.outletCode}-${i}`}
+                  key={`${it.itemName}-${it.outletCode}`}
                   className={`hover:bg-amber-50/60 dark:hover:bg-amber-950/20 hover:cursor-pointer transition-colors ${i % 2 === 1 ? 'bg-muted/20' : ''}`}
                   title={`Klik untuk lihat trend ${it.itemName} di tab Item`}
                   {...clickableRowProps(() => handleRowClick(it.itemName))}

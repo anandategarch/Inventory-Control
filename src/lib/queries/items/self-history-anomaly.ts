@@ -150,7 +150,7 @@ export async function querySelfHistoryAnomaly(opts: {
   // the magnitude delta, and the flip classification. The flip CASE is
   // spelled without SQLite-missing SIGN(): explicit sign comparisons.
   const select = Prisma.sql`
-    SELECT i.name as "itemName", o.code as "outletCode", o.area,
+    SELECT i.name as "itemName", o.code as "outletCode", c."area",
       c."satuan", c."qty",
       h."histAvgAbs" as "histAvgQty",
       h."histAvgSigned" as "histSignedAvgQty",
@@ -193,7 +193,11 @@ export async function querySelfHistoryAnomaly(opts: {
       SELECT ir."itemId", ir."outletId",
         SUM(ir."qtyDeviasi") as "qty",
         SUM(ir."nominalDeviasi") as "nominal",
-        MAX(ir."satuan") as "satuan"
+        MAX(ir."satuan") as "satuan",
+        -- FIX (BUG-HUNT-3-a-2): area from ir.area (filtered record stamp),
+        -- NOT Outlet.area (o.area) — propagated as c."area" in the final
+        -- projection below (was o.area). Mirrors benchmark-opportunity.ts.
+        MAX(ir.area) as "area"
       FROM "InventoryRecord" ir
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         ${f}
@@ -230,7 +234,11 @@ export async function querySelfHistoryAnomaly(opts: {
       SELECT ir."itemId", ir."outletId",
         SUM(ir."qtyDeviasi") as "qty",
         SUM(ir."nominalDeviasi") as "nominal",
-        MAX(ir."satuan") as "satuan"
+        MAX(ir."satuan") as "satuan",
+        -- FIX (BUG-HUNT-3-a-2): area from ir.area (filtered record stamp),
+        -- NOT Outlet.area (o.area) — propagated as c."area" in the final
+        -- projection below (was o.area). Mirrors benchmark-opportunity.ts.
+        MAX(ir.area) as "area"
       FROM "InventoryRecord" ir
       WHERE ir."monthLabel" = ${month} AND ir."weekLabel" = ${week}
         ${f}

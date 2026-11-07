@@ -211,7 +211,13 @@ describe('queryParetoByDevBom', () => {
     const call = mockQueryRaw.mock.calls[0][0];
     const sqlText = Array.isArray(call) ? call.join('$PARAM$') : String(call);
     expect(sqlText).toContain('WITH per_outlet AS');
-    expect(sqlText).toContain('GROUP BY i.name, o.code, o.name, o.area');
+    // FIX (BUG-HUNT-3-a-2): area now comes from MAX(ir.area) (the filtered
+    // record stamp), NOT o.area (Outlet master). o.area was dropped from
+    // GROUP BY — o.code is unique per outlet so o.name/o.area are
+    // functionally dependent on it. See by-other-metric-pareto.ts.
+    expect(sqlText).toContain('MAX(ir.area) as "area"');
+    expect(sqlText).toContain('GROUP BY i.name, o.code, o.name');
+    expect(sqlText).not.toContain('GROUP BY i.name, o.code, o.name, o.area');
     expect(sqlText).toContain('END > '); // HAVING threshold expression
     expect(sqlText).not.toContain('i.name IN ('); // no second top-items IN-list scan
   });

@@ -17,15 +17,20 @@ export function useTrendTableSort() {
   const [sortDir, setSortDir] = useState<SortDir>('asc');
 
   const toggleSort = useCallback((key: SortKey) => {
-    setSortKey((prev) => {
-      if (prev === key) {
-        setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
-        return prev;
-      }
+    // FIX (BUG-HUNT-3-c-4): the previous implementation called setSortDir
+    // INSIDE the setSortKey updater — an impure updater (side effect inside
+    // a state updater). React double-invokes updaters in StrictMode (dev),
+    // so the setSortDir toggle was enqueued TWICE and the two toggles
+    // cancelled out → sort direction did NOT change when clicking the
+    // already-active column in dev. Read sortKey from the closure instead
+    // and dispatch the two updates as separate pure calls.
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
+    } else {
+      setSortKey(key);
       setSortDir('desc');
-      return key;
-    });
-  }, []);
+    }
+  }, [sortKey]);
 
   return { sortKey, sortDir, toggleSort };
 }

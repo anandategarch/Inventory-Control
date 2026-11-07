@@ -58,8 +58,29 @@ interface ImportResponse {
 }
 
 async function fetchStatus(): Promise<StatusData> {
+  // FIX (BUG-HUNT-3-c-7): mirror the canonical useStatus queryFn hardening
+  // (src/hooks/useAnalysis/useStatus.ts). The previous bare `res.json()`
+  // threw a raw `SyntaxError: Unexpected token '<'...` when the server
+  // returned an HTML error page (crash, proxy error, Supabase-paused
+  // incident) — surfacing as "Gagal memuat data: Unexpected token..." in
+  // the PIC dialog while the rest of the dashboard showed the friendly
+  // "Database tidak dapat dijangkau" message. Now: content-type guard +
+  // res.ok guard + prefer the API's `error` field (which carries the
+  // dbUnreachable-aware friendly message).
   const res = await fetch('/api/status');
-  return res.json();
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    throw new Error(`Server error (HTTP ${res.status}). Server mungkin crash atau timeout. Coba refresh halaman.`);
+  }
+  if (!res.ok) {
+    const e = (await res.json().catch(() => ({ message: 'Request failed' }))) as {
+      message?: string;
+      error?: string;
+      dbUnreachable?: boolean;
+    };
+    throw new Error(e.error || e.message || `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<StatusData>;
 }
 
 interface PicManagementDialogProps {
