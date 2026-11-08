@@ -336,7 +336,7 @@ export function ExportDialog({
             Versus literally could not scroll. Everything between header and
             footer now scrolls here; max-h 80vh → 85vh gives the region more
             room on short screens. */}
-        <div className="flex-1 overflow-y-auto pr-1 space-y-3">
+        <div className="flex-1 overflow-y-auto overscroll-contain pr-1 space-y-3">
         {/* VERSUS-2R — mode laporan: Standar (resto vs area/populasi) atau
             Versus (1 resto vs 1 resto — seluruh sections 1-12 jadi duel). */}
         <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Mode laporan">

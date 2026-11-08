@@ -192,7 +192,7 @@ export const ItemDeepDive = memo(function ItemDeepDive({ data }: { data: Analysi
         {!itemName ? (
           <div className="p-8 text-center text-sm text-muted-foreground">Item tidak ditemukan</div>
         ) : (
-          <div className="flex-1 overflow-y-auto pr-1">
+          <div className="flex-1 overflow-y-auto overscroll-contain pr-1">
             <div className="space-y-4">
               {/* Direction distribution */}
               <div className="grid grid-cols-3 gap-2">

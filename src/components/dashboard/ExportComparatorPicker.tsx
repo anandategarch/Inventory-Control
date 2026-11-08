@@ -194,7 +194,7 @@ export function ExportComparatorPicker({
             luas, gunakan pilihan area di bawah (satu area membawa seluruh resto di dalamnya).
           </p>
         )}
-        <div className="max-h-40 overflow-y-auto rounded-md border bg-background divide-y divide-border/50 pr-1">
+        <div className="max-h-40 overflow-y-auto overscroll-contain rounded-md border bg-background divide-y divide-border/50 pr-1">
           {filteredOutlets.length === 0 ? (
             <p className="text-[11px] text-muted-foreground px-2.5 py-2">
               Resto tidak ditemukan.

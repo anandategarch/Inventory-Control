@@ -202,7 +202,7 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
             scrolls here; the Batal/Import row stays OUTSIDE so buttons stay
             visible. The result block (below the buttons) already has its own
             internal max-h-48 scroll. */}
-        <div className="flex-1 overflow-y-auto min-h-0 space-y-4">
+        <div className="flex-1 overflow-y-auto overscroll-contain min-h-0 space-y-4">
           <Tabs defaultValue="file">
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="file" className="text-xs gap-1.5"><FileSpreadsheet className="h-3.5 w-3.5" /> File</TabsTrigger>
@@ -366,7 +366,7 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
                 <><CheckCircle2 className="h-4 w-4 text-amber-500" /> Import selesai dengan warning</>
               )}
             </div>
-            <div className="space-y-1 max-h-48 overflow-y-auto">
+            <div className="space-y-1 max-h-48 overflow-y-auto overscroll-contain">
               {driveResult.map((r, i) => (
                 <div key={i} className="flex items-center justify-between gap-2 rounded-md border p-2 text-xs">
                   {/* FIX (UIUX-B S6): two-tier row — the per-file error reason

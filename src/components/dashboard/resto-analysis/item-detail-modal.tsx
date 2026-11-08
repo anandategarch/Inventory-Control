@@ -120,7 +120,7 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
             <Card className="shadow-md shadow-black/5 dark:shadow-black/20">
               <CardHeader className="pb-2"><CardTitle className="text-sm">Historical Timeline</CardTitle></CardHeader>
               <CardContent>
-                <div className="overflow-x-auto max-h-[300px] overflow-y-auto border rounded-md">
+                <div className="overflow-x-auto max-h-[300px] overflow-y-auto overscroll-contain border rounded-md">
                   {/* STRUCTURAL (S-3, opsi b): same density policy as Bahan
                       Analysis — text-xs, py-1.5 + font-mono kept. */}
                   <Table>

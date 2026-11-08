@@ -240,7 +240,11 @@ export default function DashboardPage() {
   const statusLoaded = status !== undefined;
   const hasData = statusLoaded && Boolean(status?.stats?.totalRecords && status.stats.totalRecords > 0);
 
-  const tabTriggerClass = "text-xs font-medium gap-1.5 relative data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:text-amber-700 dark:data-[state=active]:text-amber-400 data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:h-0.5 data-[state=active]:after:w-8 data-[state=active]:after:bg-amber-500 data-[state=active]:after:rounded-full data-[state=active]:after:transition-all";
+  // better-ui: underline aktif kini benar-benar RENDER — sebelumnya seluruh
+  // rantai after:* tidak pernah muncul karena tidak ada after:content-['']
+  // (pseudo-element tanpa content tidak dirender). after:transition-all
+  // dihapus: pergantian tab adalah interaksi high-frequency → feedback instan.
+  const tabTriggerClass = "text-xs font-medium gap-1.5 relative data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:text-amber-700 dark:data-[state=active]:text-amber-400 data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:h-0.5 data-[state=active]:after:w-8 data-[state=active]:after:bg-amber-500 data-[state=active]:after:rounded-full data-[state=active]:after:content-['']";
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-b from-background to-muted/20 dark:from-background dark:to-zinc-950">

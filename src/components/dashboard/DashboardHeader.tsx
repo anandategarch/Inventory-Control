@@ -173,7 +173,7 @@ export function DashboardHeader({
             <Button
               variant="default"
               size="sm"
-              className="h-8 gap-1.5 text-xs font-medium shadow-sm hover:shadow-md bg-amber-600 hover:bg-amber-700 text-white transition-all active:scale-95"
+              className="h-8 gap-1.5 text-xs font-medium shadow-sm hover:shadow-md bg-amber-600 hover:bg-amber-700 text-white press-scale"
               disabled={isExporting}
               onClick={onExportClick}
               aria-label="Export laporan PDF"

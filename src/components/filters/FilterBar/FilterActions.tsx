@@ -37,7 +37,7 @@ export function FilterActions({ ingesting, onIngest, onOpenSettings, onOpenDataM
           <Button
             variant="outline"
             size="sm"
-            className="h-8 w-8 p-0 hover:bg-muted/50 transition-all active:scale-95"
+            className="h-8 w-8 p-0 hover:bg-muted/50 press-scale"
             onClick={onOpenSettings}
             aria-label="Pengaturan"
           >
@@ -52,7 +52,7 @@ export function FilterActions({ ingesting, onIngest, onOpenSettings, onOpenDataM
           <Button
             variant="outline"
             size="sm"
-            className="h-8 w-8 p-0 hover:bg-muted/50 transition-all active:scale-95"
+            className="h-8 w-8 p-0 hover:bg-muted/50 press-scale"
             onClick={onOpenDataMgmt}
             aria-label="Kelola Data"
           >
@@ -67,7 +67,7 @@ export function FilterActions({ ingesting, onIngest, onOpenSettings, onOpenDataM
           <Button
             variant="outline"
             size="sm"
-            className="h-8 w-8 p-0 hover:bg-muted/50 transition-all active:scale-95"
+            className="h-8 w-8 p-0 hover:bg-muted/50 press-scale"
             onClick={onOpenPicMgmt}
             aria-label="Kelola PIC"
           >
@@ -83,7 +83,7 @@ export function FilterActions({ ingesting, onIngest, onOpenSettings, onOpenDataM
       <Button
         variant="outline"
         size="sm"
-        className="h-8 gap-1.5 text-xs font-medium hover:bg-muted/50 transition-all active:scale-95"
+        className="h-8 gap-1.5 text-xs font-medium hover:bg-muted/50 press-scale"
         onClick={() => document.dispatchEvent(new CustomEvent('open-drive-dialog'))}
       >
         <CloudDownload className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
@@ -92,7 +92,7 @@ export function FilterActions({ ingesting, onIngest, onOpenSettings, onOpenDataM
       <Button
         variant="outline"
         size="sm"
-        className="h-8 gap-1.5 text-xs font-medium hover:bg-muted/50 transition-all active:scale-95"
+        className="h-8 gap-1.5 text-xs font-medium hover:bg-muted/50 press-scale"
         onClick={() => document.dispatchEvent(new CustomEvent('open-upload-dialog'))}
       >
         <Upload className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
@@ -112,7 +112,7 @@ export function FilterActions({ ingesting, onIngest, onOpenSettings, onOpenDataM
           <Button
             variant="outline"
             size="sm"
-            className="h-8 gap-1.5 text-xs font-medium hover:bg-muted/50 transition-all active:scale-95"
+            className="h-8 gap-1.5 text-xs font-medium hover:bg-muted/50 press-scale"
             onClick={onIngest}
             disabled={ingesting}
           >

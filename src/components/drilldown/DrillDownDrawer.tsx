@@ -306,7 +306,7 @@ function VirtualizedDrawerTable({ records }: { records: DrilldownRecord[] }) {
   const totalHeight = rowVirtualizer.getTotalSize();
 
   return (
-    <div ref={parentRef} className="overflow-auto border rounded-md" style={{ maxHeight: '400px' }}>
+    <div ref={parentRef} className="overflow-auto overscroll-contain border rounded-md" style={{ maxHeight: '400px' }}>
       {/* FIX M2: Raw <table> — no wrapper div that breaks sticky header. */}
       <table className="w-full text-xs">
         <thead className="sticky top-0 bg-background z-10 shadow-sm">

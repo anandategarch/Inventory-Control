@@ -99,7 +99,7 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
 
         {/* FIX (UIUX-B S8): body wrapper — all phases (upload/confirm/result)
             scroll here; DialogFooter stays OUTSIDE so buttons stay visible. */}
-        <div className="space-y-4 flex-1 overflow-y-auto min-h-0">
+        <div className="space-y-4 flex-1 overflow-y-auto overscroll-contain min-h-0">
           {/* File Drop Zone — hidden once confirmation or result is shown */}
           {!result && !showConfirm && (
             <FileDropZone

@@ -31,7 +31,7 @@ export function ProcessingFeedback({ isBusy, uploading, progress, statusLog }: P
 
       {/* Status Log */}
       {statusLog.length > 0 && (
-        <div className="bg-muted/50 rounded-lg p-3 max-h-[300px] overflow-y-auto">
+        <div className="bg-muted/50 rounded-lg p-3 max-h-[300px] overflow-y-auto overscroll-contain">
           <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">
             Status Log
           </p>

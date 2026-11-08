@@ -49,7 +49,7 @@ export const EmptyState = memo(function EmptyState() {
         <button
           type="button"
           onClick={() => document.dispatchEvent(new CustomEvent('open-upload-dialog'))}
-          className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg text-xs font-medium bg-amber-600 text-white shadow-sm hover:bg-amber-700 hover:shadow active:scale-95 transition-all"
+          className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg text-xs font-medium bg-amber-600 text-white shadow-sm hover:bg-amber-700 hover:shadow press-scale"
         >
           <Upload className="h-3.5 w-3.5" />
           Upload File
@@ -57,7 +57,7 @@ export const EmptyState = memo(function EmptyState() {
         <button
           type="button"
           onClick={() => document.dispatchEvent(new CustomEvent('open-drive-dialog'))}
-          className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg text-xs font-medium border border-border bg-background hover:bg-muted/60 hover:shadow-sm active:scale-95 transition-all"
+          className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg text-xs font-medium border border-border bg-background hover:bg-muted/60 hover:shadow-sm press-scale"
         >
           <CloudDownload className="h-3.5 w-3.5" />
           Import dari Drive
@@ -214,14 +214,14 @@ export function ErrorState({ message }: { message: string }) {
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   onClick={() => document.dispatchEvent(new CustomEvent('open-upload-dialog'))}
-                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium bg-amber-600 text-white shadow-sm hover:bg-amber-700 transition-all"
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium bg-amber-600 text-white shadow-sm hover:bg-amber-700 press-scale"
                 >
                   <Upload className="h-3.5 w-3.5" />
                   Upload File
                 </button>
                 <button
                   onClick={() => window.location.reload()}
-                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-all"
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 press-scale"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
                   Refresh
@@ -237,14 +237,14 @@ export function ErrorState({ message }: { message: string }) {
                   href="https://supabase.com/dashboard"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium bg-amber-600 text-white shadow-sm hover:bg-amber-700 transition-all"
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium bg-amber-600 text-white shadow-sm hover:bg-amber-700 press-scale"
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
                   Buka Dashboard Supabase
                 </a>
                 <button
                   onClick={handleRetry}
-                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-all active:scale-95"
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 press-scale"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
                   Coba Lagi
@@ -257,7 +257,7 @@ export function ErrorState({ message }: { message: string }) {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   onClick={handleRetry}
-                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-all active:scale-95"
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 press-scale"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
                   Coba Lagi
@@ -268,7 +268,7 @@ export function ErrorState({ message }: { message: string }) {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   onClick={handleRetry}
-                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium bg-red-600 text-white shadow-sm hover:bg-red-700 transition-all active:scale-95"
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium bg-red-600 text-white shadow-sm hover:bg-red-700 press-scale"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
                   Coba Lagi
@@ -333,7 +333,7 @@ export function ScrollToTop() {
       // the ~38px sticky footer (z-30) right where the footer's hint text
       // lives. 64px lifts it clear above the footer while staying in the
       // bottom-right corner thumb zone.
-      className="fixed bottom-16 right-6 z-40 flex h-10 w-10 items-center justify-center rounded-full border bg-background shadow-lg hover:bg-muted/50 transition-all duration-200 group"
+      className="fixed bottom-16 right-6 z-40 flex h-10 w-10 items-center justify-center rounded-full border bg-background shadow-lg hover:bg-muted/50 transition-colors duration-200 group"
       aria-label="Scroll to top"
     >
       <ArrowUp className="h-4 w-4 text-muted-foreground group-hover:text-foreground" />

@@ -168,45 +168,10 @@
   outline-offset: -2px;
 }
 
-/* Fix #13: Page transition animations */
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-.animate-fade-in-up {
-  animation: fadeInUp 0.3s ease-out;
-}
-
-.animate-fade-in {
-  animation: fadeIn 0.2s ease-out;
-}
-
-
-/* Tab content transition — REMOVED (PERF-FE PAKET A): this rule re-ran a
-   0.25s fadeInUp on every tab switch, stacking with the (also removed)
-   `animate-fade-in-up` class on each TabsContent in page.tsx — double-layered
-   entrance animation on a subtree of hundreds of DOM nodes made every tab
-   switch feel laggy. Tabs now switch instantly (keep-alive via forceMount). */
-
-/* Card hover lift effect */
-.card-hover {
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-.card-hover:hover {
-  transform: translateY(-2px);
-}
+/* Fix #13: page entrance animations — REMOVED (better-ui dead-CSS audit):
+   @keyframes fadeInUp/fadeIn + .animate-fade-in-up/.animate-fade-in had zero
+   consumers in markup (page.tsx dropped the class in PERF-FE PAKET A; the
+   only remaining references were comments). Dead motion CSS deleted. */
 
 /* UX-ENHANCE: Shimmer loading effect for skeleton placeholders */
 @keyframes shimmer {
@@ -256,6 +221,28 @@
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--muted-foreground) transparent;
+  /* better-ui: controls draw their own pressed state (press-scale) — kill
+     the default gray tap flash so touch feedback never doubles. */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ============================================================
+   better-ui: press feedback — one motion language for ALL buttons.
+   A pressed button scales to 0.96 over 150ms ease-out; a disabled
+   one never scales (:enabled gate). Scale runs ONLY under
+   prefers-reduced-motion: no-preference (WCAG 2.3.3) — under reduced
+   motion the press lands instantly with no scaling. The transition
+   list names exactly what changes (never `all`).
+   ============================================================ */
+.press-scale {
+  transition-property: scale, background-color, border-color, color, box-shadow, opacity;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .press-scale:is(button):enabled:active {
+    scale: 0.96;
+  }
 }
 *::-webkit-scrollbar {
   width: 6px;
@@ -268,8 +255,12 @@
   background: color-mix(in oklch, var(--muted-foreground) 30%, transparent);
   border-radius: 3px;
 }
-*::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in oklch, var(--muted-foreground) 50%, transparent);
+/* better-ui: hover styling only on hover-capable pointers — on touch a
+   :hover rule latches after tap and reads as a stuck selected state. */
+@media (hover: hover) {
+  *::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklch, var(--muted-foreground) 50%, transparent);
+  }
 }
 *::-webkit-scrollbar-corner {
   background: transparent;

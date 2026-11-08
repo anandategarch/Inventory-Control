@@ -91,7 +91,7 @@ export function BahanAnalysisCard({
                   </TableHeader>
                   <TableBody>
                     {currentRanking.map((r) => (
-                      <TableRow key={r.rank} className={`${priorityBg(r.priority)} cursor-pointer hover:ring-1 hover:ring-foreground/20 transition-all`} {...clickableRowProps(() => onSelectItem({ outletCode: activeOutlet!, itemName: r.itemName }))}>
+                      <TableRow key={r.rank} className={`${priorityBg(r.priority)} cursor-pointer hover:ring-1 hover:ring-foreground/20 transition-shadow`} {...clickableRowProps(() => onSelectItem({ outletCode: activeOutlet!, itemName: r.itemName }))}>
                         <TableCell className="text-xs py-1.5 font-mono tabular-nums">{r.rank}</TableCell>
                         <TableCell className="text-xs py-1.5 font-medium max-w-[200px] whitespace-normal" title={r.itemName}>{r.itemName}</TableCell>
                         <TableCell className="text-xs py-1.5 text-right font-mono tabular-nums">{fmtNum(r.qtyBom)}</TableCell>

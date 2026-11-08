@@ -140,7 +140,7 @@ export function FilterBar() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-8 px-2 text-xs text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors active:scale-95"
+                  className="h-8 px-2 text-xs text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 press-scale"
                   onClick={reset}
                   aria-label="Reset filter aktif"
                 >

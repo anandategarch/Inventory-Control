@@ -88,7 +88,7 @@ export const DeltaBar = memo(function DeltaBar({
         <div className="flex justify-end h-full w-1/2">
           {!isPositive && (
             <div
-              className={`h-full rounded-l-full ${barColor} ${showAnimation ? 'transition-all duration-300' : ''}`}
+              className={`h-full rounded-l-full ${barColor} ${showAnimation ? 'transition-[width] duration-300' : ''}`}
               style={{ width: `${absValue}%` }}
             />
           )}
@@ -99,7 +99,7 @@ export const DeltaBar = memo(function DeltaBar({
         <div className="flex justify-start h-full w-1/2">
           {isPositive && (
             <div
-              className={`h-full rounded-r-full ${barColor} ${showAnimation ? 'transition-all duration-300' : ''}`}
+              className={`h-full rounded-r-full ${barColor} ${showAnimation ? 'transition-[width] duration-300' : ''}`}
               style={{ width: `${absValue}%` }}
             />
           )}

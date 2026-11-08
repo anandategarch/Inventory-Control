@@ -130,7 +130,7 @@ export const BarList = memo(function BarList({
             {/* Bar (flex-1, fills remaining space) */}
             <div className="flex-1 min-w-0 relative h-7 rounded bg-muted/30 overflow-hidden">
               <div
-                className={`h-full rounded ${colorMap[itemColor]} ${showAnimation ? 'transition-all duration-300' : ''}`}
+                className={`h-full rounded ${colorMap[itemColor]} ${showAnimation ? 'transition-[width] duration-300' : ''}`}
                 style={{ width: `${barWidth}%` }}
               />
               {/* Value overlay (on top of bar, right-aligned) */}

@@ -61,7 +61,7 @@ export const EfficiencyScoreCard = memo(function EfficiencyScoreCard({
           aria-valuemin={0}
           aria-valuemax={100}
         >
-          <div className={`h-full ${color} transition-all duration-500`} style={{ width: `${score}%` }} />
+          <div className={`h-full ${color} transition-[width] duration-500`} style={{ width: `${score}%` }} />
           {/* Peer average marker */}
           <div
             className="absolute top-0 h-full w-0.5 bg-foreground/40"

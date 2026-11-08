@@ -76,7 +76,7 @@ export const PrioritySummaryCard = memo(function PrioritySummaryCard({
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Priority Score</p>
               <p className={`text-3xl font-bold tabular-nums ${scoreColor}`}>{r.priorityScore}</p>
               <div className="w-24 h-1.5 rounded-full bg-muted mt-1 overflow-hidden">
-                <div className={`h-full ${scoreBarColor} transition-all duration-500`} style={{ width: `${r.priorityScore}%` }} />
+                <div className={`h-full ${scoreBarColor} transition-[width] duration-500`} style={{ width: `${r.priorityScore}%` }} />
               </div>
             </div>
             {/* Level Badge */}
