@@ -16,7 +16,13 @@ const ToastViewport = React.forwardRef<
   <ToastPrimitives.Viewport
     ref={ref}
     className={cn(
-      "fixed bottom-0 right-0 z-[100] flex max-h-screen w-full flex-col p-4 max-w-[420px] overscroll-contain",
+      // LAYOUT-4 (better-layout — same treatment as ScrollToTop): bottom-0
+      // made toasts land ON the sticky dashboard footer (107px wrapped on
+      // phones) and cover its hint text while visible. Lift the viewport
+      // above the footer's ACTUAL height (--dashboard-footer-h published by
+      // DashboardFooter's ResizeObserver; fallback 2.5rem ≈ one-line desktop
+      // footer for pages without it). p-4 keeps the 16px breathing room.
+      "fixed bottom-[calc(var(--dashboard-footer-h,2.5rem)+0.5rem)] right-0 z-[100] flex max-h-dvh w-full flex-col p-4 max-w-[420px] overscroll-contain",
       className
     )}
     {...props}

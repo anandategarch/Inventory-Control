@@ -3,7 +3,7 @@
 
 export default function Loading() {
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="min-h-dvh flex flex-col bg-background">
       {/* Header skeleton */}
       <header className="border-b bg-background/95 backdrop-blur sticky top-0 z-40">
         <div className="px-6 py-3 flex items-center justify-between">

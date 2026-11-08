@@ -329,11 +329,15 @@ export function ScrollToTop() {
   return (
     <button
       onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-      // QW-C: bottom-16 (was bottom-6) — the 40px button used to overlap
-      // the ~38px sticky footer (z-30) right where the footer's hint text
-      // lives. 64px lifts it clear above the footer while staying in the
-      // bottom-right corner thumb zone.
-      className="fixed bottom-16 right-6 z-40 flex h-10 w-10 items-center justify-center rounded-full border bg-background shadow-lg hover:bg-muted/50 transition-colors duration-200 group"
+      // QW-C + LAYOUT-4 (better-layout): was hardcoded bottom-16 — sized for
+      // the one-line DESKTOP footer (~38px). On phones the footer wraps to
+      // 2-3 lines (107px measured at 320px) and the button overlapped its
+      // text by 43px. Now it floats above the footer's ACTUAL height,
+      // published as --dashboard-footer-h by DashboardFooter's ResizeObserver
+      // (same pattern as the header's --dashboard-header-h). Fallback
+      // 2.5rem + 0.75rem = 64px ≈ the old desktop offset.
+      // h-11 (44px) — touch-target minimum for the floating thumb-zone control.
+      className="fixed bottom-[calc(var(--dashboard-footer-h,2.5rem)+0.75rem)] right-6 z-40 flex h-11 w-11 items-center justify-center rounded-full border bg-background shadow-lg hover:bg-muted/50 transition-colors duration-200 group"
       aria-label="Scroll to top"
     >
       <ArrowUp className="h-4 w-4 text-muted-foreground group-hover:text-foreground" />

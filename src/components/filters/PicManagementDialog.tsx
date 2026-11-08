@@ -304,7 +304,7 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
           state transient di-reset. Saat editingCode aktif, batalkan dismiss;
           handler Escape milik input (cancelEdit) tetap berjalan setelahnya. */}
       <DialogContent
-        className="max-w-[820px] max-h-[85vh] flex flex-col"
+        className="sm:max-w-[820px] max-h-[85dvh] flex flex-col"
         onEscapeKeyDown={(e) => {
           if (editingCode) e.preventDefault();
         }}

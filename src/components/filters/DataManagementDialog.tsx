@@ -219,7 +219,7 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[760px] max-h-[85vh] flex flex-col">
+      <DialogContent className="sm:max-w-[760px] max-h-[85dvh] flex flex-col">
         <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <FileSpreadsheet className="h-5 w-5" />

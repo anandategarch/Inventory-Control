@@ -159,7 +159,7 @@ export const ItemPriorityPanel = memo(function ItemPriorityPanel({ data }: { dat
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold leading-tight truncate" title={it.itemName}>{it.itemName}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground truncate">{it.outletCode}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground truncate" title={it.outletCode}>{it.outletCode}</p>
               </div>
               {/* Main number — Nominal: signed Rp (loss red / surplus emerald);
                   Dev/BOM: ratio, red when breaching tolerance (same rule as

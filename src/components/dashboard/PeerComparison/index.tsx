@@ -110,7 +110,9 @@ export function PeerComparison() {
         title="Ringkasan Target vs Peer"
         description="Seberapa baik outlet terpilih dibanding peer group (resto dengan sales ±10%)?"
       />
-      <div className="grid grid-cols-2 gap-4">
+      {/* LAYOUT-2 (better-layout): fixed grid-cols-2 gave each card 128px at
+          320px — single column below 520px of the main container. */}
+      <div className="grid grid-cols-1 gap-4 min-w-0 @[520px]/main:grid-cols-2">
         {targetRow && otherPeers.length > 0 && (
           <EfficiencyScoreCard
             score={efficiencyScore}

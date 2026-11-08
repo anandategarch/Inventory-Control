@@ -65,7 +65,7 @@ export const DashboardNarrative = memo(function DashboardNarrative({ data, onRef
   return (
     <div className="space-y-10 min-w-0">
       {/* ====== L2 — CONTROL STATUS (what / how much) ====== */}
-      <section id="l2-status" aria-labelledby="l2-header" className="space-y-4 scroll-mt-40">
+      <section id="l2-status" aria-labelledby="l2-header" className="space-y-4">
         {/* VH-6 (Superset "Name with Purpose"): question-oriented story
             captions — WHAT → WHERE → WHY → HOW MUCH → EXPLORE (Minto). */}
         <LayerHeader number="01" title="CONTROL STATUS" id="l2-header" description="Apa kondisinya sekarang? Empat angka utama beserta kaskade penyusun deviasi." />
@@ -78,9 +78,14 @@ export const DashboardNarrative = memo(function DashboardNarrative({ data, onRef
       </section>
 
       {/* ====== L3 — PRIORITY ACTIONS (where) ====== */}
-      <section id="l3-attention" aria-labelledby="l3-header" className="space-y-4 scroll-mt-40">
+      <section id="l3-attention" aria-labelledby="l3-header" className="space-y-4">
         <LayerHeader number="02" title="PRIORITY ACTIONS" id="l3-header" description="Di mana harus bertindak lebih dulu? Resto dan item prioritas berdasarkan dampak." />
-        <div className="grid grid-cols-2 gap-4 min-w-0">
+        {/* LAYOUT-2 (better-layout — "hold structure until it breaks"): was
+            a fixed grid-cols-2 — 128px panels at 320px squeezed the lens
+            toggle to 94px (22px buttons, every label clipped) and left the
+            outlet table unreadable. Single column below 520px of the MAIN
+            container (viewport < 568px), 2 cols above — desktop unchanged. */}
+        <div className="grid grid-cols-1 gap-4 min-w-0 @[520px]/main:grid-cols-2">
           {/* PANEL-1 (A3): outlet prioritization — ONE compact multi-lens
               panel (Prioritas | Kondisi | Peluang Rp), replacing the single
               RestoRecommendationCard. Same ItemPriorityPanel pattern: the
@@ -104,7 +109,7 @@ export const DashboardNarrative = memo(function DashboardNarrative({ data, onRef
       </section>
 
       {/* ====== L4 — KEY FINDINGS (certainty-aware why) ====== */}
-      <section id="l4-why" aria-labelledby="l4-header" className="space-y-4 scroll-mt-40">
+      <section id="l4-why" aria-labelledby="l4-header" className="space-y-4">
         <LayerHeader number="03" title="KEY FINDINGS" id="l4-header" description="Temuan apa yang paling penting? Diurut berdasarkan kepastian — TERUKUR (kalkulasi terverifikasi) dan INDIKASI (pola kuat, perlu validasi)." />
         <ErrorBoundary label="Insights Panel">
           <InsightsPanel data={data} />
@@ -112,12 +117,12 @@ export const DashboardNarrative = memo(function DashboardNarrative({ data, onRef
       </section>
 
       {/* ====== L5 — DIAGNOSTIC EVIDENCE (measured why) ====== */}
-      <section id="l5-diagnosis" aria-labelledby="l5-header" className="space-y-4 scroll-mt-40">
+      <section id="l5-diagnosis" aria-labelledby="l5-header" className="space-y-4">
         <LayerHeader number="04" title="DIAGNOSTIC EVIDENCE" id="l5-header" description="Bukti terukur apa yang menjelaskan kondisi ini? Dekomposisi deviasi + efek harga (bukti primer); konteks pertumbuhan (pendukung)." />
         {/* SPEC-1 (§7.3): PRIMARY EVIDENCE — the two lenses that decompose
             the deviation itself get the 2-col top row and the strongest
             visual weight. Growth context moves DOWN to supporting. */}
-        <div className="grid grid-cols-2 gap-4 min-w-0">
+        <div className="grid grid-cols-1 gap-4 min-w-0 @[520px]/main:grid-cols-2">
           <ErrorBoundary label="Deviation Breakdown">
             <DeviationBreakdownChart data={data} />
           </ErrorBoundary>
@@ -137,7 +142,10 @@ export const DashboardNarrative = memo(function DashboardNarrative({ data, onRef
           <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/80">
             Supporting Evidence
           </p>
-          <div className="grid grid-cols-3 gap-4 min-w-0">
+          {/* LAYOUT-2: supporting-evidence row — was fixed grid-cols-3
+              (80px cards at 320px). Steps 1 → 2 → 3 cols on the main
+              container so each chart keeps ≥ ~250px. */}
+          <div className="grid grid-cols-1 gap-4 min-w-0 @[520px]/main:grid-cols-2 @[800px]/main:grid-cols-3">
             <ErrorBoundary label="Growth Comparison">
               <GrowthComparison data={data} />
             </ErrorBoundary>

@@ -247,7 +247,7 @@ export default function DashboardPage() {
   const tabTriggerClass = "text-xs font-medium gap-1.5 relative data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:text-amber-700 dark:data-[state=active]:text-amber-400 data-[state=active]:after:absolute data-[state=active]:after:bottom-0 data-[state=active]:after:left-1/2 data-[state=active]:after:-translate-x-1/2 data-[state=active]:after:h-0.5 data-[state=active]:after:w-8 data-[state=active]:after:bg-amber-500 data-[state=active]:after:rounded-full data-[state=active]:after:content-['']";
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-b from-background to-muted/20 dark:from-background dark:to-zinc-950">
+    <div className="min-h-dvh flex flex-col bg-gradient-to-b from-background to-muted/20 dark:from-background dark:to-zinc-950">
       <DashboardHeader
         status={status}
         hasData={hasData}
@@ -295,7 +295,14 @@ export default function DashboardPage() {
                 reading (narrative above) to working (deep analysis below).
                 -mx-6/px-6 breaks out of main's horizontal
                 padding so the band spans the content column edge-to-edge. */}
-            <section id="l6-deep" aria-labelledby="l6-header" className="scroll-mt-40">
+            {/* LAYOUT-6 (better-layout): scroll-mt-12 now covers ONLY the
+                docked tab strip (~44px) — the sticky header's height is
+                handled globally by html's scroll-padding-block-start
+                (globals.css) using the live --dashboard-header-h. The old
+                fixed scroll-mt-40 (160px) under-covered the 175px mobile
+                header (59px of the #l6-deep target hidden under docked
+                chrome) and over-covered the 141px desktop one. */}
+            <section id="l6-deep" aria-labelledby="l6-header" className="scroll-mt-12">
               <LayerHeader number="05" title="DEEP ANALYSIS" id="l6-header" description="Butuh menggali lebih dalam? Eksplorasi penuh per area, resto, item, peer, pareto, historis, dan waste." />
               <div className="-mx-6 px-6 border-t-2 border-border bg-muted/25 mt-4 pt-2 pb-4">
                 {/* PERF-FE (PAKET A): forceMount + data-[state=inactive]:hidden

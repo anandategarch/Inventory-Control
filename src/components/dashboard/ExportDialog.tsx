@@ -304,7 +304,7 @@ export function ExportDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-[600px] max-h-[85vh] flex flex-col overflow-hidden">
+      <DialogContent className="sm:max-w-[600px] max-h-[85dvh] flex flex-col overflow-hidden">
         <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2 text-base">
             <FileDown className="h-4 w-4" />

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
@@ -18,6 +18,17 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Inventory Control Intelligence",
   description: "Inventory Control Intelligence Platform for 19 F&B outlets — reconciliation, anomaly detection, investigation worklist, and AI narrative.",
+};
+
+// LAYOUT-5 (better-layout — "content bleeds, controls float"): viewport-fit=cover
+// makes env(safe-area-inset-*) resolve to the real notch/home-indicator
+// zone. Without it the insets are always 0, so the sticky footer's
+// safe-area padding (DashboardFooter) and every future inset consumer would
+// silently do nothing on notched devices.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

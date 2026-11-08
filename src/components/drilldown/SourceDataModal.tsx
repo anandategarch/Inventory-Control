@@ -124,7 +124,7 @@ export function SourceDataModal() {
 
   return (
     <Dialog open={sourceModalOpen} onOpenChange={setSourceModal}>
-      <DialogContent className="max-w-[1100px] max-h-[85vh] flex flex-col overflow-hidden" showCloseButton={false}>
+      <DialogContent className="sm:max-w-[1100px] max-h-[85dvh] flex flex-col overflow-hidden" showCloseButton={false}>
         <DialogHeader className="shrink-0">
           <div className="flex items-center justify-between">
             <div>
@@ -250,7 +250,7 @@ function VirtualizedRecordsTable({ records }: { records: DrilldownRecord[] }) {
   const totalHeight = rowVirtualizer.getTotalSize();
 
   return (
-    <div ref={parentRef} className="overflow-auto" style={{ maxHeight: '60vh' }}>
+    <div ref={parentRef} className="overflow-auto" style={{ maxHeight: '60dvh' }}>
       {/* FIX M2 (AUDIT-6): Raw <table> — bypasses shadcn <Table> wrapper
           which breaks position:sticky via overflow-x-auto div. */}
       <table className="w-full text-xs">

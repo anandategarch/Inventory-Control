@@ -120,7 +120,7 @@ function KpiCard({ label, tooltip, value, valueCls, hero, pill, caption, bar, ey
       // the CARD's own width (old KPICard pattern, preserved).
       className={`@container/card gap-0 p-4 pt-3.5 ${hero ? 'border-t-2 border-t-amber-500' : ''}`}
     >
-      <dt className="flex items-start justify-between gap-2">
+      <dt className="flex flex-wrap items-start justify-between gap-2">
         <span className="flex min-w-0 flex-col items-start gap-1">
           {eyebrow}
           <span className="flex min-w-0 items-center gap-1 text-xs font-medium text-muted-foreground">
@@ -131,8 +131,13 @@ function KpiCard({ label, tooltip, value, valueCls, hero, pill, caption, bar, ey
         {pill}
       </dt>
       <dd className="mt-1.5 min-w-0">
+        {/* LAYOUT-1 (better-layout): value size steps on the card's OWN
+            container width — identical to the old scale from 200px up
+            (text-3xl → text-4xl at 250px); below 200px (2-col KPI grid on
+            phones) it drops one step so "Rp 84,00Jt" never overflows the
+            card box or paints over the neighbouring card. */}
         <p className={`font-bold tabular-nums tracking-tight ${
-          hero ? 'text-3xl @[250px]/card:text-4xl' : 'text-2xl @[250px]/card:text-3xl'
+          hero ? 'text-2xl @[200px]/card:text-3xl @[250px]/card:text-4xl' : 'text-2xl @[250px]/card:text-3xl'
         } ${valueCls ?? ''}`}>
           {value}
         </p>
@@ -254,7 +259,7 @@ export const ExecutiveStatus = memo(function ExecutiveStatus({ data }: { data: A
   const heroVerdictChip = (
     <span
       title={verdict === 'SEHAT' ? 'Kondisi inventory sehat' : verdict === 'KRITIS' ? 'Kondisi inventory kritis — investigasi segera' : 'Kondisi inventory perlu perhatian'}
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] ${
+      className={`max-w-full inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] ${
         verdict === 'KRITIS'
           ? 'bg-red-100/80 text-red-700 dark:bg-red-950/40 dark:text-red-400'
           : verdict === 'PERLU PERHATIAN'
@@ -275,8 +280,16 @@ export const ExecutiveStatus = memo(function ExecutiveStatus({ data }: { data: A
 
   return (
     <div className="space-y-4 min-w-0">
-      {/* KPI grid — spec §4 L2: grid-cols-4 gap-4 (desktop-only), <dl> semantics */}
-      <dl className="grid grid-cols-4 gap-4">
+      {/* KPI grid — spec §4 L2: grid-cols-4 gap-4 on desktop, <dl> semantics.
+          LAYOUT-1 (better-layout — "hold structure until it breaks"): the
+          old fixed grid-cols-4 gave each card 56px at 320px — the verdict
+          chip / labels / delta pill painted up to 162px past the viewport
+          edge (measured). Now 2 cols on phones (128px cards, value steps
+          down via the card's own @container/card) and 4 cols once the MAIN
+          container passes @2xl (672px ⇒ viewport ≥ 720px) — the main
+          container, not the viewport, drives the switch because the KPI
+          band lives inside `@container/main` (SHADCN Pattern 2, page.tsx). */}
+      <dl className="grid grid-cols-2 gap-4 @2xl/main:grid-cols-4">
         <KpiCard
           label="Nominal Deviasi"
           tooltip={KPI_TOOLTIPS.nominalDeviasi}

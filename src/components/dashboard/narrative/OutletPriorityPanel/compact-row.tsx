@@ -82,7 +82,7 @@ export function CompactRowView({
                 text <p> truncates first so the small chips stay visible
                 at 375px without breaking row rhythm). */}
             <div className="mt-0.5 flex min-w-0 items-center gap-1">
-              <p className="text-xs text-muted-foreground truncate">{r.area} · {r.outletCode}</p>
+              <p className="text-xs text-muted-foreground truncate" title={`${r.area} · ${r.outletCode}`}>{r.area} · {r.outletCode}</p>
               {/* Recurrence chip — hidden when STABIL, when no historical
                   month exists, or when `history` is absent (payload cached
                   before the field was added). */}

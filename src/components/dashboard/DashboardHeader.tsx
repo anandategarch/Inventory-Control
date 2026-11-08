@@ -287,7 +287,7 @@ export function DashboardHeader({
                   Filter & Aksi
                 </Button>
               </SheetTrigger>
-              <SheetContent side="bottom" className="h-auto max-h-[85vh] overflow-y-auto px-4 pb-4">
+              <SheetContent side="bottom" className="h-auto max-h-[85dvh] overflow-y-auto px-4 pb-4">
                 <SheetHeader className="pb-2 border-b">
                   <SheetTitle className="text-sm">Filter & Aksi</SheetTitle>
                   <SheetDescription className="text-xs">

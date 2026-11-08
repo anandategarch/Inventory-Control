@@ -75,7 +75,7 @@ export function FileUploadDialog({ open, onOpenChange }: FileUploadDialogProps) 
     <Dialog open={open} onOpenChange={handleClose}>
       {/* FIX (UIUX-B S8): max-h + scroll internal (pola DataManagementDialog) */}
       <DialogContent
-        className="max-w-[600px] max-h-[85vh] flex flex-col overflow-hidden"
+        className="sm:max-w-[600px] max-h-[85dvh] flex flex-col overflow-hidden"
         onEscapeKeyDown={(e) => {
           // FIX (UIUX-B S3b): listener Escape Radix berjalan di fase capture pada
           // document SEBELUM handler input — tanpa guard ini, Escape saat mengetik

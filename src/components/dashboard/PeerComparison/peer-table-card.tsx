@@ -207,7 +207,7 @@ export function PeerTableCard({
                           )}
                         </button>
                         {p.isTarget && <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />}
-                        <span className="truncate">{p.outletName}</span>
+                        <span className="truncate" title={p.outletName}>{p.outletName}</span>
                       </div>
                       {p.isTarget && <Badge variant="default" className="text-[11px] ml-3 h-4 bg-amber-600 hover:bg-amber-600 text-white">TARGET</Badge>}
                       <div className="text-xs text-muted-foreground">{p.outletCode}</div>

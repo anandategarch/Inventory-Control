@@ -227,7 +227,7 @@ export function ExportComparatorPicker({
                   <span className="text-[11px] font-mono leading-tight text-muted-foreground shrink-0">
                     {o.code}
                   </span>
-                  <span className="text-[11px] leading-tight truncate flex-1">
+                  <span className="text-[11px] leading-tight truncate flex-1" title={o.name}>
                     {o.name}
                   </span>
                   <span className="text-[10px] leading-tight text-muted-foreground shrink-0">

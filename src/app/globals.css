@@ -146,6 +146,20 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    /* LAYOUT-6 (better-layout — "content bleeds, controls float"): sticky
+       chrome gets scroll padding so anchored targets AND keyboard-focused
+       elements never land under the header/footer. The header height is
+       dynamic (period line + filter wrap — published by DashboardHeader's
+       ResizeObserver as --dashboard-header-h, C19 fallback 141px); the
+       footer's --dashboard-footer-h covers its wrapped mobile lines
+       (DashboardFooter, LAYOUT-4). This replaces the fixed scroll-mt-40 the
+       narrative sections used — that constant under-covered the 175px
+       mobile header (title slid under it) and over-covered the 141px
+       desktop one. */
+    scroll-padding-block-start: var(--dashboard-header-h, 141px);
+    scroll-padding-block-end: calc(var(--dashboard-footer-h, 2.5rem) + 0.5rem);
+  }
   body {
     @apply bg-background text-foreground;
   }

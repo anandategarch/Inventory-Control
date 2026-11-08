@@ -312,7 +312,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-[700px] max-h-[85vh]">
+      <DialogContent className="sm:max-w-[700px] max-h-[85dvh]">
         <DialogHeader>
           <DialogTitle className="flex items-center justify-between">
             <span className="flex items-center gap-2">
@@ -378,7 +378,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
               </div>
             </div>
 
-            <ScrollArea className="h-[50vh] pr-3">
+            <ScrollArea className="h-[50dvh] pr-3">
               <div className="space-y-5">
                 {data.categories.map((cat) => {
                   const items = data.byCategory[cat] || [];

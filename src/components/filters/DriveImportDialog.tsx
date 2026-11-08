@@ -187,7 +187,7 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleCloseDialog(); else onOpenChange(v); }}>
       {/* FIX (UIUX-B S8): max-h + scroll internal (pola DataManagementDialog) */}
-      <DialogContent className="max-w-[600px] max-h-[85vh] flex flex-col overflow-hidden">
+      <DialogContent className="sm:max-w-[600px] max-h-[85dvh] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <CloudDownload className="h-5 w-5" />

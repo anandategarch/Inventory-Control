@@ -58,7 +58,7 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
 
   return (
     <Dialog open={true} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent className="max-w-[800px] max-h-[85vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-[800px] max-h-[85dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <AlertTriangle className="h-5 w-5" />
@@ -94,7 +94,10 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
           <div className="space-y-4">
             {/* Summary Cards */}
             {/* P23 C5: conditional summary-card colors were light-mode-only — add dark: variants. */}
-            <div className="grid grid-cols-4 gap-2">
+            {/* LAYOUT-2 (better-layout): fixed grid-cols-4 was 66px cards
+                inside a 320px dialog; the dialog portals to <body>, so
+                viewport variants (not @container/main) apply. */}
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <SummaryCard label="Dev/BOM" value={fmtPct(data.current?.devBom)} sub={data.historical?.zScore != null ? `zScore: ${fmtDecimal(data.historical.zScore, 2)}` : ''} color={data.current?.devBom != null && Math.abs(data.current.devBom) > 0.10 ? 'text-red-600 dark:text-red-400' : ''} />
               <SummaryCard label="Nominal" value={fmtIDR(data.current?.nominalLossSurplus)} color={directionColor(data.current?.direction || '')} />
               <SummaryCard label="Residual%" value={fmtPct(data.current?.residualRatio)} sub={data.current?.residualRatio != null && data.current.residualRatio > 0.5 ? 'TINGGI' : ''} color={data.current?.residualRatio != null && data.current.residualRatio > 0.5 ? 'text-red-600 dark:text-red-400' : ''} />
@@ -104,7 +107,7 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
             {/* Benchmark */}
             <Card className="shadow-md shadow-black/5 dark:shadow-black/20">
               <CardHeader className="pb-2"><CardTitle className="text-sm">Benchmark (Current Period)</CardTitle></CardHeader>
-              <CardContent className="grid grid-cols-4 gap-2 text-xs">
+              <CardContent className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
                 <Row label="Outlet Dev/BOM" value={fmtPct(data.benchmark?.outletDevBom)} />
                 <Row label="Area Avg Dev/BOM" value={fmtPct(data.benchmark?.areaAvgDevBom)} />
                 <Row label="Semua Resto Avg" value={fmtPct(data.benchmark?.allRestoAvgDevBom)} />

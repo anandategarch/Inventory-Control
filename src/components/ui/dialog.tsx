@@ -60,7 +60,12 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 max-w-lg overscroll-contain",
+          // LAYOUT-7 (better-layout — "inset controls from the edges"): was
+          // plain max-w-lg — combined with w-full the fixed dialog ran
+          // edge-to-edge (left:0 right:375 measured at 375px). The
+          // max-w-[calc(100%-2rem)] mobile step keeps a 16px inline margin
+          // on phones; ≥640px the sm: step restores the old 512px cap.
+          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 max-w-[calc(100%-2rem)] sm:max-w-lg overscroll-contain",
           className
         )}
         {...props}
