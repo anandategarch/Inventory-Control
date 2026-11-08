@@ -99,35 +99,46 @@ bun run db:maintenance --vacuum-full
 ```
 src/
 ├── app/
-│   ├── api/                    # API routes
-│   │   ├── ingest/             # Excel ingestion
-│   │   ├── import-drive/       # Google Drive import
-│   │   ├── analysis/           # Main analysis endpoint
-│   │   ├── drilldown/          # Source records lookup
-│   │   └── status/             # Available months/weeks/outlets
+│   ├── api/                    # API routes (analysis, export-report,
+│   │   │                       #   ingest-process, outlet-items, waste-*,
+│   │   │                       #   peer-comparison, settings, status, ...)
+│   │   └── */services/         # Route-scoped logic (fetch → process → assemble)
 │   ├── layout.tsx
 │   └── page.tsx                # Main dashboard
 ├── components/
 │   ├── dashboard/              # KPI cards, charts, worklist, narrative
-│   ├── filters/                # Period/area/outlet selectors
-│   ├── drilldown/              # Slide-in drawer
+│   ├── filters/                # Period/area/outlet selectors, upload & Drive dialogs
+│   ├── drilldown/              # Slide-in drawer + source-data modal
 │   └── ui/                     # shadcn/ui primitives
 ├── engine/
-│   ├── calculations/           # Growth, ratios, price effect, residual
-│   ├── rules/                  # YAML rule evaluator
-│   ├── analysis/               # Ranking, benchmarking, priority, worklist
-│   └── narrative/              # LLM client + structured summary builder
+│   ├── transform.ts            # Row transform + numeric coercion
+│   ├── validator.ts            # Data-quality validator (DQIssue)
+│   └── analysis/               # Cross-outlet pattern detection
 ├── config/
-│   ├── rules.yaml              # Anomaly rules (edit without recompile)
-│   ├── thresholds.ts           # Tunable business thresholds
+│   ├── rules.yaml              # Anomaly rule SPEC (declarative documentation)
 │   └── settings.ts             # Labels, NULL handling, week periods
+├── hooks/                      # TanStack Query hooks (analysis, outlet items,
+│                               #   recommendations, price effect, ...)
 ├── lib/
 │   ├── db.ts                   # Prisma client
 │   ├── excel.ts                # Excel parser + month extractor
-│   ├── drive-import.ts         # Google Drive downloader
+│   ├── drive-import/           # Google Drive downloader (URL → files)
+│   ├── queries/                # SQL push-down query modules
+│   │   ├── items/              #   top items, flip ranking, trends, anomalies
+│   │   ├── outlets/            #   peer comparison, change analysis, series
+│   │   └── waste/              #   waste quadrant, rate league, persistence
+│   ├── ingestion/              # Excel → DB pipeline (batch insert, locks)
+│   ├── metrics/                # Deterministic metric definitions
 │   └── format.ts               # IDR/percent formatters
+├── middleware.ts
 └── types/inventory.ts          # TypeScript types
+
+docs/                           # ARCHITECTURE, CONVENTIONS, PRD
+scripts/                        # DB maintenance & one-off migration scripts
+tests/                          # Vitest unit tests (lib, queries, app routes)
 ```
+
+> 📄 Dokumentasi tambahan: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) · [`docs/PRD_RETROAKTIF.md`](docs/PRD_RETROAKTIF.md)
 
 ## ⚙️ Konfigurasi (Tanpa Coding)
 
