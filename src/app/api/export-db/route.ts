@@ -320,7 +320,18 @@ export async function GET(req: NextRequest) {
     headerRow.height = 28;
 
     // --- Sheet INFO: metadata export untuk audit ---
-    const info = wb.addWorksheet('INFO');
+    // FIX (BUG-INFO-REIMPORT-9, HIGH — ditemukan 2 agent audit independen):
+    // sheet INFO duluan VISIBLE — parseExcelFile membaca SEMUA sheet visible,
+    // sehingga re-import file unduhan via Import Drive / ingest fast mode
+    // memproses baris INFO (tanpa resto/namaBahan/weekLabel):
+    //   (a) mode validasi → tiap baris INFO memicu MISSING_OUTLET +
+    //       MISSING_ITEM ERROR → file sehat dilabeli dqStatus ERROR palsu;
+    //   (b) fast mode → weekLabel kosong dikoersi 'UNKNOWN' → Week hantu
+    //       muncul di picker periode.
+    // Sheet hidden DILEWATI parser (excel.ts: 'ws.state !== visible' continue)
+    // — metadata tetap bisa dilihat user (unhide di Excel), tapi aman
+    // di-re-import. Jaminan "LANGSUNG bisa di-re-import" kini utuh.
+    const info = wb.addWorksheet('INFO', { state: 'hidden' });
     info.columns = [
       { header: 'Properti', width: 26 },
       { header: 'Nilai', width: 64 },
@@ -347,9 +358,14 @@ export async function GET(req: NextRequest) {
       ['Periode', targetFile ? targetFile.fileName : `${monthLabel}${normalizedWeek ? ` — ${normalizedWeek}` : ' — SEMUA WEEK'}`],
       [
         'Rentang tanggal',
+        // FIX (BUG-INFO-LABEL-10, LOW): file satu-week (mis. "X [WEEK 2]")
+        // duluan selalu dilabel "Seluruh bulan (semua week)" walau hanya
+        // berisi 1 week — kini pakai rentang week aktual file tersebut.
         normalizedWeek && targetWeeks[0]
           ? `Tanggal ${targetWeeks[0].periodStart}–${targetWeeks[targetWeeks.length - 1].periodEnd} (kumulatif)`
-          : 'Seluruh bulan (semua week)',
+          : targetFile && monthWeeks.length === 1
+            ? `${monthWeeks[0].weekLabel} — Tanggal ${monthWeeks[0].periodStart}–${monthWeeks[0].periodEnd}`
+            : 'Seluruh bulan (semua week)',
       ],
       ['Jumlah record', recordCount.toLocaleString('id-ID')],
       ['Jumlah outlet unik', String(uniqueOutlets.size)],

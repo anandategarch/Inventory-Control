@@ -238,6 +238,12 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
     // Dialog-local per-file DQ rows (['dq-issues', fileId]) — refetch them too
     // so DQ counts stay consistent with the deleted/uploaded dataset.
     queryClient.invalidateQueries({ queryKey: ['dq-issues'] });
+    // FIX (BUG-PERIODS-STALE-11, LOW): picker "Unduh Database" (bulan/week)
+    // memakai root ['export-db-periods'] yang TIDAK ikut ter-invalidasi —
+    // setelah hapus bulan, periode terhapus masih tampil di picker
+    // (staleTime 30s + observer masih mounted) → unduhan 404. Invalidate
+    // root-nya agar semua observer periode ikut refetch.
+    queryClient.invalidateQueries({ queryKey: ['export-db-periods'] });
     // FIX (H-14/T3): full 18-key dashboard invalidation via shared helper —
     // the old 6-key subset left pareto/heatmap/trend/flip/drilldown/
     // price-effect keys stale in keep-alive tabs after a delete/reset.
