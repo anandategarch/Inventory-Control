@@ -28,7 +28,14 @@ export async function handleImport(ctx: IngestProcessContext): Promise<NextRespo
   // FIX (BUG-3-c SEDANG-3): weekLabel comes from the Zod-VALIDATED body
   // (route.ts passes validation.data) — format + length are enforced upstream
   // instead of being read raw from the JSON.
-  const weekLabel = ctx.body.weekLabel;
+  // FIX (BUG-CASE-12, MEDIUM): weekLabelSchema menerima "week 2" (case-
+  // insensitive) tapi pencocokan baris di bawah exact-match terhadap
+  // "WEEK 2" — caller programatik dapat response SKIPPED palsu
+  // ("No rows found") walau file berisi week tsb. Normalisasi ke bentuk
+  // DB (konvensi sama dengan /api/export-db route).
+  const weekLabel = ctx.body.weekLabel
+    ? ctx.body.weekLabel.toUpperCase().replace(/\s+/g, ' ').trim()
+    : ctx.body.weekLabel;
   if (!weekLabel) {
     return NextResponse.json(
       { success: false, error: 'weekLabel required for import mode' },
@@ -117,6 +124,28 @@ export async function handleImport(ctx: IngestProcessContext): Promise<NextRespo
   }
 
   // Create SourceFile record — upsert to handle re-uploads (fileName is @unique)
+  // FIX (BUG-HASH-13, MEDIUM): fileHash @unique — konten identik yang diupload
+  // dengan nama file BERBEDA menabrak CREATE branch upsert dengan P2002 →
+  // 500 "Gagal memproses permintaan" yang misleading. Pre-check hash
+  // turunannya (pola runIngestTransaction) dan kembalikan SKIPPED eksplisit
+  // dengan nama file pemilik lama.
+  const derivedHash = `${ctx.safeFileHash}-${weekLabel}`;
+  const hashOwner = await db.sourceFile.findUnique({
+    where: { fileHash: derivedHash },
+    select: { fileName: true },
+  });
+  if (hashOwner && hashOwner.fileName !== `${ctx.fileName} [${weekLabel}]`) {
+    await db.fileChunk.deleteMany({ where: { fileHash: ctx.safeFileHash } }).catch(() => {});
+    return NextResponse.json({
+      success: true,
+      mode: 'import',
+      weekLabel,
+      status: 'SKIPPED',
+      rowCount: 0,
+      message: `Konten identik sudah pernah diimport sebagai "${hashOwner.fileName}" — hapus file lama dulu jika ingin menimpa.`,
+      durationMs: Date.now() - ctx.startedAt,
+    });
+  }
   const sourceFile = await db.sourceFile.upsert({
     where: { fileName: `${ctx.fileName} [${weekLabel}]` },
     update: {
@@ -217,6 +246,20 @@ export async function handleImport(ctx: IngestProcessContext): Promise<NextRespo
         if (remainingWeeks === 0) {
           await tx.dQIssue.deleteMany({ where: { sourceFileId: existingWeek.sourceFileId } });
           await tx.sourceFile.delete({ where: { id: existingWeek.sourceFileId } });
+        } else {
+          // FIX (BUG-ROWCOUNT-14, MEDIUM): file lama kehilangan satu week tapi
+          // rowCount-nya tidak pernah disesuaikan — /api/data totalRows,
+          // /api/status, dan sheet INFO export-db melaporkan angka
+          // menggelembung selamanya. Recompute eksak (COUNT record sisa) —
+          // idempotent dan tahan terhadap inkonsistensi historis
+          // (lebih aman daripada decrement butuh asumsi basis benar).
+          const remainingRecords = await tx.inventoryRecord.count({
+            where: { sourceFileId: existingWeek.sourceFileId },
+          });
+          await tx.sourceFile.update({
+            where: { id: existingWeek.sourceFileId },
+            data: { rowCount: remainingRecords },
+          });
         }
       }
 

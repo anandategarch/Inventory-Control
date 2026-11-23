@@ -12,10 +12,15 @@ import { weekLabelSchema } from './shared';
 
 // /api/data (GET — optional ?fileId=N, DELETE — ?month=&monthKey=&fileId=&all=&confirm=)
 // DELETE supports cascade delete by month / fileId / all (with confirm).
+// FIX (BUG-VALIDATION-PARITY-15, LOW): monthKey duluan z.string().max(10)
+// bebas & fileId tanpa .positive() — "?monthKey=garbage"/"?fileId=-1" lolos
+// validasi lalu sukses-palsu (0 terhapus), sementara /api/export-db dengan
+// param sama menolak 400. Kini keduanya konsisten: monthKey regex YYYY-MM
+// + fileId integer positif (paritas exportDbQuerySchema).
 export const dataDeleteQuerySchema = z.object({
   month: z.string().max(50).optional(),       // legacy: monthLabel (resolved to monthKey server-side)
-  monthKey: z.string().max(10).optional(),     // preferred: "YYYY-MM" (case-insensitive)
-  fileId: z.coerce.number().int().optional(),
+  monthKey: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional(), // preferred: "YYYY-MM"
+  fileId: z.coerce.number().int().positive().optional(),
   all: z.enum(['true', '1', 'yes']).optional(),
   confirm: z.enum(['true', '1', 'yes']).optional(),
 });

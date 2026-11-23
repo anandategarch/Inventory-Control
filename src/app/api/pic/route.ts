@@ -35,7 +35,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
     }
 
+    // FIX (BUG-PIC-FILTER-16, LOW): ?outletCode= divalidasi tapi TIDAK PERNAH
+    // dipakai — query selalu mengembalikan semua PIC. Filter kini diterapkan.
+    const { outletCode } = validation.data;
     const pics = await db.outletPIC.findMany({
+      ...(outletCode ? { where: { outletCode } } : {}),
       orderBy: [{ outletCode: 'asc' }],
       select: { id: true, outletCode: true, pic: true, updatedAt: true },
     });

@@ -89,7 +89,13 @@ export function buildInventoryWhere(
 
   const w: Prisma.InventoryRecordWhereInput = {
     monthLabel: month,
-    weekLabel: week,
+    // FIX (BUG-CASE-12b, LOW/MEDIUM): weekLabelSchema menerima "week 2"
+    // (case-insensitive) tapi matching DB exact — /api/export-report dan
+    // /api/analysis dengan week lowercase menemukan 0 record → 404
+    // menyesatkan + cache key bercabang per kapitalisasi. Normalisasi di
+    // SATU titik ini menutup semua caller buildInventoryWhere (konvensi
+    // sama dengan /api/export-db & ingest-process).
+    weekLabel: week ? week.toUpperCase().replace(/\s+/g, ' ').trim() : week,
   };
 
   if (area && area !== 'all') w.area = area;

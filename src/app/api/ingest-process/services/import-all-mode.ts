@@ -30,7 +30,13 @@ export async function handleImportAll(ctx: IngestProcessContext): Promise<NextRe
   // body (≤12 entries of ≤20 chars, enforced by ingestProcessBodySchema).
   // Previously this read the raw JSON array — an unbounded array drove the
   // per-week import loop below (one transaction + SourceFile upsert each).
-  const weeksToImport: string[] = ctx.body.weeksToImport ?? [];
+  // FIX (BUG-CASE-12, MEDIUM): entry schema hanya z.string().max(20) TANPA
+  // format check — "week 2" lolos validasi tapi exact-match gagal → semua
+  // week SKIPPED diam-diam. Normalisasi tiap entry ke bentuk DB "WEEK N"
+  // (konvensi /api/export-db) + saring entry kosong hasil normalisasi.
+  const weeksToImport: string[] = (ctx.body.weeksToImport ?? [])
+    .map((w: string) => w.toUpperCase().replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
   if (weeksToImport.length === 0) {
     return NextResponse.json(
       { success: false, error: 'weeksToImport array required for import-all mode' },
@@ -132,6 +138,21 @@ export async function handleImportAll(ctx: IngestProcessContext): Promise<NextRe
     }
 
     // Create SourceFile per week — upsert to handle re-uploads (fileName is @unique)
+    // FIX (BUG-HASH-13, MEDIUM): fileHash @unique — konten identik dengan nama
+    // file berbeda menabrak CREATE branch dengan P2002 → 500 opaque.
+    // Pre-check hash turunan; week tsb dicatat SKIPPED dengan pesan jelas.
+    const derivedHash = `${ctx.safeFileHash}-${weekLabel}`;
+    const hashOwner = await db.sourceFile.findUnique({
+      where: { fileHash: derivedHash },
+      select: { fileName: true },
+    });
+    if (hashOwner && hashOwner.fileName !== `${ctx.fileName} [${weekLabel}]`) {
+      importedWeeks.push({
+        weekLabel, status: 'SKIPPED', rowCount: 0,
+        dqErrors: 0, dqWarnings: 0, durationMs: Date.now() - weekStart,
+      });
+      continue;
+    }
     const sourceFile = await db.sourceFile.upsert({
       where: { fileName: `${ctx.fileName} [${weekLabel}]` },
       update: {
@@ -216,6 +237,18 @@ export async function handleImportAll(ctx: IngestProcessContext): Promise<NextRe
           if (remainingWeeks === 0) {
             await tx.dQIssue.deleteMany({ where: { sourceFileId: existingWeek.sourceFileId } });
             await tx.sourceFile.delete({ where: { id: existingWeek.sourceFileId } });
+          } else {
+            // FIX (BUG-ROWCOUNT-14, MEDIUM): rowCount file lama tidak pernah
+            // disesuaikan setelah kehilangan satu week — /api/data totalRows
+            // & sheet INFO export-db menggelembung selamanya. Recompute eksak
+            // (COUNT record sisa) — idempotent, tahan inkonsistensi historis.
+            const remainingRecords = await tx.inventoryRecord.count({
+              where: { sourceFileId: existingWeek.sourceFileId },
+            });
+            await tx.sourceFile.update({
+              where: { id: existingWeek.sourceFileId },
+              data: { rowCount: remainingRecords },
+            });
           }
         }
 
