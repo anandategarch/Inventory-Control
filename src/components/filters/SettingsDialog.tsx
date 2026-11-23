@@ -312,8 +312,13 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[700px] max-h-[85dvh]">
-        <DialogHeader>
+      {/* FIX (BUG-SCROLL-2): grid gap-4 TANPA overflow membuat konten
+          lolos dari batas max-h-[85dvh] (grid row tidak menghormati max-h
+          container) — footer "Simpan Perubahan" terpotong di luar viewport
+          pada layar pendek. Kunci: flex kolom + overflow-hidden + ScrollArea
+          flex-1 min-h-0 (bukan h-[50dvh] fixed), header/footer shrink-0. */}
+      <DialogContent className="sm:max-w-[700px] max-h-[85dvh] flex flex-col overflow-hidden">
+        <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center justify-between">
             <span className="flex items-center gap-2">
               <span>⚙️ Pengaturan Standar</span>
@@ -371,14 +376,14 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           </div>
         ) : data?.success ? (
           <>
-            <div className="rounded-md border border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-900 p-2.5 flex items-start gap-2">
+            <div className="rounded-md border border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-900 p-2.5 flex items-start gap-2 shrink-0">
               <Info className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
               <div className="text-xs text-blue-700 dark:text-blue-300">
                 <strong>Tip:</strong> Untuk persen, masukkan nilai 0-1 (mis. 10% = 0.10). Untuk Rupiah, masukkan angka penuh (mis. 1,000,000).
               </div>
             </div>
 
-            <ScrollArea className="h-[50dvh] pr-3">
+            <ScrollArea className="flex-1 min-h-0 pr-3">
               <div className="space-y-5">
                 {data.categories.map((cat) => {
                   const items = data.byCategory[cat] || [];
@@ -466,7 +471,7 @@ export function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenCh
               </div>
             </ScrollArea>
 
-            <DialogFooter className="border-t pt-3">
+            <DialogFooter className="border-t pt-3 shrink-0">
               <div className="flex items-center justify-between w-full flex-wrap gap-2">
                 <div className="flex items-center gap-2">
                   {/* FIX (UIUX-B S10): konfirmasi migrate direction via AlertDialog

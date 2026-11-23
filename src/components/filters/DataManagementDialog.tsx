@@ -346,7 +346,14 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
             Gagal memuat data: {data?.error || 'Error tidak diketahui'}
           </div>
         ) : (
-          <div className="flex-1 overflow-hidden flex flex-col gap-4 min-h-0">
+          <div className="flex-1 overflow-y-auto overscroll-contain flex flex-col gap-4 min-h-0">
+            {/* FIX (BUG-SCROLL-1, user report "database tidak bisa discroll"):
+                quick actions shrink-0 (±450px) + file list flex-1 min-h-0 di
+                viewport pendek membuat area tabel collapse sampai 25px — tak
+                terpakai. Solusi: body jadi scroll container (overflow-y-auto)
+                supaya seluruh konten tetap terjangkau, dan file list diberi
+                jendela terjamin (min-h) + terikat (max-h) dengan scroll
+                internal sendiri. */}
             {/* Quick actions */}
             <div className="grid grid-cols-2 gap-3 shrink-0">
               {/* Unduh database per periode — DB-DOWNLOAD-1 (user request):
@@ -527,8 +534,10 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
               </div>
             </div>
 
-            {/* File list */}
-            <div className="flex-1 min-h-0 flex flex-col border rounded-md">
+            {/* File list — jendela terjamin 260px..50dvh (BUG-SCROLL-1):
+                min-h mencegah collapse oleh quick actions, max-h menjaga
+                agar body scroll tetap efektif untuk konten di bawahnya. */}
+            <div className="min-h-[260px] max-h-[50dvh] flex flex-col border rounded-md">
               <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30 shrink-0">
                 <span className="text-xs font-medium flex items-center gap-1.5">
                   <FileSpreadsheet className="h-3.5 w-3.5" />
@@ -546,7 +555,7 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
                 </Button>
               </div>
 
-              <div className="flex-1 overflow-auto">
+              <div className="flex-1 overflow-auto min-h-0">
                 {files.length === 0 ? (
                   <div className="py-10 text-center text-xs text-muted-foreground">
                     Tidak ada file sumber. Import data terlebih dahulu.

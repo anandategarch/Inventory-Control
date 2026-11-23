@@ -186,7 +186,11 @@ export function DrillDownDrawer() {
 
         {/* FIX AUDIT-6 #5: removed nested ScrollArea — the virtualized table
             has its own scroll container. No more double-scroll confusion. */}
-        <div className="flex-1 overflow-hidden p-4 space-y-3">
+        {/* FIX (BUG-SCROLL-3): overflow-hidden membuat tombol "Muat Lebih
+            Banyak" + kartu Metrik Turunan terpotong di viewport <840px
+            (tabel adalah pulau scroll fixed 400px, body tak bisa scroll).
+            Body jadi scroll container; tabel tetap scroll internal. */}
+        <div className="flex-1 overflow-y-auto overscroll-contain p-4 space-y-3">
           {drill.isLoading && <p className="text-sm text-muted-foreground">Memuat data sumber...</p>}
           {drill.error && (
             <div className="flex items-center gap-3 p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900">

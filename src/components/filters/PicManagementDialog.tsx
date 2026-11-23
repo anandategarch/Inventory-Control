@@ -329,7 +329,11 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
             Gagal memuat data: {status?.error || 'Error tidak diketahui'}
           </div>
         ) : (
-          <div className="flex-1 overflow-hidden flex flex-col gap-3 min-h-0">
+          <div className="flex-1 overflow-y-auto overscroll-contain flex flex-col gap-3 min-h-0">
+            {/* FIX (BUG-SCROLL-1, kelas bug sama dengan DataManagementDialog):
+                panel import CSV shrink-0 (±220px) + tabel outlet flex-1 min-h-0
+                bisa collapse area tabel di viewport pendek. Body jadi scroll
+                container + tabel diberi jendela min/max terjamin. */}
             {/* Stats + actions */}
             <div className="flex flex-wrap items-center gap-2 shrink-0">
               <Badge variant="outline" className="text-[11px]">
@@ -422,7 +426,8 @@ export function PicManagementDialog({ open, onOpenChange }: PicManagementDialogP
             </div>
 
             {/* Outlet table */}
-            <div className="flex-1 min-h-0 border rounded-md overflow-auto">
+            {/* Outlet table — jendela terjamin 260px..50dvh (BUG-SCROLL-1) */}
+            <div className="min-h-[260px] max-h-[50dvh] border rounded-md overflow-auto">
               <Table>
                 <TableHeader className="sticky top-0 bg-background/95 dark:bg-zinc-900/95 backdrop-blur-sm shadow-sm z-10">
                   <TableRow>
