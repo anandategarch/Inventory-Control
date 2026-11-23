@@ -16,6 +16,9 @@
 //  dst) sehingga file hasil unduhan LANGSUNG bisa di-re-import lewat
 //  Upload File / Import Drive (parseMonthFromFilename menemukan "Oktober 2026"
 //  di nama file, normalizeHeader memetakan semua kolom).
+//  Urutan 30 kolom mengikuti format Excel sumber (user request: persis urutan
+//  header file asli — QTY WASTE + SUSUT & % WASTE + SUSUT setelah nominal,
+//  %TOLERANSI + kolom TO BOM, lalu AREA/BULAN/PENJUALAN/STATUS BULAN/BULAN 2).
 //  Sheet "INFO" berisi metadata export (periode, jumlah record, source file,
 //  waktu generate) untuk audit.
 //
@@ -42,6 +45,10 @@ export const maxDuration = 300;
 //  Kolom export — mapping field DB → header Excel sumber.
 //  Nama header dipilih agar normalizeHeader() (src/lib/excel.ts) memetakan
 //  kembali ke field yang sama saat file ini di-re-import.
+//  URUTAN PERSIS format Excel sumber (user request):
+//  identitas → QTY → NOMINAL → QTY WASTE + SUSUT / % WASTE + SUSUT →
+//  %TOLERANSI → kolom TO BOM → AREA / BULAN / PENJUALAN /
+//  STATUS BULAN / BULAN 2.
 // ------------------------------------------------------------
 interface ExportRecord {
   akunPenyesuaian: string | null;
@@ -76,12 +83,20 @@ interface ExportRecord {
   item: { name: string };
 }
 
+// QTY WASTE + SUSUT — jumlah QTY dua komponen (konvensi tanda source Excel:
+// WASTE/SUSUT negatif, hasil penjumlahan ikut negatif). Null bila keduanya
+// null (baris tanpa komponen waste/susut) agar tetap re-import-safe.
+const qtyWastePlusSusut = (r: ExportRecord): number | null =>
+  r.qtyWaste === null && r.qtySusut === null
+    ? null
+    : (r.qtyWaste ?? 0) + (r.qtySusut ?? 0);
+
 const EXPORT_COLUMNS: { header: string; width: number; get: (r: ExportRecord) => unknown }[] = [
-  { header: 'AKUN PENYESUAIAN PERSEDIAAN', width: 26, get: r => r.akunPenyesuaian },
+  { header: 'Akun Penyesuaian Persediaan', width: 26, get: r => r.akunPenyesuaian },
   { header: 'STATUS', width: 12, get: r => r.status },
   { header: 'RESTO', width: 16, get: r => r.outlet?.code },
   { header: 'NAMA BAHAN', width: 30, get: r => r.item?.name },
-  { header: 'SATUAN', width: 9, get: r => r.satuan },
+  { header: 'Satuan', width: 9, get: r => r.satuan },
   { header: 'QTY BOM', width: 11, get: r => r.qtyBom },
   { header: 'QTY COM', width: 11, get: r => r.qtyCom },
   { header: 'QTY DEVIASI', width: 12, get: r => r.qtyDeviasi },
@@ -94,18 +109,19 @@ const EXPORT_COLUMNS: { header: string; width: number; get: (r: ExportRecord) =>
   { header: 'NOMINAL SUSUT', width: 14, get: r => r.nominalSusut },
   { header: 'NOMINAL TRIAL', width: 14, get: r => r.nominalTrial },
   { header: 'NOMINAL LOSS/SURPLUS', width: 16, get: r => r.nominalLossSurplus },
-  { header: 'PENJUALAN', width: 14, get: r => r.nominalSales },
+  { header: 'QTY WASTE + SUSUT', width: 13, get: qtyWastePlusSusut },
+  { header: '% WASTE + SUSUT', width: 13, get: r => r.pctWasteSusut },
+  { header: '%TOLERANSI', width: 12, get: r => r.toleranceRaw },
+  { header: '% QTY DEVIASI TO BOM', width: 13, get: r => r.pctQtyDeviasiToBom },
+  { header: 'QTY WASTE TO BOM', width: 13, get: r => r.pctQtyWasteToBom },
+  { header: 'QTY SUSUT TO BOM', width: 13, get: r => r.pctQtySusutToBom },
+  { header: 'QTY TRIAL TO BOM', width: 13, get: r => r.pctQtyTrialToBom },
+  { header: 'QTY LOSS/ SURPLUS TO BOM', width: 15, get: r => r.pctQtyLossToBom },
   { header: 'AREA', width: 18, get: r => r.area },
   { header: 'BULAN', width: 14, get: r => r.bulan },
+  { header: 'PENJUALAN', width: 14, get: r => r.nominalSales },
   { header: 'STATUS BULAN', width: 12, get: r => r.weekLabel },
   { header: 'BULAN 2', width: 10, get: r => r.bulan2 },
-  { header: '%TOLERANSI', width: 12, get: r => r.toleranceRaw },
-  { header: 'QTY WASTE + SUSUT', width: 13, get: r => r.pctWasteSusut },
-  { header: '% QTY DEVIASI TO BOM', width: 13, get: r => r.pctQtyDeviasiToBom },
-  { header: '% QTY WASTE TO BOM', width: 13, get: r => r.pctQtyWasteToBom },
-  { header: '% QTY SUSUT TO BOM', width: 13, get: r => r.pctQtySusutToBom },
-  { header: '% QTY TRIAL TO BOM', width: 13, get: r => r.pctQtyTrialToBom },
-  { header: '% QTY LOSS/SURPLUS TO BOM', width: 15, get: r => r.pctQtyLossToBom },
 ];
 
 // Field yang diambil dari InventoryRecord (+ relasi outlet.code / item.name
