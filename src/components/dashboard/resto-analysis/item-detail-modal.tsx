@@ -58,8 +58,12 @@ export function ItemDetailModal({ outletCode, itemName, month, week, onClose }: 
 
   return (
     <Dialog open={true} onOpenChange={(v) => { if (!v) onClose(); }}>
+      {/* FIX (BUG-STICKY-HEADER-7, LOW): dialog whole-scroll (overflow-y-auto)
+          membuat header + tombol X ikut ter-scroll — setelah scroll ke bawah
+          tak ada lagi affordance tutup yang terlihat. Header sticky dengan
+          bg solid menutupi konten yang lewat di bawahnya. */}
       <DialogContent className="sm:max-w-[800px] max-h-[85dvh] overflow-y-auto">
-        <DialogHeader>
+        <DialogHeader className="sticky top-0 z-10 bg-background">
           <DialogTitle className="flex items-center gap-2 text-base">
             <AlertTriangle className="h-5 w-5" />
             {itemName}

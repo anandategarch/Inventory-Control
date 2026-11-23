@@ -301,10 +301,79 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
               </label>
             </div>
           </div>
+
+          {/* Results — FIX (BUG-RESULTS-OUTSIDE-SCROLL-6): blok hasil dulunya
+              SAUDARA dari scroller body (di bawah baris tombol) — setelah import
+              folder, header + tombol + hasil (±290px) melebihi budget 85dvh
+              sehingga area input flex-1 collapse ke ~0 dan baris tombol Batal/
+              Import sendiri terpotong overflow-hidden di layar pendek. Kini
+              hasil hidup DI DALAM scroller body (baris tombol tetap terlihat,
+              daftar file tetap dibatasi max-h-48). */}
+          {driveResult && driveResult.length > 0 && (
+            <div className="space-y-2">
+              {/* FIX (UIUX-B S6): partial-download failures (folder imports)
+                  were invisible — downloadSummary.failed now surfaces above the
+                  result list. */}
+              {downloadSummary && downloadSummary.failed > 0 && (
+                <div
+                  className="flex items-start gap-1.5 rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-2 py-1.5 text-[11px] text-amber-800 dark:text-amber-400"
+                  title={failedDownloads.map((f) => `${f.fileName}: ${f.error ?? 'unknown'}`).join('; ') || undefined}
+                >
+                  <span className="shrink-0" aria-hidden="true">⚠️</span>
+                  <span className="min-w-0">
+                    {downloadSummary.failed} file gagal diunduh — cek permission share folder
+                    {failedDownloads.length > 0 && (
+                      <span className="block truncate">{failedDownloads.map((f) => f.fileName).join(', ')}</span>
+                    )}
+                  </span>
+                </div>
+              )}
+              <div className="flex items-center gap-2 text-sm font-medium">
+                {driveResult.every(r => r.status === 'INGESTED') ? (
+                  <><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Semua file berhasil diimpor</>
+                ) : driveResult.some(r => r.status === 'ERROR') ? (
+                  <><XCircle className="h-4 w-4 text-red-600" /> Beberapa file gagal</>
+                ) : (
+                  <><CheckCircle2 className="h-4 w-4 text-amber-500" /> Import selesai dengan warning</>
+                )}
+              </div>
+              <div className="space-y-1 max-h-48 overflow-y-auto overscroll-contain">
+                {driveResult.map((r, i) => (
+                  <div key={i} className="flex items-center justify-between gap-2 rounded-md border p-2 text-xs">
+                    {/* FIX (UIUX-B S6): two-tier row — the per-file error reason
+                        (r.error existed on ERROR results but was never rendered)
+                        now shows under the file name, with the full reason on
+                        hover (title) since the line truncates. */}
+                    <div className="flex flex-col gap-0.5 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {r.status === 'INGESTED' ? (
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                        ) : r.status === 'SKIPPED' ? (
+                          <span className="text-muted-foreground text-xs shrink-0">≡</span>
+                        ) : (
+                          <XCircle className="h-3.5 w-3.5 text-red-600 shrink-0" />
+                        )}
+                        <span className="truncate font-medium">{r.fileName}</span>
+                      </div>
+                      {r.status === 'ERROR' && r.error && (
+                        <p className="text-[10px] text-red-600 dark:text-red-400 truncate" title={r.error}>
+                          {r.error}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {r.rowCount > 0 && <Badge variant="secondary" className="text-[10px]">{r.rowCount.toLocaleString()} rows</Badge>}
+                      {r.dqStatus && <Badge variant={r.dqStatus === 'ERROR' ? 'destructive' : 'secondary'} className="text-[10px]">{r.dqStatus}</Badge>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Import button */}
-        <div className="flex justify-end gap-2">
+        {/* Import button — baris tombol tetap DI LUAR scroller (selalu terlihat) */}
+        <div className="flex justify-end gap-2 shrink-0">
           {/* FIX (UIUX-B S7): while importing, Batal becomes an enabled
               "Batalkan Import" (abort) instead of a disabled ghost — a hung
               import no longer locks the dialog (pattern: FileUploadDialog
@@ -336,69 +405,6 @@ export function DriveImportDialog({ open, onOpenChange, onImported }: DriveImpor
             )}
           </Button>
         </div>
-
-        {/* Results */}
-        {driveResult && driveResult.length > 0 && (
-          <div className="space-y-2">
-            {/* FIX (UIUX-B S6): partial-download failures (folder imports)
-                were invisible — downloadSummary.failed now surfaces above the
-                result list. */}
-            {downloadSummary && downloadSummary.failed > 0 && (
-              <div
-                className="flex items-start gap-1.5 rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-2 py-1.5 text-[11px] text-amber-800 dark:text-amber-400"
-                title={failedDownloads.map((f) => `${f.fileName}: ${f.error ?? 'unknown'}`).join('; ') || undefined}
-              >
-                <span className="shrink-0" aria-hidden="true">⚠️</span>
-                <span className="min-w-0">
-                  {downloadSummary.failed} file gagal diunduh — cek permission share folder
-                  {failedDownloads.length > 0 && (
-                    <span className="block truncate">{failedDownloads.map((f) => f.fileName).join(', ')}</span>
-                  )}
-                </span>
-              </div>
-            )}
-            <div className="flex items-center gap-2 text-sm font-medium">
-              {driveResult.every(r => r.status === 'INGESTED') ? (
-                <><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Semua file berhasil diimpor</>
-              ) : driveResult.some(r => r.status === 'ERROR') ? (
-                <><XCircle className="h-4 w-4 text-red-600" /> Beberapa file gagal</>
-              ) : (
-                <><CheckCircle2 className="h-4 w-4 text-amber-500" /> Import selesai dengan warning</>
-              )}
-            </div>
-            <div className="space-y-1 max-h-48 overflow-y-auto overscroll-contain">
-              {driveResult.map((r, i) => (
-                <div key={i} className="flex items-center justify-between gap-2 rounded-md border p-2 text-xs">
-                  {/* FIX (UIUX-B S6): two-tier row — the per-file error reason
-                      (r.error existed on ERROR results but was never rendered)
-                      now shows under the file name, with the full reason on
-                      hover (title) since the line truncates. */}
-                  <div className="flex flex-col gap-0.5 min-w-0">
-                    <div className="flex items-center gap-2 min-w-0">
-                      {r.status === 'INGESTED' ? (
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-                      ) : r.status === 'SKIPPED' ? (
-                        <span className="text-muted-foreground text-xs shrink-0">≡</span>
-                      ) : (
-                        <XCircle className="h-3.5 w-3.5 text-red-600 shrink-0" />
-                      )}
-                      <span className="truncate font-medium">{r.fileName}</span>
-                    </div>
-                    {r.status === 'ERROR' && r.error && (
-                      <p className="text-[10px] text-red-600 dark:text-red-400 truncate" title={r.error}>
-                        {r.error}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {r.rowCount > 0 && <Badge variant="secondary" className="text-[10px]">{r.rowCount.toLocaleString()} rows</Badge>}
-                    {r.dqStatus && <Badge variant={r.dqStatus === 'ERROR' ? 'destructive' : 'secondary'} className="text-[10px]">{r.dqStatus}</Badge>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </DialogContent>
     </Dialog>
   );

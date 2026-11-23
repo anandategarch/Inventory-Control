@@ -182,7 +182,12 @@ export function SourceDataModal() {
           </div>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto overscroll-contain border rounded-md">
+        {/* FIX (BUG-NESTED-SCROLL-4): dualisme scroller — outer overflow-y-auto
+            MEMBATASI scroller virtualizer 60dvh di dalamnya → dua scrollbar
+            vertikal aktif bersamaan (wheel chaining + sticky header lompat).
+            Kini outer jadi kolom flex overflow-hidden; virtualizer menjadi
+            SATU-satunya scroller (h-full). */}
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden border rounded-md">
           {drill.isLoading && (
             <div className="flex items-center justify-center py-12">
               <p className="text-sm text-muted-foreground">Memuat data sumber...</p>
@@ -250,10 +255,14 @@ function VirtualizedRecordsTable({ records }: { records: DrilldownRecord[] }) {
   const totalHeight = rowVirtualizer.getTotalSize();
 
   return (
-    <div ref={parentRef} className="overflow-auto" style={{ maxHeight: '60dvh' }}>
+    <div ref={parentRef} className="overflow-auto overscroll-contain w-full flex-1 min-h-0">
       {/* FIX M2 (AUDIT-6): Raw <table> — bypasses shadcn <Table> wrapper
           which breaks position:sticky via overflow-x-auto div. */}
-      <table className="w-full text-xs">
+      {/* FIX (BUG-TABLE-SQUISH-5): tanpa min-w, 17 kolom tergencet ke lebar
+          kontainer (mis. 343px mobile) — cell jadi serpihan & scroll
+          horizontal tak pernah aktif. min-w membuat tabel meluas dan
+          scroller di atas yang bekerja. */}
+      <table className="w-full min-w-[1100px] text-xs">
         <thead className="sticky top-0 bg-background z-10 shadow-sm">
           <tr className="border-b">
             <th className="text-left p-2 font-medium">Outlet</th>

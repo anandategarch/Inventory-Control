@@ -288,7 +288,10 @@ export function DashboardHeader({
                 </Button>
               </SheetTrigger>
               <SheetContent side="bottom" className="h-auto max-h-[85dvh] overflow-y-auto px-4 pb-4">
-                <SheetHeader className="pb-2 border-b">
+                {/* FIX (BUG-PAD-8, LOW): SheetContent px-4 + SheetHeader p-4 (base)
+                    = inset 32px untuk header vs 16px konten di bawahnya — tepi
+                    kiri tidak sejajar. px-0 menormalkan ke padding sheet. */}
+                <SheetHeader className="px-0 pb-2 border-b">
                   <SheetTitle className="text-sm">Filter & Aksi</SheetTitle>
                   <SheetDescription className="text-xs">
                     Filter periode & organisasi, upload/import file, dan pengaturan data.
