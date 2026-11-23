@@ -20,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { invalidateAllData } from '@/lib/query-invalidation';
-import { Loader2, Trash2, AlertTriangle, FileSpreadsheet, CalendarRange, Bomb, ChevronDown, ChevronRight, Bug } from 'lucide-react';
+import { Loader2, Trash2, AlertTriangle, FileSpreadsheet, CalendarRange, Bomb, ChevronDown, ChevronRight, Bug, Download } from 'lucide-react';
 import React, { useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -67,6 +67,35 @@ interface DataListResponse {
   error?: string;
 }
 
+// ------------------------------------------------------------
+//  Download database — daftar periode dari /api/export-db
+//  (bulan × week + jumlah record, untuk picker di kartu Unduh)
+// ------------------------------------------------------------
+interface ExportPeriodWeek {
+  weekLabel: string;
+  periodStart: number;
+  periodEnd: number;
+  recordCount: number;
+}
+
+interface ExportPeriod {
+  monthKey: string;
+  monthLabel: string;
+  totalRecords: number;
+  weeks: ExportPeriodWeek[];
+}
+
+interface ExportPeriodsResponse {
+  success: boolean;
+  periods: ExportPeriod[];
+  error?: string;
+}
+
+async function fetchExportPeriods(): Promise<ExportPeriodsResponse> {
+  const res = await fetch('/api/export-db');
+  return res.json();
+}
+
 interface DeleteResponse {
   success: boolean;
   deleted: { sourceFiles: number; records: number; weeks: number };
@@ -97,6 +126,20 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
     enabled: open,
   });
 
+  // Download database picker state — dlWeek 'ALL' = semua week di bulan itu
+  const [dlMonth, setDlMonth] = useState<string>('');
+  const [dlWeek, setDlWeek] = useState<string>('ALL');
+  const [isDownloading, setIsDownloading] = useState(false);
+  // File yang sedang diunduh lewat tombol per-baris (null = tidak ada)
+  const [downloadingFileId, setDownloadingFileId] = useState<number | null>(null);
+
+  // Daftar periode tersedia (bulan × week) untuk picker unduhan
+  const { data: periodsData, isLoading: periodsLoading } = useQuery({
+    queryKey: ['export-db-periods'],
+    queryFn: fetchExportPeriods,
+    enabled: open,
+  });
+
   // Delete-by-month picker state
   const [selectedMonth, setSelectedMonth] = useState<string>('');
   // DQ detail expansion state
@@ -111,6 +154,8 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
     setPrevOpen(open);
     if (!open) {
       setSelectedMonth('');
+      setDlMonth('');
+      setDlWeek('ALL');
     }
   }
 
@@ -213,9 +258,70 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
     deleteAllMutation.mutate(undefined, { onSettled: invalidateAll });
   }
 
+  // ---------- Unduh Database (GET /api/export-db → blob → file) ----------
+  // Helper bersama untuk kartu "Unduh Database" (periode bulan+week) dan
+  // tombol per-baris di daftar file (per SourceFile). Menerima response fetch,
+  // mengekstrak nama file dari Content-Disposition (filename* UTF-8 lebih
+  // akurat untuk nama non-ASCII), lalu memicu unduhan via anchor + blob URL.
+  async function fetchAndDownloadDatabase(url: string, fallbackName: string, setBusy: (busy: boolean) => void) {
+    setBusy(true);
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        // Body error dari route berbentuk JSON { success, error } — kalau
+        // bukan JSON (mis. gateway timeout), fallback ke kode status.
+        let msg = `Gagal mengunduh (HTTP ${res.status})`;
+        try {
+          const j = await res.json();
+          if (j?.error) msg = j.error;
+        } catch { /* bukan JSON — keep status message */ }
+        throw new Error(msg);
+      }
+      const cd = res.headers.get('Content-Disposition') || '';
+      const mStar = /filename\*=UTF-8''([^;]+)/.exec(cd);
+      const mPlain = /filename="([^"]+)"/.exec(cd);
+      const fileName = mStar ? decodeURIComponent(mStar[1]) : mPlain ? mPlain[1] : fallbackName;
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+      const count = Number(res.headers.get('X-Record-Count') ?? 0);
+      toast({
+        title: '✅ Database diunduh',
+        description: `${fileName}${count ? ` · ${count.toLocaleString()} record` : ''}`,
+      });
+    } catch (e) {
+      toast({ title: '❌ Gagal mengunduh', description: e instanceof Error ? e.message : 'Network error', variant: 'destructive' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Kartu Unduh Database — periode = bulan terpilih + (optional) week.
+  // dlWeek 'ALL' → tanpa param week → server mengembalikan semua week bulan itu.
+  function handleDownloadDatabase() {
+    if (!dlMonth) return;
+    const params = new URLSearchParams({ monthKey: dlMonth });
+    if (dlWeek && dlWeek !== 'ALL') params.set('week', dlWeek);
+    const label = `${periods.find(p => p.monthKey === dlMonth)?.monthLabel ?? dlMonth}${dlWeek && dlWeek !== 'ALL' ? ` - ${dlWeek}` : ''}`;
+    void fetchAndDownloadDatabase(`/api/export-db?${params.toString()}`, `DATABASE - ${label}.xlsx`, setIsDownloading);
+  }
+
+  // Tombol per-baris di daftar File Sumber — unduh semua record file itu.
+  function handleDownloadFile(fileId: number, name: string) {
+    void fetchAndDownloadDatabase(`/api/export-db?fileId=${fileId}`, `DATABASE - ${name}.xlsx`, (busy) => setDownloadingFileId(busy ? fileId : null));
+  }
+
   // ---------- Render ----------
   const months: MonthSummary[] = data?.months ?? [];
   const files: SourceFileRow[] = data?.files ?? [];
+  const periods: ExportPeriod[] = periodsData?.periods ?? [];
+  const selectedPeriod = periods.find(p => p.monthKey === dlMonth) ?? null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -226,7 +332,7 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
             Kelola Data
           </DialogTitle>
           <DialogDescription>
-            Hapus file sumber, data per bulan, atau reset semua data. Aksi ini <strong>tidak dapat dibatalkan</strong>.
+            Unduh database per periode (bulan + week) sebagai file Excel, atau kelola data: hapus file sumber, hapus data per bulan, reset semua. Aksi hapus <strong>tidak dapat dibatalkan</strong>.
           </DialogDescription>
         </DialogHeader>
 
@@ -243,6 +349,73 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
           <div className="flex-1 overflow-hidden flex flex-col gap-4 min-h-0">
             {/* Quick actions */}
             <div className="grid grid-cols-2 gap-3 shrink-0">
+              {/* Unduh database per periode — DB-DOWNLOAD-1 (user request):
+                  pilih bulan + week → GET /api/export-db → .xlsx.
+                  Kolom mengikuti format Excel sumber (re-importable). */}
+              <div className="col-span-2 rounded-md border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950/20 p-3 space-y-2">
+                <div className="flex items-center gap-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                  <Download className="h-3.5 w-3.5" />
+                  Unduh Database (Excel)
+                </div>
+                <p className="text-[11px] text-emerald-700/80 dark:text-emerald-300/70 leading-relaxed">
+                  Pilih periode lalu unduh seluruh record database sebagai file Excel — format kolom sama dengan file sumber, bisa di-import ulang kapan saja.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <Select
+                    value={dlMonth}
+                    onValueChange={(v) => {
+                      setDlMonth(v);
+                      setDlWeek('ALL');
+                    }}
+                  >
+                    <SelectTrigger className="h-8 text-xs bg-white/70 dark:bg-background/70">
+                      <SelectValue placeholder={periodsLoading ? 'Memuat periode...' : 'Pilih bulan...'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {periods.length === 0 && !periodsLoading && (
+                        <div className="px-3 py-2 text-xs text-muted-foreground">Belum ada data — import file terlebih dahulu.</div>
+                      )}
+                      {periods.map((p) => (
+                        <SelectItem key={p.monthKey} value={p.monthKey} className="text-xs">
+                          {p.monthLabel} ({p.totalRecords.toLocaleString()} baris)
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={dlWeek}
+                    onValueChange={setDlWeek}
+                    disabled={!dlMonth}
+                  >
+                    <SelectTrigger className="h-8 text-xs bg-white/70 dark:bg-background/70">
+                      <SelectValue placeholder="Semua week..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL" className="text-xs">
+                        Semua Week ({selectedPeriod ? selectedPeriod.totalRecords.toLocaleString() : '—'} baris)
+                      </SelectItem>
+                      {selectedPeriod?.weeks.map((w) => (
+                        <SelectItem key={w.weekLabel} value={w.weekLabel} className="text-xs">
+                          {w.weekLabel} (tgl {w.periodStart}–{w.periodEnd} · {w.recordCount.toLocaleString()} baris)
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
+                  size="sm"
+                  className="h-8 w-full text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                  disabled={!dlMonth || isDownloading}
+                  onClick={handleDownloadDatabase}
+                >
+                  {isDownloading ? (
+                    <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Membuat file Excel...</>
+                  ) : (
+                    <><Download className="h-3 w-3 mr-1" /> Unduh Sekarang</>
+                  )}
+                </Button>
+              </div>
+
               {/* Hapus per bulan */}
               <div className="rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-2">
                 <div className="flex items-center gap-2 text-xs font-medium text-amber-700 dark:text-amber-300">
@@ -429,17 +602,34 @@ export function DataManagementDialog({ open, onOpenChange }: DataManagementDialo
                               {new Date(f.importedAt).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: '2-digit' })}
                             </TableCell>
                             <TableCell className="text-[11px] py-2 text-right">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 px-2 text-[11px] text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/30"
-                                disabled={deleteFileMutation.isPending}
-                                onClick={() => setPendingFile({ id: f.id, name: f.fileName })}
-                                title={`Hapus ${f.fileName}`}
-                              >
-                                <Trash2 className="h-3 w-3 mr-1" />
-                                Hapus
-                              </Button>
+                              <div className="flex items-center justify-end gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 px-2 text-[11px] text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700 dark:hover:bg-emerald-950/30"
+                                  disabled={downloadingFileId !== null || isDownloading || f.rowCount === 0}
+                                  onClick={() => handleDownloadFile(f.id, f.fileName)}
+                                  title={`Unduh database ${f.fileName} (${f.rowCount.toLocaleString()} baris)`}
+                                >
+                                  {downloadingFileId === f.id ? (
+                                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                  ) : (
+                                    <Download className="h-3 w-3 mr-1" />
+                                  )}
+                                  Unduh
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 px-2 text-[11px] text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/30"
+                                  disabled={deleteFileMutation.isPending}
+                                  onClick={() => setPendingFile({ id: f.id, name: f.fileName })}
+                                  title={`Hapus ${f.fileName}`}
+                                >
+                                  <Trash2 className="h-3 w-3 mr-1" />
+                                  Hapus
+                                </Button>
+                              </div>
                             </TableCell>
                           </TableRow>
                           {/* DQ Detail Expandable Row */}

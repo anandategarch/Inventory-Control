@@ -8,6 +8,7 @@
 //  rather than one file per 2-line schema.
 // ============================================================
 import { z } from 'zod';
+import { weekLabelSchema } from './shared';
 
 // /api/data (GET — optional ?fileId=N, DELETE — ?month=&monthKey=&fileId=&all=&confirm=)
 // DELETE supports cascade delete by month / fileId / all (with confirm).
@@ -43,4 +44,21 @@ export const picQuerySchema = z.object({
 export const picPostBodySchema = z.object({
   outletCode: z.string().min(1).max(50),
   pic: z.string().min(1).max(100),
+});
+
+// /api/export-db (GET — database download per periode)
+//   no params               → JSON daftar periode (bulan × week + record count)
+//   ?monthKey=YYYY-MM       → .xlsx semua record bulan itu (semua week)
+//   ?monthKey=YYYY-MM&week= → .xlsx record bulan+week (mis. Oktober 2026 WEEK 2)
+//   ?fileId=N               → .xlsx semua record satu SourceFile
+//   ?month=Oktober 2026     → legacy monthLabel (resolved case-insensitive,
+//                             konvensi sama dengan DELETE /api/data)
+// monthKey dikunci regex "YYYY-MM" (bukan max(10) bebas seperti dataDelete) —
+// dipakai langsung di WHERE week.monthKey, jadi bentuknya harus pasti.
+// week memakai weekLabelSchema yang sama dengan route analysis/export-report.
+export const exportDbQuerySchema = z.object({
+  monthKey: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional(),
+  month: z.string().max(50).optional(),
+  week: weekLabelSchema,
+  fileId: z.coerce.number().int().positive().optional(),
 });
